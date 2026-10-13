@@ -1,0 +1,12 @@
+{
+  "name": "Staff Planner",
+  "short_name": "Staff Planner",
+  "description": "Offline planering för personal, kompetens och produktion.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f5f7fb",
+  "theme_color": "#356df3",
+  "lang": "sv",
+  "icons": [{ "src": "./app-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

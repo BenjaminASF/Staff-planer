@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Lägg till</title>
+  <link rel="stylesheet" href="style.css?v=20261012-9" />
+</head>
+<body class="app-booting">
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-badge">Staff Planner</div>
+      <h2 id="authTitle">Logga in</h2>
+      <p class="auth-subtitle">Endast behöriga skiftledare får använda systemet.</p>
+
+      <input id="passwordInput" type="password" placeholder="Lösenord" />
+      <input id="passwordConfirmInput" type="password" placeholder="Bekräfta lösenord" />
+
+      <div class="actions">
+        <button id="authBtn" class="btn primary" type="button">Logga in</button>
+        <button id="wipeBtn" class="btn danger" type="button">Radera lokal data</button>
+      </div>
+
+      <p id="authMessage" class="message hidden"></p>
+
+      <p class="privacy-note">
+        Detta system lagrar personaluppgifter lokalt på enheten för schemaplanering och bedömning.
+      </p>
+    </div>
+  </div>
+
+  <div id="appShell" class="hidden">
+    <div class="layout">
+      <aside class="sidebar">
+        <h1 class="logo">Staff Planner</h1>
+        <nav class="nav">
+          <a class="nav-link" href="dashboard.html">Översikt</a>
+          <a class="nav-link" href="index.html">Schema</a>
+          <a class="nav-link" href="produktion.html">Produktion</a>
+          <a class="nav-link" href="rast.html">Rast</a>
+          <a class="nav-link" href="personal.html">Personal</a>
+          <a class="nav-link" href="testresultat.html">Testresultat</a>
+          <a class="nav-link" href="maskiner.html">Kompetens</a>
+          <a class="nav-link" href="bedomning.html">Bedömning</a>
+          <a class="nav-link" href="todo.html">Att göra</a>
+          <a class="nav-link active" href="add.html">Lägg till</a>
+        </nav>
+        <button id="logoutBtn" class="btn sidebar-logout" type="button">Logga ut</button>
+      </aside>
+
+      <main class="main">
+        <div class="header">
+          <h2>Lägg till</h2>
+          <p>Hantera personal, arbetsplatser och uppgifter för extra personer.</p>
+          <nav class="add-page-shortcuts" aria-label="Gå till formulär">
+            <a href="#addPersonSection">Personal</a>
+            <a href="#workItemForm">Arbetsplatser</a>
+            <a href="#extraAssignmentManager">Extrauppgifter</a>
+          </nav>
+        </div>
+
+        <section id="addPersonSection" class="card form-card">
+          <h3>Lägg till personal</h3>
+          <form id="addForm">
+            <label for="nameInput">Namn</label>
+            <input id="nameInput" type="text" placeholder="Skriv namn" required autocomplete="name" />
+
+            <label for="companyInput">Företag</label>
+            <input id="companyInput" type="text" placeholder="Skriv företag" autocomplete="organization" />
+
+            <div class="actions">
+              <button type="submit" class="btn primary">Lägg till</button>
+              <button type="button" id="clearBtn" class="btn">Rensa</button>
+            </div>
+          </form>
+
+          <div id="message" class="message hidden" role="status" aria-live="polite">Person tillagd</div>
+        </section>
+
+        <section class="card work-item-manager">
+          <div class="work-item-manager-heading">
+            <div><h3>Arbetsplatser och schemarader</h3><p>Lägg till maskiner, avdelningar, utbildning och extra personer. Välj var de ska visas.</p></div>
+          </div>
+          <form id="workItemForm" class="work-item-form">
+            <div class="work-item-fields">
+              <label><span>Namn</span><input id="workItemName" placeholder="Exempel: GD5 eller Ny avdelning" required /><small aria-hidden="true">&nbsp;</small></label>
+              <label><span>Placering i schemat</span><select id="workItemAfter"></select><small>Den nya raden placeras direkt efter ditt val.</small></label>
+              <label><span>Typ</span><select id="workItemType"><option value="machine">Maskin</option><option value="department">Avdelning</option><option value="training">Utbildning</option><option value="extra">Extra person</option></select><small>Extra person får val av person och uppgift i schemat.</small></label>
+              <label><span>Antal personer</span><input id="workItemStaffCount" type="number" min="1" max="20" value="1" /><small>Minsta bemanning som behövs.</small></label>
+              <label class="work-item-skills-field"><span>Kompetenser som krävs</span><input id="workItemRequiredSkills" placeholder="Exempel: GD, Truckkort" /><small>Separera flera kompetenser med kommatecken.</small></label>
+            </div>
+            <fieldset class="work-item-destinations">
+              <legend>Var ska den visas?</legend>
+              <label><input id="workItemSchema" type="checkbox" /><span><strong>Schema</strong><small>Skapa en egen rad i veckoschemat.</small></span></label>
+              <label><input id="workItemCompetency" type="checkbox" /><span><strong>Kompetens</strong><small>Registrera behörighet och utbildning.</small></span></label>
+              <label><input id="workItemTestResults" type="checkbox" /><span><strong>Testresultat</strong><small>Registrera resultat för stationen.</small></span></label>
+              <label><input id="workItemAutoSchedule" type="checkbox" /><span><strong>Autoschema</strong><small>Bemanna automatiskt. Kräver Schema och Kompetens.</small></span></label>
+            </fieldset>
+            <div class="work-item-submit"><span>Välj var stationen ska användas. Utan val sparas den bara här. Du kan ändra valen senare.</span><div class="work-item-form-actions"><button id="cancelWorkItemEdit" class="btn hidden" type="button">Avbryt</button><button id="saveWorkItemBtn" class="btn primary" type="submit">+ Lägg till</button></div></div>
+          </form>
+          <p id="workItemMessage" class="inline-message" aria-live="polite"></p>
+          <div id="workItemList" class="work-item-list"></div>
+          <details class="work-item-trash"><summary>Papperskorg <span id="workItemTrashCount">0</span></summary><div id="workItemTrashList" class="work-item-list"></div></details>
+        </section>
+        <section id="extraAssignmentManager" class="card extra-assignment-manager" aria-label="Uppgifter för extra personer"></section>
+      </main>
+    </div>
+  </div>
+<script src="app.js?v=20261012-9"></script>
+</body>
+</html>
