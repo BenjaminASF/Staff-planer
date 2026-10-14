@@ -19,7 +19,7 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 | Ändra maskiner, avdelningar och inställningar (gäller alla skift) | ✓ | ✓ | |
 | Kompetens, testresultat och bedömningar | ✓ | | |
 | Hantera alla profiler: namn, telefon, status, skift, användarnamn, roll och lösenord | ✓ | | |
-| Sidan Användare: alla inloggningar, roller och lösenord samlat | ✓ | | |
+| Sidan Användare: alla inloggningar, roller och lösenord samlat, och borttagning av användare | ✓ | | |
 | Ta bort personal och användare, ändra roller | ✓ | | |
 | Skapa och ta bort skift, backup och import | ✓ | | |
 

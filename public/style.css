@@ -5526,3 +5526,8 @@ button {
 .user-you { color: var(--muted); font-size: 12px; font-weight: 600; }
 @media (max-width: 1050px) { .users-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .users-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.remove-user-modal { width: min(520px, 100%); }
+.remove-user-options { display: grid; gap: 8px; margin: 4px 0 6px; }
+.remove-user-options .btn { display: grid; gap: 3px; width: 100%; padding: 12px 14px; text-align: left; }
+.remove-user-options .btn small { color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.4; }
+.remove-user-options .btn.danger small { color: inherit; opacity: .8; }
