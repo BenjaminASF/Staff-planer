@@ -17,6 +17,15 @@ function cleanText(value, maxLength) {
   return String(value ?? "").trim().slice(0, maxLength);
 }
 
+// Colors a shift can be marked with. An empty string means no color.
+const SHIFT_COLORS = ["red", "blue", "yellow", "green", "purple", "orange"];
+
+function cleanShiftColor(value) {
+  const color = String(value ?? "");
+  if (color && !SHIFT_COLORS.includes(color)) throw new HttpError(400, "Okänd färg.");
+  return color;
+}
+
 // Picks the allowed person fields from a request body and returns them as
 // database columns. Unknown or disallowed fields are rejected.
 function cleanPersonFields(body, allowedFields) {
@@ -38,4 +47,4 @@ function cleanPersonFields(body, allowedFields) {
   return columns;
 }
 
-module.exports = { availabilityLabel, cleanText, cleanPersonFields };
+module.exports = { availabilityLabel, cleanText, cleanShiftColor, cleanPersonFields, SHIFT_COLORS };

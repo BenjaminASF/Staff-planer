@@ -2,8 +2,8 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const { isAdmin, AVAILABILITY_VALUES, documentCategory } = require("../permissions");
-const { putDocument, isPlainObject } = require("../store");
-const { cleanText } = require("../validation");
+const { putDocument, isPlainObject, serializeShift } = require("../store");
+const { cleanText, SHIFT_COLORS } = require("../validation");
 
 const EXPORT_VERSION = 2;
 
@@ -41,7 +41,7 @@ function adminRoutes({ pool }) {
   // Full backup of shifts, staff and app data. Passwords are never exported.
   router.get("/export", async (req, res) => {
     const [shifts, people, documents] = await Promise.all([
-      pool.query("SELECT id, name, sort_order FROM shifts ORDER BY sort_order"),
+      pool.query("SELECT id, name, color, sort_order FROM shifts ORDER BY sort_order"),
       pool.query("SELECT id, name, company, phone, availability, shift_id, demo, created_at FROM people ORDER BY name"),
       pool.query("SELECT scope, key, value FROM documents ORDER BY scope, key")
     ]);
@@ -50,7 +50,7 @@ function adminRoutes({ pool }) {
       app: "Staff Planner",
       version: EXPORT_VERSION,
       exportedAt: new Date().toISOString(),
-      shifts: shifts.rows.map(row => ({ id: row.id, name: row.name, sortOrder: row.sort_order })),
+      shifts: shifts.rows.map(serializeShift),
       people: people.rows.map(row => ({
         id: row.id, name: row.name, company: row.company, phone: row.phone, availability: row.availability,
         shiftId: row.shift_id, demo: row.demo, createdAt: row.created_at
@@ -75,10 +75,13 @@ function adminRoutes({ pool }) {
       for (const shift of payload.shifts) {
         const name = cleanText(shift?.name, 60);
         if (!shiftIds.has(shift?.id) || !name) continue;
+        // Backups from before shift colors keep the shift's current color.
+        const color = SHIFT_COLORS.includes(shift.color) || shift.color === "" ? shift.color : null;
         await client.query(
-          `INSERT INTO shifts (id, name, sort_order) VALUES ($1, $2, $3)
-           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order`,
-          [shift.id, name, Number.isInteger(shift.sortOrder) ? shift.sortOrder : 0]
+          `INSERT INTO shifts (id, name, sort_order, color) VALUES ($1, $2, $3, COALESCE($4, ''))
+           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order,
+             color = COALESCE($4, shifts.color)`,
+          [shift.id, name, Number.isInteger(shift.sortOrder) ? shift.sortOrder : 0, color]
         );
       }
       for (const person of payload.people) {

@@ -5,6 +5,8 @@ const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
 
 const newId = () => crypto.randomUUID();
 
+const serializeShift = row => ({ id: row.id, name: row.name, color: row.color || "", sortOrder: row.sort_order });
+
 function serializePerson(row) {
   return {
     id: row.id,
@@ -285,6 +287,7 @@ async function addAuditEvent(db, { scope, type = "", title = "", detail = "", un
 
 module.exports = {
   newId,
+  serializeShift,
   serializePerson,
   PERSON_SELECT,
   getPersonById,
