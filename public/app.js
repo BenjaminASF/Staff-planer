@@ -5996,10 +5996,333 @@ function initializeAppContent() {
   setupAutoSchedule();
   setupShareSchedule();
   setupAutoLock();
+  setupChat();
   void setupOnboarding();
   setupMobileNavigation();
   setupFilterControls();
   setupTodoPage();
+}
+
+// Chat for admins and shift leaders: a button in the corner with an unread badge
+// and a short preview when a new message arrives. New messages are fetched by
+// polling: often while the chat is open, more rarely while it is closed.
+const CHAT_POLL_OPEN_MS = 4000;
+const CHAT_POLL_CLOSED_MS = 15000;
+const CHAT_POLL_HIDDEN_MS = 60000;
+const CHAT_MAX_IMAGE_SIDE = 1600;
+const CHAT_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
+const CHAT_NOTIFIED_KEY = "staff_chat_notified_id";
+const CHAT_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
+const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
+const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null };
+
+const chatMessageId = message => BigInt(message?.id || 0);
+
+function getChatElements() {
+  const widget = document.getElementById("chatWidget");
+  return widget && {
+    widget,
+    toggle: widget.querySelector(".chat-toggle"),
+    badge: widget.querySelector(".chat-badge"),
+    preview: widget.querySelector(".chat-preview"),
+    panel: widget.querySelector(".chat-panel"),
+    list: widget.querySelector(".chat-messages"),
+    form: widget.querySelector(".chat-form"),
+    input: widget.querySelector(".chat-form textarea"),
+    file: widget.querySelector(".chat-form input[type=file]"),
+    attachment: widget.querySelector(".chat-attachment"),
+    status: widget.querySelector(".chat-status")
+  };
+}
+
+function setupChat() {
+  if (!canManageStaff() || document.getElementById("chatWidget")) return;
+  const widget = document.createElement("div");
+  widget.id = "chatWidget";
+  widget.className = "chat-widget";
+  widget.innerHTML = `
+    <button type="button" class="chat-preview hidden"></button>
+    <section class="chat-panel hidden" aria-label="Chatt">
+      <header class="chat-header"><div><strong>Chatt</strong><small>Admin och skiftledare</small></div><button type="button" class="chat-close" aria-label="Stäng chatten">×</button></header>
+      <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
+      <form class="chat-form">
+        <div class="chat-attachment hidden"><img alt="Vald bild" /><button type="button" class="chat-attachment-remove" aria-label="Ta bort bilden">×</button></div>
+        <p class="chat-status inline-message" role="status"></p>
+        <div class="chat-input-row">
+          <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
+          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande…" aria-label="Meddelande"></textarea>
+          <button class="btn primary chat-send" type="submit">Skicka</button>
+        </div>
+      </form>
+    </section>
+    <button type="button" class="chat-toggle" aria-label="Öppna chatten" aria-expanded="false">${CHAT_ICON}<span class="chat-badge hidden" aria-hidden="true"></span></button>`;
+  document.body.appendChild(widget);
+  document.body.classList.add("has-chat");
+  const elements = getChatElements();
+
+  elements.toggle.addEventListener("click", () => void setChatOpen(!chatState.open));
+  elements.widget.querySelector(".chat-close").addEventListener("click", () => void setChatOpen(false));
+  elements.preview.addEventListener("click", () => void setChatOpen(true));
+  elements.panel.addEventListener("keydown", event => {
+    if (event.key === "Escape") { event.preventDefault(); void setChatOpen(false); elements.toggle.focus(); }
+  });
+  elements.input.addEventListener("keydown", event => {
+    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); elements.form.requestSubmit(); }
+  });
+  elements.input.addEventListener("input", () => resizeChatInput(elements.input));
+  elements.input.addEventListener("paste", event => {
+    const file = [...(event.clipboardData?.files || [])].find(item => item.type.startsWith("image/"));
+    if (file) { event.preventDefault(); void attachChatImage(file); }
+  });
+  elements.file.addEventListener("change", () => {
+    const file = elements.file.files?.[0];
+    elements.file.value = "";
+    if (file) void attachChatImage(file);
+  });
+  elements.widget.querySelector(".chat-attachment-remove").addEventListener("click", () => setChatImage(null));
+  elements.form.addEventListener("submit", event => { event.preventDefault(); void sendChatMessage(); });
+  elements.list.addEventListener("click", event => {
+    const older = event.target.closest(".chat-older");
+    if (older) { void loadOlderChatMessages(older); return; }
+    const remove = event.target.closest("[data-delete-message]");
+    if (remove) void deleteChatMessage(remove.dataset.deleteMessage);
+  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) void pollChat(); });
+  void pollChat();
+}
+
+function resizeChatInput(input) {
+  input.style.height = "auto";
+  input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
+}
+
+function showChatStatus(text, type = "error") {
+  const { status } = getChatElements();
+  status.textContent = text;
+  status.className = `chat-status inline-message ${text ? type : ""}`;
+}
+
+function scheduleChatPoll() {
+  clearTimeout(chatState.timer);
+  const delay = document.hidden ? CHAT_POLL_HIDDEN_MS : chatState.open ? CHAT_POLL_OPEN_MS : CHAT_POLL_CLOSED_MS;
+  chatState.timer = setTimeout(() => void pollChat(), delay);
+}
+
+async function pollChat() {
+  clearTimeout(chatState.timer);
+  try {
+    if (chatState.open) await loadNewChatMessages();
+    else await checkChatUnread();
+  } catch (error) {
+    console.warn("Chat update failed:", error);
+  } finally {
+    if (currentUser) scheduleChatPoll();
+  }
+}
+
+function setChatBadge(count) {
+  const { badge, toggle } = getChatElements();
+  badge.textContent = count > 99 ? "99+" : String(count);
+  badge.classList.toggle("hidden", !count);
+  toggle.setAttribute("aria-label", count ? `Öppna chatten, ${count} olästa meddelanden` : "Öppna chatten");
+}
+
+async function checkChatUnread() {
+  const { count, latest } = await apiRequest("GET", "/chat/unread");
+  setChatBadge(count);
+  // Each new message is announced once, even across page changes.
+  const notified = BigInt(sessionStorage.getItem(CHAT_NOTIFIED_KEY) || 0);
+  if (!count || !latest || chatMessageId(latest) <= notified) return;
+  sessionStorage.setItem(CHAT_NOTIFIED_KEY, latest.id);
+  const { preview } = getChatElements();
+  const text = latest.text || (latest.imageUrl ? "Skickade en bild" : "");
+  preview.innerHTML = `<strong>${escapeHtml(latest.authorName)}</strong><span>${escapeHtml(text.length > 90 ? `${text.slice(0, 90)}…` : text)}</span>${count > 1 ? `<small>${count} olästa meddelanden</small>` : ""}`;
+  preview.classList.remove("hidden");
+  clearTimeout(chatState.previewTimer);
+  chatState.previewTimer = setTimeout(() => preview.classList.add("hidden"), 8000);
+}
+
+async function setChatOpen(open) {
+  const elements = getChatElements();
+  chatState.open = open;
+  elements.panel.classList.toggle("hidden", !open);
+  elements.preview.classList.add("hidden");
+  elements.toggle.setAttribute("aria-expanded", String(open));
+  elements.widget.classList.toggle("is-open", open);
+  if (!open) { scheduleChatPoll(); return; }
+  elements.input.focus();
+  if (!chatState.loaded) {
+    elements.list.innerHTML = '<p class="chat-empty">Laddar…</p>';
+    try {
+      const data = await apiRequest("GET", "/chat/messages");
+      chatState.messages = data.messages;
+      chatState.hasOlder = data.hasOlder;
+      chatState.loaded = true;
+    } catch (error) {
+      elements.list.innerHTML = `<p class="chat-empty">${escapeHtml(error.message || "Chatten kunde inte laddas.")}</p>`;
+      return;
+    }
+    renderChatMessages({ scrollToEnd: true });
+  } else {
+    renderChatMessages({ scrollToEnd: true });
+    await loadNewChatMessages();
+  }
+  await markChatRead();
+  scheduleChatPoll();
+}
+
+async function markChatRead() {
+  const last = chatState.messages.at(-1);
+  setChatBadge(0);
+  if (!last) return;
+  // What has been read needs no preview later.
+  if (chatMessageId(last) > BigInt(sessionStorage.getItem(CHAT_NOTIFIED_KEY) || 0)) sessionStorage.setItem(CHAT_NOTIFIED_KEY, last.id);
+  await apiRequest("POST", "/chat/read", { lastId: last.id });
+}
+
+async function loadNewChatMessages() {
+  if (!chatState.loaded) return;
+  const last = chatState.messages.at(-1);
+  const data = await apiRequest("GET", `/chat/messages${last ? `?after=${encodeURIComponent(last.id)}` : ""}`);
+  const known = new Set(chatState.messages.map(message => message.id));
+  const fresh = data.messages.filter(message => !known.has(message.id));
+  if (!fresh.length) return;
+  const { list } = getChatElements();
+  const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
+  chatState.messages.push(...fresh);
+  renderChatMessages({ scrollToEnd: nearEnd });
+  if (chatState.open && !document.hidden) await markChatRead();
+}
+
+async function loadOlderChatMessages(button) {
+  const first = chatState.messages[0];
+  if (!first) return;
+  button.disabled = true;
+  const { list } = getChatElements();
+  const previousHeight = list.scrollHeight;
+  const data = await apiRequest("GET", `/chat/messages?before=${encodeURIComponent(first.id)}`);
+  chatState.messages = [...data.messages, ...chatState.messages];
+  chatState.hasOlder = data.hasOlder;
+  renderChatMessages();
+  list.scrollTop = list.scrollHeight - previousHeight;
+}
+
+function formatChatTime(value) {
+  const date = new Date(value);
+  const time = date.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+  return formatDateKey(date) === formatDateKey(new Date()) ? time : `${date.toLocaleDateString("sv-SE", { day: "numeric", month: "short" })} ${time}`;
+}
+
+function renderChatMessages({ scrollToEnd = false } = {}) {
+  const { list } = getChatElements();
+  if (!chatState.messages.length) {
+    list.innerHTML = '<p class="chat-empty">Inga meddelanden ännu. Skriv det första!</p>';
+    return;
+  }
+  list.innerHTML = `${chatState.hasOlder ? '<button type="button" class="chat-older">Visa äldre meddelanden</button>' : ""}${chatState.messages.map(message => {
+    const mine = message.userId === currentUser?.id;
+    const canDelete = mine || isAdmin();
+    return `<article class="chat-message${mine ? " is-mine" : ""}">
+      <div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong><time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatChatTime(message.createdAt))}</time>${canDelete ? `<button type="button" class="chat-delete" data-delete-message="${escapeHtml(message.id)}" aria-label="Ta bort meddelandet">×</button>` : ""}</div>
+      ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
+      ${message.imageUrl ? `<a class="chat-image" href="${escapeHtml(message.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(message.imageUrl)}" alt="Bild från ${escapeHtml(message.authorName)}" loading="lazy" /></a>` : ""}
+    </article>`;
+  }).join("")}`;
+  if (scrollToEnd) {
+    list.scrollTop = list.scrollHeight;
+    // Images change the height once they load.
+    list.querySelectorAll("img").forEach(image => image.addEventListener("load", () => { list.scrollTop = list.scrollHeight; }, { once: true }));
+  }
+}
+
+function readBlobAsDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
+}
+
+// Photos from phones are large; they are shrunk to at most 1600 px and sent as JPEG.
+// GIFs are sent unchanged so animations keep working.
+async function prepareChatImage(file) {
+  if (!file.type.startsWith("image/")) throw new ApiError(400, "Välj en bildfil.");
+  if (file.type === "image/gif") {
+    if (file.size > CHAT_MAX_IMAGE_BYTES) throw new ApiError(400, "GIF-bilden är för stor. Välj en bild under 3 MB.");
+    return { type: "image/gif", dataUrl: await readBlobAsDataUrl(file) };
+  }
+  let bitmap;
+  try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new ApiError(400, "Bilden kunde inte läsas. Prova en JPEG- eller PNG-bild.");
+  }
+  const scale = Math.min(1, CHAT_MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+  canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  const blob = await new Promise(resolve => canvas.toBlob(resolve, "image/jpeg", 0.85));
+  if (!blob || blob.size > CHAT_MAX_IMAGE_BYTES) throw new ApiError(400, "Bilden är för stor.");
+  return { type: "image/jpeg", dataUrl: await readBlobAsDataUrl(blob) };
+}
+
+function setChatImage(image) {
+  const { attachment, input } = getChatElements();
+  chatState.image = image;
+  attachment.classList.toggle("hidden", !image);
+  attachment.querySelector("img").src = image?.dataUrl || "";
+  input.placeholder = image ? "Lägg till text (valfritt)…" : "Skriv ett meddelande…";
+}
+
+async function attachChatImage(file) {
+  showChatStatus("Förbereder bilden…", "");
+  try {
+    setChatImage(await prepareChatImage(file));
+    showChatStatus("");
+  } catch (error) {
+    showChatStatus(error.message || "Bilden kunde inte läsas.");
+  }
+  getChatElements().input.focus();
+}
+
+async function sendChatMessage() {
+  const { input, form } = getChatElements();
+  const text = input.value.trim();
+  if (!text && !chatState.image) return;
+  const sendButton = form.querySelector(".chat-send");
+  sendButton.disabled = true;
+  try {
+    const image = chatState.image ? { type: chatState.image.type, data: chatState.image.dataUrl } : undefined;
+    const { message } = await apiRequest("POST", "/chat/messages", { text, image });
+    input.value = "";
+    resizeChatInput(input);
+    setChatImage(null);
+    showChatStatus("");
+    if (!chatState.messages.some(item => item.id === message.id)) chatState.messages.push(message);
+    renderChatMessages({ scrollToEnd: true });
+  } catch (error) {
+    showChatStatus(error.message || "Meddelandet kunde inte skickas.");
+  } finally {
+    sendButton.disabled = false;
+    input.focus();
+  }
+}
+
+async function deleteChatMessage(id) {
+  if (!confirm("Ta bort meddelandet?")) return;
+  try {
+    await apiRequest("DELETE", `/chat/messages/${encodeURIComponent(id)}`);
+    chatState.messages = chatState.messages.filter(message => message.id !== id);
+    renderChatMessages();
+  } catch (error) {
+    showChatStatus(error.message || "Meddelandet kunde inte tas bort.");
+  }
 }
 
 // Signing in.
