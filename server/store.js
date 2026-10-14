@@ -1,9 +1,12 @@
 const crypto = require("node:crypto");
-const { WEEKLY_SCHEDULE_PREFIXES } = require("./permissions");
+const { WEEKLY_SCHEDULE_PREFIXES, PERSONAL_SCOPE_PREFIX, personalScope } = require("./permissions");
 
 const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
 
 const newId = () => crypto.randomUUID();
+
+// SQL condition matching documents that belong to a shift (not global, not personal).
+const SHIFT_SCOPE_SQL = `scope <> 'global' AND scope NOT LIKE '${PERSONAL_SCOPE_PREFIX}%'`;
 
 const serializeShift = row => ({ id: row.id, name: row.name, color: row.color || "", sortOrder: row.sort_order });
 
@@ -71,12 +74,28 @@ async function writeDocument(db, { scope, key, value, baseVersion, userId }) {
 
 // Unconditional write used by server-side maintenance (rename, purge, import).
 async function putDocument(db, scope, key, value, userId = null) {
-  await db.query(
+  const { rows } = await db.query(
     `INSERT INTO documents (scope, key, value, updated_by) VALUES ($1, $2, $3::jsonb, $4)
      ON CONFLICT (scope, key) DO UPDATE
-       SET value = EXCLUDED.value, version = documents.version + 1, updated_at = now(), updated_by = EXCLUDED.updated_by`,
+       SET value = EXCLUDED.value, version = documents.version + 1, updated_at = now(), updated_by = EXCLUDED.updated_by
+     RETURNING version, updated_at`,
     [scope, key, JSON.stringify(value ?? null), userId]
   );
+  return { version: rows[0].version, updatedAt: rows[0].updated_at };
+}
+
+// Adds items to a user's own list without dropping what is already there. An item
+// whose id is already in the list replaces it in place; the rest are appended.
+async function mergeIntoPersonalList(db, userId, key, items) {
+  const scope = personalScope(userId);
+  const { rows } = await db.query("SELECT value FROM documents WHERE scope = $1 AND key = $2 FOR UPDATE", [scope, key]);
+  const list = Array.isArray(rows[0]?.value) ? rows[0].value : [];
+  for (const item of items) {
+    const index = item?.id ? list.findIndex(existing => existing?.id === item.id) : -1;
+    if (index >= 0) list[index] = item;
+    else list.push(item);
+  }
+  return putDocument(db, scope, key, list, userId);
 }
 
 // Loads documents FOR UPDATE, lets `change` edit them in place, and saves the ones it reports as changed.
@@ -126,9 +145,9 @@ async function purgePersonFromDocuments(db, personId, userId) {
     },
     userId
   );
-  await updateDocumentsWhere(db, "scope <> 'global' AND (key LIKE 'schedule:%' OR key LIKE 'trainingLeaders:%')", [],
+  await updateDocumentsWhere(db, `${SHIFT_SCOPE_SQL} AND (key LIKE 'schedule:%' OR key LIKE 'trainingLeaders:%')`, [],
     value => clearPersonFromPlacements(value, personId), userId);
-  await updateDocumentsWhere(db, "scope <> 'global' AND key LIKE 'breakPlan:%'", [], value => {
+  await updateDocumentsWhere(db, `${SHIFT_SCOPE_SQL} AND key LIKE 'breakPlan:%'`, [], value => {
     if (!isPlainObject(value)) return false;
     let changed = false;
     Object.values(value).forEach(day => {
@@ -141,7 +160,7 @@ async function purgePersonFromDocuments(db, personId, userId) {
     });
     return changed;
   }, userId);
-  await updateDocumentsWhere(db, "scope <> 'global' AND key = 'scheduleTemplates'", [], value => {
+  await updateDocumentsWhere(db, `${SHIFT_SCOPE_SQL} AND key = 'scheduleTemplates'`, [], value => {
     if (!Array.isArray(value)) return false;
     let changed = false;
     value.forEach(template => {
@@ -251,12 +270,12 @@ async function renameWorkItemReferences(db, from, to, userId) {
     return changed;
   }, userId);
   const weeklyPatterns = WEEKLY_SCHEDULE_PREFIXES.map(prefix => `${prefix}:%`);
-  await updateDocumentsWhere(db, "scope <> 'global' AND key LIKE ANY($1::text[])", [weeklyPatterns], (value, key) => {
+  await updateDocumentsWhere(db, `${SHIFT_SCOPE_SQL} AND key LIKE ANY($1::text[])`, [weeklyPatterns], (value, key) => {
     let changed = renameKey(value, from, to);
     if (key.startsWith("trainingLocations:") && renameLocationValues(value, from, to)) changed = true;
     return changed;
   }, userId);
-  await updateDocumentsWhere(db, "scope <> 'global' AND key = 'scheduleTemplates'", [], value => {
+  await updateDocumentsWhere(db, `${SHIFT_SCOPE_SQL} AND key = 'scheduleTemplates'`, [], value => {
     if (!Array.isArray(value)) return false;
     let changed = false;
     value.forEach(template => {
@@ -269,7 +288,7 @@ async function renameWorkItemReferences(db, from, to, userId) {
 
 async function countWorkItemUsage(db, name) {
   const { rows } = await db.query(
-    "SELECT value -> $1 AS days FROM documents WHERE scope <> 'global' AND key LIKE 'schedule:%' AND value ? $1",
+    `SELECT value -> $1 AS days FROM documents WHERE ${SHIFT_SCOPE_SQL} AND key LIKE 'schedule:%' AND value ? $1`,
     [name]
   );
   return rows.reduce((count, row) => count + Object.values(isPlainObject(row.days) ? row.days : {}).filter(Boolean).length, 0);
@@ -306,7 +325,7 @@ async function addAuditEvent(db, { scope, type = "", title = "", detail = "", un
 
 // Removes the personal documents ("Att göra") of the login that belongs to a person.
 async function deletePersonalDocuments(db, personId) {
-  await db.query("DELETE FROM documents WHERE scope IN (SELECT 'user:' || id FROM users WHERE person_id = $1)", [personId]);
+  await db.query("DELETE FROM documents WHERE scope IN (SELECT $2 || id FROM users WHERE person_id = $1)", [personId, PERSONAL_SCOPE_PREFIX]);
 }
 
 module.exports = {
@@ -318,6 +337,7 @@ module.exports = {
   readDocuments,
   writeDocument,
   putDocument,
+  mergeIntoPersonalList,
   purgePersonFromDocuments,
   deletePersonalDocuments,
   clearPersonFromShiftSchedules,

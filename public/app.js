@@ -5024,9 +5024,10 @@ async function importBackupFile(file) {
     await openLegacyImportDialog(payload.data, "file");
     return;
   }
-  if (!confirm("Importen ersätter scheman, inställningar och övrig data på servern. Personal och skift uppdateras, men ingen tas bort. Vill du fortsätta?")) return;
+  if (!confirm("Importen ersätter scheman, inställningar och övrig data på servern. Personal och skift uppdateras, men ingen tas bort. Allas egna att göra-listor lämnas orörda. Vill du fortsätta?")) return;
   const result = await apiRequest("POST", "/admin/import", payload);
-  showAppToast(`Backupen har lästs in: ${result.people} personer och ${result.documents} dataposter.`);
+  const todoNote = result.todos ? ` ${result.todos} uppgifter från skiftens gamla att göra-listor lades i din egen lista.` : "";
+  showAppToast(`Backupen har lästs in: ${result.people} personer och ${result.documents} dataposter.${todoNote}`);
   setTimeout(() => location.reload(), 900);
 }
 

@@ -66,7 +66,7 @@ Ange det gamla lösenordet och välj vilket skift personalen och schemana ska h�
 
 ### Backup
 
-Admin kan exportera och importera all data under **Inställningar** eller **Översikt**. Lösenord ingår aldrig i backupen. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
+Admin kan exportera och importera all data under **Inställningar** eller **Översikt**. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
 
 ## Utveckling lokalt
 

@@ -1,11 +1,15 @@
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
-const { isAdmin, AVAILABILITY_VALUES, documentCategory, personalScope, personalScopeOwner } = require("../permissions");
-const { putDocument, isPlainObject, serializeShift } = require("../store");
+const { isAdmin, AVAILABILITY_VALUES, documentCategory, personalScope, PERSONAL_SCOPE_PREFIX } = require("../permissions");
+const { putDocument, mergeIntoPersonalList, isPlainObject, serializeShift } = require("../store");
 const { cleanText, SHIFT_COLORS } = require("../validation");
 
-const EXPORT_VERSION = 2;
+// Version 3 leaves personal lists out. Version 2 backups kept "Att göra" per shift.
+const EXPORT_VERSION = 3;
+const IMPORT_VERSIONS = [2, 3];
+const NOT_PERSONAL_SQL = "scope NOT LIKE $1";
+const PERSONAL_SCOPE_PATTERN = `${PERSONAL_SCOPE_PREFIX}%`;
 
 function requireAdmin(req, res, next) {
   if (!isAdmin(req.user)) throw new HttpError(403, "Endast admin.");
@@ -38,12 +42,13 @@ function adminRoutes({ pool }) {
   const router = express.Router();
   router.use(requireUser, requireAdmin);
 
-  // Full backup of shifts, staff and app data. Passwords are never exported.
+  // Full backup of shifts, staff and app data. Passwords and personal lists
+  // ("Att göra", which only their owner may read) are never exported.
   router.get("/export", async (req, res) => {
     const [shifts, people, documents] = await Promise.all([
       pool.query("SELECT id, name, color, sort_order FROM shifts ORDER BY sort_order"),
       pool.query("SELECT id, name, company, phone, availability, shift_id, demo, created_at FROM people ORDER BY name"),
-      pool.query("SELECT scope, key, value FROM documents ORDER BY scope, key")
+      pool.query(`SELECT scope, key, value FROM documents WHERE ${NOT_PERSONAL_SQL} ORDER BY scope, key`, [PERSONAL_SCOPE_PATTERN])
     ]);
     res.setHeader("Content-Disposition", `attachment; filename="staff-planner-backup-${new Date().toISOString().slice(0, 10)}.json"`);
     res.json({
@@ -61,19 +66,25 @@ function adminRoutes({ pool }) {
 
   // Restores a backup made by /export. Documents are replaced; shifts and people
   // are updated or added, but nobody is removed, so no one loses their login.
+  // Personal lists are not in backups and are left as they are.
   router.post("/import", async (req, res) => {
     const payload = req.body;
-    if (payload?.app !== "Staff Planner" || payload.version !== EXPORT_VERSION
+    if (payload?.app !== "Staff Planner" || !IMPORT_VERSIONS.includes(payload.version)
       || !Array.isArray(payload.shifts) || !Array.isArray(payload.people) || !Array.isArray(payload.documents)) {
       throw new HttpError(400, "Filen är inte en giltig backup från den här versionen av Staff Planner.");
     }
     const shiftIds = new Set(payload.shifts.map(shift => shift?.id).filter(id => typeof id === "string" && id));
-    // Personal lists are restored only for logins that still exist; passwords are not in backups.
-    const userIds = new Set((await pool.query("SELECT id FROM users")).rows.map(row => row.id));
-    const documents = payload.documents.filter(doc =>
-      doc && typeof doc.scope === "string" && typeof doc.key === "string"
-      && (doc.scope === "global" || shiftIds.has(doc.scope) || userIds.has(personalScopeOwner(doc.scope)))
-      && documentCategory(doc.scope, doc.key));
+    const validDocs = payload.documents.filter(doc =>
+      doc && typeof doc.scope === "string" && typeof doc.key === "string" && (doc.scope === "global" || shiftIds.has(doc.scope)));
+    const documents = validDocs.filter(doc => documentCategory(doc.scope, doc.key));
+    // Version 2 backups kept one to-do list per shift. Those items join the importing
+    // admin's own list, in shift order, instead of being dropped.
+    const shiftOrder = [...shiftIds];
+    const oldTodos = payload.version === 2
+      ? validDocs.filter(doc => doc.scope !== "global" && doc.key === "todos" && Array.isArray(doc.value))
+        .sort((a, b) => shiftOrder.indexOf(a.scope) - shiftOrder.indexOf(b.scope))
+        .flatMap(doc => doc.value)
+      : [];
     await withTransaction(pool, async client => {
       for (const shift of payload.shifts) {
         const name = cleanText(shift?.name, 60);
@@ -90,10 +101,11 @@ function adminRoutes({ pool }) {
       for (const person of payload.people) {
         await upsertPerson(client, person, shiftIds.has(person?.shiftId) ? person.shiftId : null);
       }
-      await client.query("DELETE FROM documents");
+      await client.query(`DELETE FROM documents WHERE ${NOT_PERSONAL_SQL}`, [PERSONAL_SCOPE_PATTERN]);
       for (const doc of documents) await putDocument(client, doc.scope, doc.key, doc.value, req.user.id);
+      if (oldTodos.length) await mergeIntoPersonalList(client, req.user.id, "todos", oldTodos);
     });
-    res.json({ ok: true, shifts: shiftIds.size, people: payload.people.length, documents: documents.length });
+    res.json({ ok: true, shifts: shiftIds.size, people: payload.people.length, documents: documents.length, todos: oldTodos.length });
   });
 
   // Moves data from the old single-device version. The browser decrypts the old
@@ -104,9 +116,9 @@ function adminRoutes({ pool }) {
     if (!rows.length) throw new HttpError(400, "Välj vilket skift den gamla datan ska höra till.");
     const globalDocs = Object.entries(isPlainObject(global) ? global : {}).filter(([key]) => documentCategory("global", key));
     const shiftDocs = Object.entries(isPlainObject(shift) ? shift : {}).filter(([key]) => documentCategory(shiftId, key));
-    // The old version had one to-do list; it becomes the importing admin's own list.
+    // The old version had one to-do list; its items join the importing admin's own list.
     const personalDocs = Object.entries(isPlainObject(shift) ? shift : {})
-      .filter(([key]) => documentCategory(personalScope(req.user.id), key));
+      .filter(([key, value]) => documentCategory(personalScope(req.user.id), key) && Array.isArray(value));
     const peopleList = Array.isArray(people) ? people : [];
     let importedPeople = 0;
     await withTransaction(pool, async client => {
@@ -115,7 +127,7 @@ function adminRoutes({ pool }) {
       }
       for (const [key, value] of globalDocs) await putDocument(client, "global", key, value, req.user.id);
       for (const [key, value] of shiftDocs) await putDocument(client, shiftId, key, value, req.user.id);
-      for (const [key, value] of personalDocs) await putDocument(client, personalScope(req.user.id), key, value, req.user.id);
+      for (const [key, value] of personalDocs) await mergeIntoPersonalList(client, req.user.id, key, value);
     });
     res.json({ ok: true, people: importedPeople, documents: globalDocs.length + shiftDocs.length + personalDocs.length });
   });
