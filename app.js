@@ -2179,9 +2179,13 @@ async function renderSettings() {
       <label class="settings-switch"><input id="showTipsSetting" type="checkbox"${appSettings.showTips ? " checked" : ""} /><span>Visa tips och hjälptexter</span></label>
       <div class="settings-actions"><span id="settingsMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara inställningar</button></div>
     </form>
+    <section class="card settings-card"><div><h3>Utseende</h3><p>${window.staffTheme?.supported ? "Välj ljust eller mörkt läge. Valet gäller den här enheten och sparas direkt." : "Mörkt läge stöds inte i den här webbläsaren. Uppdatera webbläsaren för att använda det."}</p></div>${window.staffTheme?.supported ? `<fieldset><legend>Tema</legend><div class="settings-theme-grid">${[["light", "Ljust"], ["dark", "Mörkt"], ["system", "Följ enhetens inställning"]].map(([value, label]) => `<label><input type="radio" name="themePreference" value="${value}"${window.staffTheme.getPreference() === value ? " checked" : ""} /> ${label}</label>`).join("")}</div></fieldset>` : ""}</section>
     <section class="card settings-card"><div><h3>Maskiner, avdelningar och uppgifter</h3><p>Lägg till, redigera, pausa och ordna arbetsplatser från en samlad vy.</p></div><div class="settings-actions"><button id="removeDemoDataBtn" class="btn danger" type="button">Ta bort testdata</button><a class="btn primary settings-link" href="add.html#workItemForm">Öppna hanteraren</a></div></section>
     <section class="card settings-card"><div><h3>Säkerhet och historik</h3><p>${snapshots.length} säkerhetspunkter och ${automaticBackups.length} automatiska helhetskopior finns sparade.</p></div><details class="password-change"><summary>Byt lösenord</summary><form id="changePasswordForm"><label>Nuvarande lösenord<input id="currentPasswordSetting" type="password" autocomplete="current-password" required /></label><label>Nytt lösenord<input id="newPasswordSetting" type="password" minlength="6" autocomplete="new-password" required /></label><label>Bekräfta nytt lösenord<input id="confirmPasswordSetting" type="password" minlength="6" autocomplete="new-password" required /></label><div class="settings-actions"><span id="passwordChangeMessage" class="inline-message"></span><button class="btn primary" type="submit">Spara nytt lösenord</button></div></form></details><div class="settings-actions"><button id="exportSettingsBackupBtn" class="btn" type="button">Exportera backup</button></div><h4>Automatiska helhetskopior</h4><div class="snapshot-list">${automaticBackups.map(item => `<article><div><strong>Automatisk backup</strong><small>${new Date(item.createdAt).toLocaleString("sv-SE")}</small></div><button class="btn" type="button" data-restore-auto-backup="${item.id}">Återställ</button></article>`).join("") || '<div class="empty-state">Den första kopian skapas automatiskt idag.</div>'}</div><h4>Säkerhetspunkter för arbetsplatser</h4><div id="snapshotList" class="snapshot-list">${snapshots.map(item => `<article><div><strong>${escapeHtml(item.reason)}</strong><small>${new Date(item.createdAt).toLocaleString("sv-SE")}</small></div><button class="btn" type="button" data-restore-snapshot="${item.id}">Återställ</button></article>`).join("") || '<div class="empty-state">Inga säkerhetspunkter ännu.</div>'}</div></section>`;
   root.querySelector("#autoLockSetting").value = String(appSettings.autoLockMinutes);
+  root.querySelectorAll('[name="themePreference"]').forEach(input => input.addEventListener("change", () => {
+    if (input.checked) window.staffTheme.setPreference(input.value);
+  }));
   bindOnce(root.querySelector("#generalSettingsForm"), "submit", async event => {
     event.preventDefault();
     const workDays = [...root.querySelectorAll('[name="workDay"]:checked')].map(input => input.value);
@@ -4770,6 +4774,45 @@ function setupMobileNavigation() {
   });
 }
 
+const THEME_LABELS = { light: "Ljust läge", dark: "Mörkt läge" };
+
+function updateThemeToggles() {
+  const theme = window.staffTheme?.current() || "light";
+  const next = theme === "dark" ? "light" : "dark";
+  document.querySelectorAll(".theme-toggle").forEach(button => {
+    button.dataset.nextTheme = next;
+    button.setAttribute("aria-label", `Byt till ${THEME_LABELS[next].toLowerCase()}`);
+    button.title = `Byt till ${THEME_LABELS[next].toLowerCase()}`;
+    button.querySelector(".theme-toggle-icon").textContent = next === "dark" ? "☾" : "☀";
+    button.querySelector(".theme-toggle-label").textContent = THEME_LABELS[next];
+  });
+  document.querySelectorAll('[name="themePreference"]').forEach(input => {
+    input.checked = input.value === window.staffTheme?.getPreference();
+  });
+}
+
+function setupThemeToggles() {
+  if (!window.staffTheme?.supported) return;
+  const createToggle = extraClass => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `theme-toggle ${extraClass}`;
+    button.innerHTML = '<span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label"></span>';
+    button.addEventListener("click", () => window.staffTheme.setPreference(button.dataset.nextTheme));
+    return button;
+  };
+  const logoutButton = document.querySelector(".sidebar .sidebar-logout");
+  if (logoutButton && !document.querySelector(".sidebar .theme-toggle")) {
+    logoutButton.insertAdjacentElement("beforebegin", createToggle("sidebar-theme-toggle"));
+  }
+  const authScreen = document.getElementById("authScreen");
+  if (authScreen && !authScreen.querySelector(".theme-toggle")) {
+    authScreen.prepend(createToggle("auth-theme-toggle"));
+  }
+  document.addEventListener("staff-themechange", updateThemeToggles);
+  updateThemeToggles();
+}
+
 function setupFilterControls() {
   [
     ["peopleSearch", "input", renderPeople], ["availabilityFilter", "change", renderPeople],
@@ -5415,6 +5458,7 @@ try {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  setupThemeToggles();
   void setupAuthUI().catch(error => {
     console.error("App startup failed:", error);
     setAuthenticatedView(false);
