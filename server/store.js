@@ -160,6 +160,25 @@ function currentWeekKey(timeZone = process.env.APP_TIME_ZONE || "Europe/Stockhol
   return date.toISOString().slice(0, 10);
 }
 
+// First day still kept on the production page: the current month, plus last month
+// until the 10th. From the 10th, last month's days are removed.
+function productionRetentionStart(now = new Date(), timeZone = process.env.APP_TIME_ZONE || "Europe/Stockholm") {
+  const [year, month, day] = now.toLocaleDateString("sv-SE", { timeZone }).split("-").map(Number);
+  const start = new Date(Date.UTC(year, month - 1 - (day >= 10 ? 0 : 1), 1));
+  return start.toISOString().slice(0, 10);
+}
+
+// Removes production days older than productionRetentionStart from every shift.
+async function purgeExpiredProductionRecords(db, now = new Date()) {
+  const start = productionRetentionStart(now);
+  return updateDocumentsWhere(db, "key = 'productionRecords'", [], value => {
+    if (!isPlainObject(value)) return false;
+    const expired = Object.keys(value).filter(date => date < start);
+    expired.forEach(date => delete value[date]);
+    return expired.length > 0;
+  });
+}
+
 // Takes someone who moved to another shift out of the old shift's schedules from
 // this week on. Earlier weeks keep their history.
 async function clearPersonFromShiftSchedules(db, personId, shiftId, userId) {
@@ -303,6 +322,8 @@ module.exports = {
   deletePersonalDocuments,
   clearPersonFromShiftSchedules,
   currentWeekKey,
+  productionRetentionStart,
+  purgeExpiredProductionRecords,
   renameWorkItemReferences,
   countWorkItemUsage,
   createSafetySnapshot,

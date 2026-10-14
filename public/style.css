@@ -5552,3 +5552,21 @@ button {
 .schedule-unshared-notice p {
   margin: 0;
 }
+
+.production-save-status {
+  align-self: center;
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.production-save-status.is-saved {
+  color: #187347;
+  color: light-dark(#187347, #75c897);
+}
+
+.production-save-status.is-error {
+  color: #b42318;
+  color: light-dark(#b42318, #ff8d7c);
+}
