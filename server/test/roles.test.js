@@ -258,6 +258,19 @@ describe("roles and permissions", () => {
     assert.equal((await admin.patch(`/api/people/${adminMe.data.person.id}/account`, { role: "operator" })).status, 400);
   });
 
+  test("admin manages any profile, including the username", async () => {
+    const nils = (await admin.get("/api/people")).data.people.find(person => person.account?.username === "nils");
+    const updated = await admin.patch(`/api/people/${nils.id}`, { name: "Nils Nyman", phone: "070-000 00 00", availability: "vacation", shiftId: eveningShift.id });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.data.person.availability, "vacation");
+    assert.equal(updated.data.person.shiftId, eveningShift.id);
+    assert.equal((await leader.patch(`/api/people/${nils.id}/account`, { username: "nils.n" })).status, 403);
+    const renamed = await admin.patch(`/api/people/${nils.id}/account`, { username: "Nils.Nyman" });
+    assert.equal(renamed.status, 200);
+    assert.equal(renamed.data.person.account.username, "nils.nyman");
+    assert.equal((await admin.patch(`/api/people/${nils.id}/account`, { username: "ada" })).status, 409, "usernames stay unique");
+  });
+
   test("admin changes roles and removes logins", async () => {
     const promoted = await admin.patch(`/api/people/${erikPerson.id}/account`, { role: "shift_leader" });
     assert.equal(promoted.status, 200);

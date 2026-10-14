@@ -5085,6 +5085,7 @@ function renderAccountSection(person) {
   if (person.account) {
     const lastLogin = person.account.lastLoginAt ? new Date(person.account.lastLoginAt).toLocaleString("sv-SE") : "aldrig";
     return `<p><strong>${escapeHtml(person.account.username)}</strong> · ${escapeHtml(ROLE_LABELS[person.account.role] || "")} · senast inloggad ${escapeHtml(lastLogin)}${person.account.mustChangePassword ? " · väntar på nytt lösenord" : ""}</p>
+      ${isAdmin() ? `<div class="person-account-row"><label>Användarnamn<input name="username" value="${escapeHtml(person.account.username)}" autocomplete="off" maxlength="60" /></label><button class="btn" type="button" data-account-action="username">Spara användarnamn</button></div>` : ""}
       ${isAdmin() && person.id !== currentPerson?.id ? `<div class="person-account-row"><label>Roll<select name="role">${roleOptionsHtml(person.account.role)}</select></label><button class="btn" type="button" data-account-action="role">Spara roll</button></div>` : ""}
       ${canResetPasswordFor(person) && person.id !== currentPerson?.id ? `<div class="person-account-row"><label>Tillfälligt lösenord<input name="resetPassword" autocomplete="off" minlength="${MIN_PASSWORD_LENGTH}" /></label><button class="btn" type="button" data-account-action="suggest">Föreslå</button><button class="btn" type="button" data-account-action="reset">Återställ lösenord</button></div>` : ""}
       ${isAdmin() && person.id !== currentPerson?.id ? '<div class="person-account-row"><button class="btn danger" type="button" data-account-action="remove">Ta bort inloggning</button></div>' : ""}`;
@@ -5100,12 +5101,14 @@ async function editPerson(id) {
   if (!person || !canEditPerson(person)) return;
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
+  const availability = getPersonAvailability(person);
   overlay.innerHTML = `<section class="replacement-modal person-modal">
-    <h3>${escapeHtml(person.name)}</h3>
+    <h3>Profil: ${escapeHtml(person.name)}</h3>
     <form class="person-modal-form">
       <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required /></label>
       <label>Företag<input name="company" value="${escapeHtml(person.company || "")}" maxlength="120" /></label>
       <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" /></label>
+      <label>Status<select name="availability">${AVAILABILITY_OPTIONS.map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select></label>
       <label>Skift<select name="shiftId"${isAdmin() ? "" : " disabled"}>${shiftOptionsHtml(person.shiftId)}</select>${isAdmin() ? "" : "<small>Endast admin kan flytta personal mellan skift.</small>"}</label>
       <div><button class="btn" type="button" data-action="close">Stäng</button><button class="btn primary" type="submit">Spara</button></div>
     </form>
@@ -5134,11 +5137,16 @@ async function editPerson(id) {
     const changes = {
       name: form.elements.name.value.trim(),
       company: form.elements.company.value.trim(),
-      phone: form.elements.phone.value.trim()
+      phone: form.elements.phone.value.trim(),
+      availability: form.elements.availability.value
     };
     if (isAdmin()) changes.shiftId = form.elements.shiftId.value || null;
     if (!changes.name) return showStatus("Namnet får inte vara tomt.", "error");
-    await updatePerson(person.id, changes);
+    const updated = await updatePerson(person.id, changes);
+    // Someone marked as away is taken out of this week's schedule, as on the staff list.
+    if (changes.availability !== "available" && changes.availability !== availability && updated.shiftId) {
+      await removePersonFromSelectedWeek(updated.id, updated.shiftId);
+    }
     await addAuditEvent("person", `${changes.name} redigerad`, changes.company);
     changed = true;
     close();
@@ -5163,6 +5171,10 @@ async function editPerson(id) {
         if (password.length < MIN_PASSWORD_LENGTH) return showStatus(`Lösenordet måste vara minst ${MIN_PASSWORD_LENGTH} tecken.`, "error");
         result = await apiRequest("POST", `/people/${encodeURIComponent(person.id)}/account`, { username, password, role: field("newRole").value });
         showStatus(loginInstructions(result.person.account.username, password));
+      } else if (action === "username") {
+        result = await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { username: field("username").value.trim() });
+        showStatus(`Användarnamnet är nu ${result.person.account.username}.`);
+        if (person.id === currentPerson?.id) currentUser = { ...currentUser, username: result.person.account.username };
       } else if (action === "role") {
         result = await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { role: field("role").value });
         showStatus(`Rollen är nu ${ROLE_LABELS[result.person.account.role]}.`);
