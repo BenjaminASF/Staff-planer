@@ -11,7 +11,7 @@ const todo = text => ({ id: text, text, createdAt: "2026-10-14T08:00:00.000Z", c
 describe("personal to-do lists", () => {
   let server;
   let admin, leader, operator;
-  let adminUser, leaderUser, operatorUser, operatorPerson, shift;
+  let adminUser, leaderUser, operatorUser, shift;
 
   before(async () => {
     server = await startTestServer();
@@ -21,7 +21,7 @@ describe("personal to-do lists", () => {
     adminUser = (await admin.post("/api/setup", { setupCode: SETUP_CODE, name: "Ada Admin", username: "ada", password: PASSWORD })).data.user;
     shift = (await admin.get("/api/shifts")).data.shifts[0];
     await admin.post("/api/people", { name: "Lisa Ledare", shiftId: shift.id, account: { username: "lisa", password: PASSWORD, role: "shift_leader", mustChangePassword: false } });
-    operatorPerson = (await admin.post("/api/people", { name: "Olle Operatör", shiftId: shift.id, account: { username: "olle", password: PASSWORD, role: "operator", mustChangePassword: false } })).data.person;
+    await admin.post("/api/people", { name: "Olle Operatör", shiftId: shift.id, account: { username: "olle", password: PASSWORD, role: "operator", mustChangePassword: false } });
     leaderUser = (await leader.login("lisa", PASSWORD)).user;
     operatorUser = (await operator.login("olle", PASSWORD)).user;
   });
@@ -30,13 +30,13 @@ describe("personal to-do lists", () => {
     await server?.close();
   });
 
-  test("each user reads and writes only their own list", async () => {
+  const ownTexts = async (client, user) =>
+    (await client.get(`/api/documents?scope=user:${user.id}&keys=todos`)).data.documents.todos?.value.map(item => item.text) || [];
+
+  test("each admin and shift leader reads and writes only their own list", async () => {
     assert.equal((await admin.put(`/api/documents/user:${adminUser.id}/todos`, { value: [todo("Admin")], baseVersion: 0 })).status, 200);
     assert.equal((await leader.put(`/api/documents/user:${leaderUser.id}/todos`, { value: [todo("Ledare")], baseVersion: 0 })).status, 200);
-    assert.equal((await operator.put(`/api/documents/user:${operatorUser.id}/todos`, { value: [todo("Operatör")], baseVersion: 0 })).status, 200);
-
-    const own = await leader.get(`/api/documents?scope=user:${leaderUser.id}&keys=todos`);
-    assert.deepEqual(own.data.documents.todos.value.map(item => item.text), ["Ledare"]);
+    assert.deepEqual(await ownTexts(leader, leaderUser), ["Ledare"]);
 
     const others = await admin.get(`/api/documents?scope=user:${leaderUser.id}&keys=todos`);
     assert.deepEqual(others.data.forbidden, ["todos"], "not even an admin reads someone else's list");
@@ -44,26 +44,79 @@ describe("personal to-do lists", () => {
     assert.equal((await operator.put(`/api/documents/user:${adminUser.id}/todos`, { value: [], baseVersion: 1 })).status, 403);
   });
 
-  test("to-do lists no longer belong to a shift", async () => {
-    assert.equal((await admin.put(`/api/documents/${shift.id}/todos`, { value: [], baseVersion: 0 })).status, 400);
-    assert.equal((await admin.put(`/api/documents/user:${adminUser.id}/schedule:2026-10-12`, { value: {}, baseVersion: 0 })).status, 400);
+  test("operators have no to-do list, like the page access says", async () => {
+    assert.equal((await operator.put(`/api/documents/user:${operatorUser.id}/todos`, { value: [todo("Operatör")], baseVersion: 0 })).status, 403);
+    assert.deepEqual((await operator.get(`/api/documents?scope=user:${operatorUser.id}&keys=todos`)).data.forbidden, ["todos"]);
   });
 
-  test("removing a login removes its list", async () => {
-    assert.equal((await admin.delete(`/api/people/${operatorPerson.id}/account`)).status, 200);
-    const { rows } = await server.pool.query("SELECT 1 FROM documents WHERE scope = $1", [`user:${operatorUser.id}`]);
+  test("personal scopes reveal nothing and take no audit events", async () => {
+    const unknown = await leader.get("/api/documents?scope=user:no-such-user&keys=todos");
+    assert.equal(unknown.status, 200, "a missing user looks the same as someone else's list");
+    assert.deepEqual(unknown.data.forbidden, ["todos"]);
+    assert.equal((await admin.post("/api/audit", { scope: `user:${leaderUser.id}`, title: "x" })).status, 403);
+    assert.equal((await admin.post("/api/audit", { scope: `user:${adminUser.id}`, title: "x" })).status, 403);
+  });
+
+  test("to-do lists no longer belong to a shift", async () => {
+    assert.equal((await admin.put(`/api/documents/user:${adminUser.id}/schedule:2026-10-12`, { value: {}, baseVersion: 0 })).status, 400);
+    const { rows } = await server.pool.query("SELECT 1 FROM documents WHERE scope = $1 AND key = 'todos'", [shift.id]);
     assert.equal(rows.length, 0);
   });
 
-  test("backups keep personal lists", async () => {
-    const backup = (await admin.get("/api/admin/export")).data;
-    await admin.put(`/api/documents/user:${adminUser.id}/todos`, { value: [], baseVersion: 1 });
-    assert.equal((await admin.post("/api/admin/import", backup)).status, 200);
-    const own = await admin.get(`/api/documents?scope=user:${adminUser.id}&keys=todos`);
-    assert.deepEqual(own.data.documents.todos.value.map(item => item.text), ["Admin"]);
+  test("pages opened before the change save to the user's own list without replacing it", async () => {
+    const stale = await leader.put(`/api/documents/${shift.id}/todos`, { value: [todo("Gammal flik")], baseVersion: 3 });
+    assert.equal(stale.status, 200);
+    assert.deepEqual(await ownTexts(leader, leaderUser), ["Ledare", "Gammal flik"]);
+    const done = { ...todo("Gammal flik"), completedAt: "2026-10-14T09:00:00.000Z" };
+    assert.equal((await leader.put(`/api/documents/${shift.id}/todos`, { value: [done], baseVersion: stale.data.version })).status, 200);
+    const { rows } = await server.pool.query("SELECT value FROM documents WHERE scope = $1 AND key = 'todos'", [`user:${leaderUser.id}`]);
+    assert.deepEqual(rows[0].value.map(item => [item.text, item.completedAt]), [["Ledare", ""], ["Gammal flik", done.completedAt]]);
+    assert.equal((await operator.put(`/api/documents/${shift.id}/todos`, { value: [todo("Operatör")], baseVersion: 0 })).status, 400);
   });
 
-  test("existing shift lists move to the shift's leaders, or to admins when it has none", async () => {
+  test("backups leave personal lists out and imports leave them alone", async () => {
+    const backup = (await admin.get("/api/admin/export")).data;
+    assert.equal(backup.version, 3);
+    assert.deepEqual(backup.documents.filter(doc => doc.scope.startsWith("user:")), []);
+
+    const forged = { ...backup, documents: [...backup.documents, { scope: `user:${leaderUser.id}`, key: "todos", value: [todo("Planterad")] }] };
+    assert.equal((await admin.post("/api/admin/import", forged)).status, 200);
+    assert.deepEqual(await ownTexts(leader, leaderUser), ["Ledare", "Gammal flik"]);
+    assert.deepEqual(await ownTexts(admin, adminUser), ["Admin"]);
+  });
+
+  test("version 2 backups bring shift lists into the importing admin's own list", async () => {
+    const backup = (await admin.get("/api/admin/export")).data;
+    const old = {
+      ...backup,
+      version: 2,
+      documents: [
+        ...backup.documents,
+        { scope: shift.id, key: "todos", value: [todo("Från backup 1"), todo("Från backup 2")] },
+        { scope: `user:${leaderUser.id}`, key: "todos", value: [todo("Planterad")] }
+      ]
+    };
+    const result = await admin.post("/api/admin/import", old);
+    assert.equal(result.status, 200);
+    assert.equal(result.data.todos, 2);
+    assert.deepEqual(await ownTexts(admin, adminUser), ["Admin", "Från backup 1", "Från backup 2"]);
+    assert.deepEqual(await ownTexts(leader, leaderUser), ["Ledare", "Gammal flik"]);
+  });
+
+  test("the old single-device list joins the admin's own list instead of replacing it", async () => {
+    const result = await admin.post("/api/admin/import-legacy", { shiftId: shift.id, people: [], global: {}, shift: { todos: [todo("Från gamla appen")] } });
+    assert.equal(result.status, 200);
+    assert.deepEqual(await ownTexts(admin, adminUser), ["Admin", "Från backup 1", "Från backup 2", "Från gamla appen"]);
+  });
+
+  test("removing a login removes its list", async () => {
+    const leaderPerson = (await admin.get("/api/people")).data.people.find(person => person.name === "Lisa Ledare");
+    assert.equal((await admin.delete(`/api/people/${leaderPerson.id}/account`)).status, 200);
+    const { rows } = await server.pool.query("SELECT 1 FROM documents WHERE scope = $1", [`user:${leaderUser.id}`]);
+    assert.equal(rows.length, 0);
+  });
+
+  test("existing shift lists move to the shift's leaders, or to admins when it has none, in shift order", async () => {
     await server.pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
     await server.pool.query("CREATE TABLE schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
     for (const name of ["001_init.sql", "002_shift_colors.sql"]) {
@@ -71,17 +124,18 @@ describe("personal to-do lists", () => {
       await server.pool.query("INSERT INTO schema_migrations (name) VALUES ($1)", [name]);
     }
     await server.pool.query(`
-      INSERT INTO shifts (id, name) VALUES ('a', 'A'), ('b', 'B');
+      INSERT INTO shifts (id, name, sort_order) VALUES ('a', 'A', 0), ('b', 'B', 2), ('c', 'C', 1);
       INSERT INTO people (id, name, shift_id) VALUES ('p-admin', 'Admin', NULL), ('p-lead', 'Ledare', 'a'), ('p-op', 'Operatör', 'a');
       INSERT INTO users (id, person_id, username, password_hash, role) VALUES
         ('u-admin', 'p-admin', 'admin', 'x', 'admin'), ('u-lead', 'p-lead', 'lead', 'x', 'shift_leader'), ('u-op', 'p-op', 'op', 'x', 'operator');
       INSERT INTO documents (scope, key, value) VALUES
-        ('a', 'todos', '[{"id": "1", "text": "Från A"}]'), ('b', 'todos', '[{"id": "2", "text": "Från B"}]');
+        ('a', 'todos', '[{"id": "1", "text": "Från A"}]'), ('b', 'todos', '[{"id": "2", "text": "Från B"}]'),
+        ('c', 'todos', '[{"id": "3", "text": "Från C 1"}, {"id": "4", "text": "Från C 2"}, {"id": "5", "text": "Från C 3"}]');
     `);
     await runMigrations(server.pool);
     const { rows } = await server.pool.query("SELECT scope, value FROM documents WHERE key = 'todos' ORDER BY scope");
     assert.deepEqual(rows.map(row => [row.scope, row.value.map(item => item.text)]), [
-      ["user:u-admin", ["Från B"]],
+      ["user:u-admin", ["Från C 1", "Från C 2", "Från C 3", "Från B"]],
       ["user:u-lead", ["Från A"]]
     ]);
   });

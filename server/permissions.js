@@ -8,8 +8,8 @@
 // Operatör     – sees their own shift's schedule and break plan, edits their own
 //                profile (name, phone, status) and password.
 //
-// Personal documents ("Att göra") belong to one user and only that user reads
-// and writes them, whatever the role.
+// Personal documents ("Att göra") belong to one admin or shift leader, and only
+// that user reads and writes them. Backups leave them out.
 
 const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", OPERATOR: "operator" });
 const ROLE_VALUES = Object.values(ROLES);
@@ -55,6 +55,7 @@ const isLeader = user => user?.role === ROLES.LEADER;
 const isAdminOrLeader = user => isAdmin(user) || isLeader(user);
 const leadsShift = (user, shiftId) => isLeader(user) && Boolean(user.shiftId) && user.shiftId === shiftId;
 const canEditShift = (user, shiftId) => isAdmin(user) || leadsShift(user, shiftId);
+const ownsPersonalScope = (user, scope) => isAdminOrLeader(user) && Boolean(user.id) && personalScopeOwner(scope) === user.id;
 
 function documentCategory(scope, key) {
   if (typeof key !== "string" || typeof scope !== "string") return null;
@@ -73,7 +74,7 @@ function canReadDocument(user, scope, key) {
     // Shift leaders may look at every shift's schedule; operators only their own.
     case "shiftPlan": return isAdminOrLeader(user) || (Boolean(user?.shiftId) && user.shiftId === scope);
     case "shiftWork": return canEditShift(user, scope);
-    case "personal": return Boolean(user?.id) && personalScopeOwner(scope) === user.id;
+    case "personal": return ownsPersonalScope(user, scope);
     default: return false;
   }
 }
@@ -86,12 +87,14 @@ function canWriteDocument(user, scope, key) {
     case "sensitive": return isAdmin(user);
     case "shiftPlan":
     case "shiftWork": return canEditShift(user, scope);
-    case "personal": return Boolean(user?.id) && personalScopeOwner(scope) === user.id;
+    case "personal": return ownsPersonalScope(user, scope);
     default: return false;
   }
 }
 
+// Audit events belong to global or a shift; personal lists have no history.
 function canReadAuditScope(user, scope) {
+  if (personalScopeOwner(scope) !== null) return false;
   return scope === "global" ? isAdminOrLeader(user) : canEditShift(user, scope);
 }
 
@@ -148,6 +151,7 @@ module.exports = {
   AVAILABILITY_VALUES,
   GLOBAL_DOCUMENTS,
   WEEKLY_SCHEDULE_PREFIXES,
+  PERSONAL_SCOPE_PREFIX,
   personalScope,
   personalScopeOwner,
   isAdmin,

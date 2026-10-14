@@ -2,21 +2,18 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScopeOwner
+  isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScope, personalScopeOwner
 } = require("../permissions");
 const {
-  readDocuments, writeDocument, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot, addAuditEvent
+  readDocuments, writeDocument, mergeIntoPersonalList, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot,
+  addAuditEvent
 } = require("../store");
 const { cleanText } = require("../validation");
 
+// Personal scopes are not looked up: only their owner, who is signed in, gets
+// past the permission check, and others must not learn which user ids exist.
 async function assertScopeExists(db, scope) {
-  if (scope === "global") return;
-  const owner = personalScopeOwner(scope);
-  if (owner) {
-    const { rows } = await db.query("SELECT 1 FROM users WHERE id = $1", [owner]);
-    if (!rows.length) throw new HttpError(404, "Användaren finns inte.");
-    return;
-  }
+  if (scope === "global" || personalScopeOwner(scope)) return;
   const { rows } = await db.query("SELECT 1 FROM shifts WHERE id = $1", [scope]);
   if (!rows.length) throw new HttpError(404, "Skiftet finns inte.");
 }
@@ -39,6 +36,12 @@ function documentRoutes({ pool }) {
   // Saves one document. baseVersion is the version the client last read (0 if it did not exist).
   router.put("/documents/:scope/:key", async (req, res) => {
     const { scope, key } = req.params;
+    // Pages opened before "Att göra" became personal still save it to the shift.
+    // Until they reload, their items join the user's own list so nothing is lost.
+    if (key === "todos" && scope !== "global" && !personalScopeOwner(scope)
+      && canWriteDocument(req.user, personalScope(req.user.id), key) && Array.isArray(req.body?.value)) {
+      return res.json(await withTransaction(pool, client => mergeIntoPersonalList(client, req.user.id, key, req.body.value)));
+    }
     if (!documentCategory(scope, key)) throw new HttpError(400, "Okänd datatyp.");
     if (!canWriteDocument(req.user, scope, key)) {
       throw new HttpError(403, "Du har inte behörighet att ändra det här. Du kan bara ändra ditt eget skift.");
