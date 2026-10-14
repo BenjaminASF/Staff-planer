@@ -19,7 +19,6 @@ let customWorkItems = [];
 
 const ALL_DAYS = ["Måndag", "Tisdag", "Onsdag", "Torsdag", "Fredag"];
 let DAYS = [...ALL_DAYS];
-const DEFAULT_PEOPLE = [];
 const DEFAULT_DEPARTMENTS = ["GD", "ETIKETTO", "Logimark", "Packa"];
 let BREAK_LINE_WORKPLACES = {
   GD1: ["GD1", "ETIKETTO", "Packa L1"],
@@ -66,46 +65,44 @@ const PERFORMANCE_ASSESSMENT_ITEMS = [
   "Attityd till arbete, regler och skiftarbete"
 ];
 
-const STORAGE_KEYS = {
-  sessionPassword: "app_session_password",
+// Key names used by the old single-device version, where everything was stored
+// encrypted in this browser. Only used to move that data to the server.
+const LEGACY_STORAGE_KEYS = {
   salt: "app_salt",
   check: "app_check",
-  people: "staff_people_enc",
-  peopleYear: "staff_people_year",
-  schedule: "staff_schedule_enc",
-  scheduleWeek: "staff_schedule_week",
-  scheduleUpdatedAt: "staff_schedule_updated_at",
-  trainingLeaders: "staff_training_leaders_enc",
-  trainingLeadersWeek: "staff_training_leaders_week",
-  trainingLocations: "staff_training_locations_enc",
-  trainingLocationsWeek: "staff_training_locations_week",
-  extraPersonLocations: "staff_extra_person_locations_enc",
-  breakPlan: "staff_break_plan_enc",
-  breakPlanWeek: "staff_break_plan_week",
-  schedulePriorityLines: "staff_schedule_priority_lines_enc",
-  assessments: "staff_assessments_enc",
-  departments: "staff_departments_enc",
-  testResults: "staff_test_results_enc",
-  machineSkills: "staff_machine_skills_enc",
-  machineSkillUpdatedAt: "staff_machine_skill_updated_at_enc",
-  machineRestrictions: "staff_machine_restrictions_enc",
-  machineSkillDetails: "staff_machine_skill_details_enc",
-  trainingReminderDismissedDay: "staff_training_reminder_dismissed_day",
-  auditLog: "staff_audit_log_enc",
-  productionRecords: "staff_production_records_enc",
-  productionSettings: "staff_production_settings_enc",
-  todos: "staff_todos_enc",
-  workItems: "staff_work_items_enc",
-  workItemTrash: "staff_work_item_trash_enc",
-  safetySnapshots: "staff_safety_snapshots_enc",
-  automaticBackups: "staff_automatic_backups_enc",
-  scheduleTemplates: "staff_schedule_templates_enc",
-  dataSchemaVersion: "staff_data_schema_version",
-  appSettings: "staff_app_settings_enc",
-  legacyPeople: "staff_people",
-  legacySchedule: "staff_schedule"
+  people: "staff_people_enc"
+};
+const LEGACY_GLOBAL_DOCUMENTS = {
+  staff_app_settings_enc: "appSettings",
+  staff_work_items_enc: "workItems",
+  staff_work_item_trash_enc: "workItemTrash",
+  staff_departments_enc: "departments",
+  staff_production_settings_enc: "productionSettings",
+  staff_machine_skills_enc: "machineSkills",
+  staff_machine_skill_updated_at_enc: "machineSkillUpdatedAt",
+  staff_machine_restrictions_enc: "machineRestrictions",
+  staff_machine_skill_details_enc: "machineSkillDetails",
+  staff_assessments_enc: "assessments",
+  staff_test_results_enc: "testResults"
+};
+const LEGACY_SHIFT_DOCUMENTS = {
+  staff_schedule_templates_enc: "scheduleTemplates",
+  staff_todos_enc: "todos",
+  staff_production_records_enc: "productionRecords"
+};
+// Weekly keys keep their ":YYYY-MM-DD" suffix.
+const LEGACY_WEEKLY_DOCUMENTS = {
+  staff_schedule_enc: "schedule",
+  staff_training_leaders_enc: "trainingLeaders",
+  staff_training_locations_enc: "trainingLocations",
+  staff_extra_person_locations_enc: "extraPersonLocations",
+  staff_break_plan_enc: "breakPlan",
+  staff_schedule_priority_lines_enc: "schedulePriorityLines"
 };
 
+const TRAINING_REMINDER_DISMISSED_KEY = "staff_training_reminder_dismissed_day";
+const ACTIVE_SHIFT_KEY = "staff_active_shift";
+const SIGNED_IN_HINT_KEY = "staff_signed_in";
 const SELECTED_WEEK_KEY = "staff_selected_week";
 const DEFAULT_APP_SETTINGS = {
   workDays: [...ALL_DAYS],
@@ -125,24 +122,35 @@ const DEFAULT_APP_SETTINGS = {
 };
 let appSettings = { ...DEFAULT_APP_SETTINGS };
 
-const AUTH_MODES = {
-  login: {
-    title: "Logga in",
-    buttonText: "Logga in",
-    showConfirm: false
-  },
-  create: {
-    title: "Skapa lösenord",
-    buttonText: "Spara lösenord",
-    showConfirm: true
-  }
+const ROLES = { ADMIN: "admin", LEADER: "shift_leader", OPERATOR: "operator" };
+const ROLE_LABELS = { admin: "Admin", shift_leader: "Skiftledare", operator: "Operatör" };
+// Pages each role may open. The server enforces the same rules (server/permissions.js);
+// this only decides what is shown.
+const PAGE_ACCESS = {
+  "dashboard.html": [ROLES.ADMIN, ROLES.LEADER],
+  "index.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR],
+  "produktion.html": [ROLES.ADMIN, ROLES.LEADER],
+  "rast.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR],
+  "personal.html": [ROLES.ADMIN, ROLES.LEADER],
+  "testresultat.html": [ROLES.ADMIN],
+  "maskiner.html": [ROLES.ADMIN],
+  "bedomning.html": [ROLES.ADMIN],
+  "todo.html": [ROLES.ADMIN, ROLES.LEADER],
+  "add.html": [ROLES.ADMIN, ROLES.LEADER],
+  "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
+  "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR],
+  "hjalp.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR]
 };
+// Shift leaders may look at other shifts here, read-only. Everywhere else they work in their own shift.
+const SHIFT_BROWSING_PAGES = ["index.html", "rast.html"];
+const MIN_PASSWORD_LENGTH = 8;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
-let sessionKey = null;
-let appUnlocked = false;
+let currentUser = null;
+let currentPerson = null;
+let shifts = [];
 let addMessageTimeoutId = null;
 function getDefaultBreakDay() {
   const weekday = new Date().getDay();
@@ -202,10 +210,6 @@ function formatDateKey(date) {
   ].join("-");
 }
 
-function getCurrentYearKey() {
-  return String(new Date().getFullYear());
-}
-
 function getActualStartOfWeek() {
   const today = new Date();
   const day = today.getDay();
@@ -248,10 +252,6 @@ function getStartOfWeek() {
 
 function getSelectedWeekKey() {
   return formatDateKey(getStartOfWeek());
-}
-
-function getWeekStorageKey(baseKey) {
-  return `${baseKey}:${getSelectedWeekKey()}`;
 }
 
 function getDatesForWeek() {
@@ -327,56 +327,198 @@ function makeId() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-function getJsonItem(key, fallback) {
-  const raw = localStorage.getItem(key);
-  if (!raw) return fallback;
+// Roles and shifts.
 
-  try {
-    return JSON.parse(raw);
-  } catch (error) {
-    console.error(`Could not parse localStorage item: ${key}`, error);
-    return fallback;
+const hasRole = (...roles) => Boolean(currentUser) && roles.includes(currentUser.role);
+const isAdmin = () => hasRole(ROLES.ADMIN);
+const isShiftLeader = () => hasRole(ROLES.LEADER);
+const isOperator = () => hasRole(ROLES.OPERATOR);
+const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+
+function getCurrentPage() {
+  return location.pathname.split("/").pop() || "index.html";
+}
+
+function canOpenPage(page) {
+  return (PAGE_ACCESS[page] || []).includes(currentUser?.role);
+}
+
+function getOwnShiftId() {
+  return currentPerson?.shiftId || "";
+}
+
+function getShiftName(shiftId) {
+  return shifts.find(shift => shift.id === shiftId)?.name || "";
+}
+
+function canBrowseShifts() {
+  return isAdmin() || (isShiftLeader() && SHIFT_BROWSING_PAGES.includes(getCurrentPage()));
+}
+
+// The shift whose schedule, break plan and other shift data this page shows.
+function getShiftScope() {
+  if (!currentUser) return "";
+  const ownShiftId = shifts.some(shift => shift.id === getOwnShiftId()) ? getOwnShiftId() : "";
+  if (!canBrowseShifts()) return ownShiftId;
+  const stored = sessionStorage.getItem(ACTIVE_SHIFT_KEY);
+  if (stored && shifts.some(shift => shift.id === stored)) return stored;
+  return ownShiftId || shifts[0]?.id || "";
+}
+
+function canEditShift(shiftId) {
+  return Boolean(shiftId) && (isAdmin() || (isShiftLeader() && shiftId === getOwnShiftId()));
+}
+
+function canEditActiveShift() {
+  return canEditShift(getShiftScope());
+}
+
+function canEditPerson(person) {
+  if (!person || !currentUser) return false;
+  if (isAdmin()) return true;
+  return isShiftLeader() && Boolean(person.shiftId) && person.shiftId === getOwnShiftId();
+}
+
+// Server API.
+
+class ApiError extends Error {
+  constructor(status, message, data = null) {
+    super(message);
+    this.status = status;
+    this.data = data;
   }
 }
 
-function storeSessionPassword(password) {
-  sessionStorage.setItem(STORAGE_KEYS.sessionPassword, password);
+let sessionLostHandled = false;
+function handleSessionLost() {
+  if (sessionLostHandled) return;
+  sessionLostHandled = true;
+  sessionStorage.removeItem(SIGNED_IN_HINT_KEY);
+  location.reload();
 }
 
-function getStoredSessionPassword() {
-  return sessionStorage.getItem(STORAGE_KEYS.sessionPassword) || "";
+// Requests cut off by leaving the page are not errors worth showing.
+let pageIsUnloading = false;
+window.addEventListener("beforeunload", () => { pageIsUnloading = true; });
+
+async function apiRequest(method, path, body) {
+  let response;
+  try {
+    response = await fetch(`/api${path}`, {
+      method,
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "StaffPlanner" },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+  } catch {
+    if (pageIsUnloading) return new Promise(() => {});
+    throw new ApiError(0, "Ingen kontakt med servern. Kontrollera anslutningen och försök igen.");
+  }
+  const data = await response.json().catch(() => null);
+  if (response.ok) return data;
+  // A signed-in page whose session ended (logged out elsewhere, password reset) starts over.
+  if (currentUser && (response.status === 401 || data?.code === "password_change_required")) handleSessionLost();
+  throw new ApiError(response.status, data?.error || "Något gick fel. Försök igen.", data);
 }
 
-function clearStoredSessionPassword() {
-  sessionStorage.removeItem(STORAGE_KEYS.sessionPassword);
+// Server documents, cached for the life of the page. Reads started in the same
+// tick are sent as one request per scope ("global" or a shift id).
+const documentCache = new Map();
+const documentBatches = new Map();
+const documentSaveQueues = new Map();
+const documentCacheKey = (scope, key) => `${scope}|${key}`;
+
+function loadDocument(scope, key) {
+  const cached = documentCache.get(documentCacheKey(scope, key));
+  if (cached) return Promise.resolve(cached);
+  let batch = documentBatches.get(scope);
+  if (!batch) {
+    batch = { keys: new Set(), waiters: [] };
+    documentBatches.set(scope, batch);
+    setTimeout(() => void flushDocumentBatch(scope), 0);
+  }
+  batch.keys.add(key);
+  return new Promise((resolve, reject) => batch.waiters.push({ key, resolve, reject }));
 }
 
-function clearPersistentData() {
-  Object.entries(STORAGE_KEYS).forEach(([name, key]) => {
-    if (name === "sessionPassword") return;
-    localStorage.removeItem(key);
-  });
+async function flushDocumentBatch(scope) {
+  const batch = documentBatches.get(scope);
+  documentBatches.delete(scope);
+  const keys = [...batch.keys];
+  try {
+    for (let index = 0; index < keys.length; index += 50) {
+      const chunk = keys.slice(index, index + 50);
+      const data = await apiRequest("GET", `/documents?scope=${encodeURIComponent(scope)}&keys=${chunk.map(encodeURIComponent).join(",")}`);
+      chunk.forEach(key => {
+        const cacheKey = documentCacheKey(scope, key);
+        if (documentCache.has(cacheKey)) return;
+        const doc = data.documents[key];
+        documentCache.set(cacheKey, doc
+          ? { value: doc.value, version: doc.version, updatedAt: doc.updatedAt }
+          : { value: undefined, version: 0, updatedAt: null, forbidden: data.forbidden.includes(key) });
+      });
+    }
+    batch.waiters.forEach(waiter => waiter.resolve(documentCache.get(documentCacheKey(scope, waiter.key))));
+  } catch (error) {
+    batch.waiters.forEach(waiter => waiter.reject(error));
+  }
+}
 
-  const weeklyPrefixes = [
-    STORAGE_KEYS.schedule,
-    STORAGE_KEYS.scheduleUpdatedAt,
-    STORAGE_KEYS.trainingLeaders,
-    STORAGE_KEYS.trainingLocations,
-    STORAGE_KEYS.extraPersonLocations,
-    STORAGE_KEYS.breakPlan,
-    STORAGE_KEYS.schedulePriorityLines
-  ].map(key => `${key}:`);
+async function getDocument(scope, key, fallback) {
+  if (!scope || !currentUser) return fallback;
+  const entry = await loadDocument(scope, key);
+  return entry.value === undefined ? fallback : structuredClone(entry.value);
+}
 
-  Object.keys(localStorage).forEach(key => {
-    if (weeklyPrefixes.some(prefix => key.startsWith(prefix))) {
-      localStorage.removeItem(key);
+function getDocumentUpdatedAt(scope, key) {
+  return documentCache.get(documentCacheKey(scope, key))?.updatedAt || null;
+}
+
+let conflictRefreshTimeoutId = null;
+
+// Saves are queued per document so each one is sent with the version the
+// previous save produced. A conflict means someone else saved in between.
+function saveDocument(scope, key, value) {
+  if (!scope) return Promise.reject(new ApiError(400, "Inget skift är valt. Be en admin att lägga dig i ett skift."));
+  const cacheKey = documentCacheKey(scope, key);
+  const snapshot = structuredClone(value);
+  const previous = documentSaveQueues.get(cacheKey) || Promise.resolve();
+  const save = previous.catch(() => {}).then(async () => {
+    const entry = await loadDocument(scope, key);
+    documentCache.set(cacheKey, { ...entry, value: snapshot });
+    try {
+      const saved = await apiRequest("PUT", `/documents/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`, {
+        value: snapshot,
+        baseVersion: entry.version || 0
+      });
+      documentCache.set(cacheKey, { value: snapshot, version: saved.version, updatedAt: saved.updatedAt });
+    } catch (error) {
+      const current = error.data?.current;
+      if (error.status === 409 && current) {
+        documentCache.set(cacheKey, { value: current.value, version: current.version, updatedAt: current.updatedAt });
+      } else {
+        documentCache.delete(cacheKey);
+      }
+      if (error.status === 409) {
+        clearTimeout(conflictRefreshTimeoutId);
+        conflictRefreshTimeoutId = setTimeout(() => void reloadSharedData(), 400);
+      }
+      throw error;
     }
   });
+  documentSaveQueues.set(cacheKey, save);
+  return save;
 }
 
-function removeStoredAppData() {
-  clearPersistentData();
-  clearStoredSessionPassword();
+const getGlobalDocument = (key, fallback) => getDocument("global", key, fallback);
+const saveGlobalDocument = (key, value) => saveDocument("global", key, value);
+const getShiftDocument = (key, fallback) => getDocument(getShiftScope(), key, fallback);
+const saveShiftDocument = (key, value) => saveDocument(getShiftScope(), key, value);
+const getWeekDocumentKey = base => `${base}:${getSelectedWeekKey()}`;
+
+function invalidateCachedData() {
+  documentCache.clear();
+  peopleCache = null;
 }
 
 function createEmptySchedule() {
@@ -839,16 +981,8 @@ function setupAutoSchedule() {
   });
 }
 
-function toBase64(buffer) {
-  return btoa(String.fromCharCode(...new Uint8Array(buffer)));
-}
-
 function fromBase64(base64) {
   return Uint8Array.from(atob(base64), char => char.charCodeAt(0));
-}
-
-function randomBytes(length = 16) {
-  return crypto.getRandomValues(new Uint8Array(length));
 }
 
 async function deriveAesKey(password, salt) {
@@ -877,57 +1011,12 @@ async function deriveAesKey(password, salt) {
   );
 }
 
-async function encryptJson(data, key) {
-  const iv = randomBytes(12);
-  const plaintext = encoder.encode(JSON.stringify(data));
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, plaintext);
-
-  return {
-    iv: toBase64(iv),
-    data: toBase64(ciphertext)
-  };
-}
-
 async function decryptJson(payload, key) {
   const iv = fromBase64(payload.iv);
   const data = fromBase64(payload.data);
   const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, data);
 
   return JSON.parse(decoder.decode(plaintext));
-}
-
-async function encryptStoredItem(keyName, value) {
-  if (!appUnlocked || !sessionKey) return;
-
-  const encrypted = await encryptJson(value, sessionKey);
-  localStorage.setItem(keyName, JSON.stringify(encrypted));
-}
-
-async function decryptStoredItem(keyName, fallback) {
-  if (!appUnlocked || !sessionKey) return fallback;
-
-  const raw = localStorage.getItem(keyName);
-  if (!raw) return null;
-
-  try {
-    return await decryptJson(JSON.parse(raw), sessionKey);
-  } catch (error) {
-    console.error(`Failed to decrypt item: ${keyName}`, error);
-    return fallback;
-  }
-}
-
-function getAuthElements() {
-  return {
-    authScreen: document.getElementById("authScreen"),
-    appShell: document.getElementById("appShell"),
-    authTitle: document.getElementById("authTitle"),
-    authBtn: document.getElementById("authBtn"),
-    passwordInput: document.getElementById("passwordInput"),
-    passwordConfirmInput: document.getElementById("passwordConfirmInput"),
-    wipeBtn: document.getElementById("wipeBtn"),
-    logoutBtn: document.getElementById("logoutBtn")
-  };
 }
 
 function bindOnce(element, eventName, handler) {
@@ -947,7 +1036,7 @@ function bindOnce(element, eventName, handler) {
         controls.forEach(control => { control.disabled = true; });
         result.catch(error => {
           console.error("Action failed:", error);
-          showAppToast("Ändringen kunde inte sparas. Försök igen.", "error");
+          showAppToast(error instanceof ApiError ? error.message : "Ändringen kunde inte sparas. Försök igen.", "error");
         }).finally(() => {
           pending = false;
           controls.forEach((control, index) => { control.disabled = previousDisabled[index]; });
@@ -960,36 +1049,12 @@ function bindOnce(element, eventName, handler) {
   });
 }
 
-function bindEnterToClick(input, button) {
-  bindOnce(input, "keydown", event => {
-    if (event.key !== "Enter") return;
-
-    event.preventDefault();
-    button?.click();
-  });
-}
-
-function resetAuthInputs(passwordInput, passwordConfirmInput) {
-  if (passwordInput) passwordInput.value = "";
-  if (passwordConfirmInput) passwordConfirmInput.value = "";
-}
-
 function setAuthenticatedView(isAuthenticated) {
   document.body.classList.toggle("app-authenticated", isAuthenticated);
 }
 
 function finishInitialViewSetup() {
   document.body.classList.remove("app-booting");
-}
-
-function updateAuthMode(isLoginMode, authTitle, authBtn, passwordConfirmInput) {
-  const mode = isLoginMode ? AUTH_MODES.login : AUTH_MODES.create;
-
-  if (authTitle) authTitle.textContent = mode.title;
-  if (authBtn) authBtn.textContent = mode.buttonText;
-  if (passwordConfirmInput) {
-    passwordConfirmInput.style.display = mode.showConfirm ? "block" : "none";
-  }
 }
 
 function showAuthMessage(text, isError = true) {
@@ -1011,189 +1076,42 @@ function clearAuthMessage() {
   authMessage.classList.remove("error", "success");
 }
 
-function downloadRepairBackup() {
-  const data = {};
-  Object.keys(localStorage).forEach(key => {
-    if (isAppStorageKey(key)) data[key] = localStorage.getItem(key);
+// Staff. Admins and shift leaders get everyone; operators get their own record
+// and the names of the people in their shift.
+let peopleCache = null;
+
+async function getAllPeople() {
+  if (!currentUser) return [];
+  peopleCache ??= apiRequest("GET", "/people").then(data => data.people).catch(error => {
+    peopleCache = null;
+    throw error;
   });
-  const blob = new Blob([JSON.stringify({
-    app: "Staff Planner",
-    type: "pre-repair-backup",
-    exportedAt: new Date().toISOString(),
-    data
-  }, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `staff-planner-before-repair-${formatDateKey(new Date())}.json`;
-  link.click();
-  URL.revokeObjectURL(url);
+  return structuredClone(await peopleCache);
 }
 
-async function repairLocalAppData() {
-  const removedKeys = [];
-  const encryptedKeys = Object.keys(localStorage).filter(key =>
-    isAppStorageKey(key) && key.includes("_enc")
-  );
-
-  for (const key of encryptedKeys) {
-    const raw = localStorage.getItem(key);
-    if (!raw) continue;
-    try {
-      const payload = JSON.parse(raw);
-      if (typeof payload?.iv !== "string" || typeof payload?.data !== "string") {
-        throw new Error("Invalid encrypted payload");
-      }
-      if (appUnlocked && sessionKey) {
-        const value = await decryptJson(payload, sessionKey);
-        const mustBeArray = [STORAGE_KEYS.workItems, STORAGE_KEYS.automaticBackups];
-        if (mustBeArray.includes(key) && !Array.isArray(value)) {
-          throw new Error("Invalid stored collection");
-        }
-        if (key === STORAGE_KEYS.appSettings && (!value || typeof value !== "object" || Array.isArray(value))) {
-          throw new Error("Invalid settings");
-        }
-      }
-    } catch (error) {
-      console.error(`Removing damaged local record: ${key}`, error);
-      localStorage.removeItem(key);
-      removedKeys.push(key);
-    }
-  }
-
-  return removedKeys;
-}
-
-function showRepairDataButton() {
-  const actions = document.querySelector("#authScreen .actions");
-  if (!actions || document.getElementById("repairDataBtn")) return;
-  const button = document.createElement("button");
-  button.id = "repairDataBtn";
-  button.className = "btn";
-  button.type = "button";
-  button.textContent = "Reparera lokal data";
-  button.addEventListener("click", async () => {
-    if (!confirm("En säkerhetskopia laddas ner först. Fortsätt och ta bort endast skadade poster?")) return;
-    button.disabled = true;
-    button.textContent = "Reparerar…";
-    try {
-      downloadRepairBackup();
-      const removedKeys = await repairLocalAppData();
-      showAuthMessage(
-        removedKeys.length
-          ? `${removedKeys.length} skadade poster togs bort. Appen startas om…`
-          : "Inga skadade poster hittades. Appen startas om…",
-        false
-      );
-      setTimeout(() => location.reload(), 500);
-    } catch (error) {
-      console.error("Local data repair failed:", error);
-      showAuthMessage(`Reparationen misslyckades (${error.message || "okänt fel"}).`);
-      button.disabled = false;
-      button.textContent = "Reparera lokal data";
-    }
-  });
-  actions.appendChild(button);
-}
-
-function hasPasswordSetup() {
-  return Boolean(localStorage.getItem(STORAGE_KEYS.salt) && localStorage.getItem(STORAGE_KEYS.check));
-}
-
-async function setupPassword(password) {
-  const salt = randomBytes(16);
-  const key = await deriveAesKey(password, salt);
-  const checkPayload = await encryptJson({ ok: true }, key);
-  const people = getJsonItem(STORAGE_KEYS.legacyPeople, DEFAULT_PEOPLE);
-  const schedule = getJsonItem(STORAGE_KEYS.legacySchedule, createEmptySchedule());
-
-  localStorage.setItem(STORAGE_KEYS.salt, toBase64(salt));
-  localStorage.setItem(STORAGE_KEYS.check, JSON.stringify(checkPayload));
-
-  sessionKey = key;
-  appUnlocked = true;
-
-  await encryptStoredItem(STORAGE_KEYS.people, people);
-  localStorage.setItem(STORAGE_KEYS.peopleYear, getCurrentYearKey());
-  await encryptStoredItem(getWeekStorageKey(STORAGE_KEYS.schedule), schedule);
-  localStorage.setItem(STORAGE_KEYS.scheduleWeek, getSelectedWeekKey());
-
-  localStorage.removeItem(STORAGE_KEYS.legacyPeople);
-  localStorage.removeItem(STORAGE_KEYS.legacySchedule);
-  storeSessionPassword(password);
-}
-
-async function unlockApp(password) {
-  const saltBase64 = localStorage.getItem(STORAGE_KEYS.salt);
-  const checkRaw = localStorage.getItem(STORAGE_KEYS.check);
-
-  if (!saltBase64 || !checkRaw) return false;
-
-  try {
-    const salt = fromBase64(saltBase64);
-    const key = await deriveAesKey(password, salt);
-    const check = await decryptJson(JSON.parse(checkRaw), key);
-
-    if (check.ok !== true) return false;
-
-    sessionKey = key;
-    appUnlocked = true;
-    storeSessionPassword(password);
-
-    return true;
-  } catch (error) {
-    console.error("Unlock failed:", error);
-    return false;
-  }
-}
-
-function lockApp() {
-  clearTimeout(autoLockTimeoutId);
-  resetScheduleHistory();
-  sessionKey = null;
-  appUnlocked = false;
-  clearStoredSessionPassword();
-}
-
-async function restoreSession() {
-  if (!hasPasswordSetup() || appUnlocked) return false;
-
-  const password = getStoredSessionPassword();
-  if (!password) return false;
-
-  const unlocked = await unlockApp(password);
-  if (!unlocked) clearStoredSessionPassword();
-
-  return unlocked;
-}
-
-function wipeAllData() {
-  removeStoredAppData();
-  lockApp();
-  location.reload();
-}
-
+// The people in the shift this page shows. These are the people who can be scheduled.
 async function getPeople() {
-  if (!appUnlocked || !sessionKey) return [];
-
-  const people = await decryptStoredItem(STORAGE_KEYS.people, []);
-  const storedYearKey = localStorage.getItem(STORAGE_KEYS.peopleYear);
-
-  if (people === null) {
-    const empty = [];
-    await savePeople(empty);
-    return empty;
-  }
-
-  if (storedYearKey !== getCurrentYearKey() && Array.isArray(people)) {
-    localStorage.setItem(STORAGE_KEYS.peopleYear, getCurrentYearKey());
-  }
-  return Array.isArray(people) ? people : [];
+  const shiftId = getShiftScope();
+  if (!shiftId) return [];
+  return (await getAllPeople()).filter(person => person.shiftId === shiftId);
 }
 
-async function savePeople(people) {
-  await encryptStoredItem(STORAGE_KEYS.people, people);
-  localStorage.setItem(STORAGE_KEYS.peopleYear, getCurrentYearKey());
+async function createPerson(data) {
+  const { person } = await apiRequest("POST", "/people", data);
+  peopleCache = null;
+  return person;
+}
+
+async function updatePerson(id, changes) {
+  const { person } = await apiRequest("PATCH", `/people/${encodeURIComponent(id)}`, changes);
+  if (person.id === currentPerson?.id) currentPerson = person;
+  peopleCache = null;
+  return person;
+}
+
+async function deletePersonRecord(id) {
+  await apiRequest("DELETE", `/people/${encodeURIComponent(id)}`);
+  peopleCache = null;
 }
 
 function getPersonAvailability(person) {
@@ -1380,52 +1298,43 @@ function renderUnassignedPeopleSummary(scheduleRoot, people, schedule, trainingL
     </div>`;
 }
 
+// Admins and shift leaders are signed out after a period of inactivity, like the
+// old app locked itself. Operators mostly use their own phones and stay signed in.
+// The last activity is shared between tabs so an idle tab does not sign out an active one.
+const LAST_ACTIVITY_KEY = "staff-planner-last-activity";
+let lastActivityWrite = 0;
+
+function markUserActive(force = false) {
+  const now = Date.now();
+  if (!force && now - lastActivityWrite < 15000) return;
+  lastActivityWrite = now;
+  try { localStorage.setItem(LAST_ACTIVITY_KEY, String(now)); } catch { /* Private mode: fall back to this tab only. */ }
+}
+
+function getLastActivity() {
+  try { return Number(localStorage.getItem(LAST_ACTIVITY_KEY)) || lastActivityWrite; } catch { return lastActivityWrite; }
+}
+
 function setupAutoLock() {
-  const resetTimer = () => {
-    clearTimeout(autoLockTimeoutId);
-    const minutes = Number(appSettings.autoLockMinutes);
-    if (!minutes || !appUnlocked) return;
-    autoLockTimeoutId = setTimeout(async () => {
-      lockApp();
-      document.getElementById("appShell")?.classList.add("hidden");
-      await setupAuthUI();
-      showAuthMessage("Appen låstes automatiskt efter inaktivitet.", false);
-    }, minutes * 60 * 1000);
-  };
+  clearTimeout(autoLockTimeoutId);
+  const minutes = Number(appSettings.autoLockMinutes);
+  if (!minutes || !canManageStaff()) return;
+  const limit = minutes * 60 * 1000;
   if (document.body.dataset.autoLockBound !== "true") {
     document.body.dataset.autoLockBound = "true";
-    ["pointerdown", "keydown", "touchstart"].forEach(eventName => document.addEventListener(eventName, resetTimer, { passive: true }));
+    ["pointerdown", "keydown", "touchstart"].forEach(eventName => document.addEventListener(eventName, () => markUserActive(), { passive: true }));
   }
-  resetTimer();
+  markUserActive(true);
+  const check = () => {
+    const idle = Date.now() - getLastActivity();
+    if (idle >= limit) {
+      void signOut("Du loggades ut automatiskt efter inaktivitet.");
+      return;
+    }
+    autoLockTimeoutId = setTimeout(check, limit - idle + 1000);
+  };
+  autoLockTimeoutId = setTimeout(check, limit);
 }
-
-async function changeAppPassword(nextPassword) {
-  const encryptedValues = [];
-  for (const key of Object.keys(localStorage).filter(isAppStorageKey)) {
-    if (key === STORAGE_KEYS.salt || key === STORAGE_KEYS.check || key === STORAGE_KEYS.automaticBackups || key === STORAGE_KEYS.dataSchemaVersion || key.endsWith("_week") || key === STORAGE_KEYS.peopleYear) continue;
-    const raw = localStorage.getItem(key);
-    if (!raw) continue;
-    try { encryptedValues.push([key, await decryptJson(JSON.parse(raw), sessionKey)]); } catch { /* Unencrypted metadata is kept as-is. */ }
-  }
-  const salt = randomBytes(16);
-  const nextKey = await deriveAesKey(nextPassword, salt);
-  const checkPayload = await encryptJson({ ok: true }, nextKey);
-  localStorage.setItem(STORAGE_KEYS.salt, toBase64(salt));
-  localStorage.setItem(STORAGE_KEYS.check, JSON.stringify(checkPayload));
-  sessionKey = nextKey;
-  for (const [key, value] of encryptedValues) await encryptStoredItem(key, value);
-  dataStore.remove(STORAGE_KEYS.automaticBackups);
-  storeSessionPassword(nextPassword);
-  await createAutomaticBackupIfNeeded();
-}
-
-// Central storage adapter. Replace this layer if an API or database is added later.
-const dataStore = {
-  async get(key, fallback = null) { return decryptStoredItem(key, fallback); },
-  async set(key, value) { return encryptStoredItem(key, value); },
-  remove(key) { localStorage.removeItem(key); },
-  keys() { return Object.keys(localStorage); }
-};
 
 function normalizeStringList(values, fallback = []) {
   const unique = new Map();
@@ -1472,12 +1381,12 @@ function applyAppSettings(settings) {
 }
 
 async function loadAppSettings() {
-  applyAppSettings(await dataStore.get(STORAGE_KEYS.appSettings, {}));
+  applyAppSettings(await getGlobalDocument("appSettings", {}));
 }
 
 async function saveAppSettings(nextSettings) {
   const normalized = normalizeAppSettings(nextSettings);
-  await dataStore.set(STORAGE_KEYS.appSettings, normalized);
+  await saveGlobalDocument("appSettings", normalized);
   applyAppSettings(normalized);
 }
 
@@ -1557,58 +1466,30 @@ function applyCustomWorkItems(items) {
 }
 
 async function loadCustomWorkItems() {
-  if (!appUnlocked || !sessionKey) return applyCustomWorkItems([]);
-  const items = await dataStore.get(STORAGE_KEYS.workItems, []);
+  const items = await getGlobalDocument("workItems", []);
   applyCustomWorkItems(Array.isArray(items) ? items : []);
 }
 
 async function saveCustomWorkItems(items) {
   applyCustomWorkItems(items);
-  await dataStore.set(STORAGE_KEYS.workItems, customWorkItems);
-  localStorage.setItem(STORAGE_KEYS.dataSchemaVersion, "2");
+  await saveGlobalDocument("workItems", customWorkItems);
 }
 
 async function getWorkItemTrash() {
-  if (!appUnlocked || !sessionKey) return [];
-  const items = await dataStore.get(STORAGE_KEYS.workItemTrash, []);
+  if (!canManageStaff()) return [];
+  const items = await getGlobalDocument("workItemTrash", []);
   return Array.isArray(items) ? items : [];
 }
 
 async function saveWorkItemTrash(items) {
-  await dataStore.set(STORAGE_KEYS.workItemTrash, Array.isArray(items) ? items : []);
+  await saveGlobalDocument("workItemTrash", Array.isArray(items) ? items : []);
 }
 
+// The server copies the data, including competence and test results that shift
+// leaders may not read themselves.
 async function createWorkItemSafetySnapshot(reason) {
-  const snapshots = await dataStore.get(STORAGE_KEYS.safetySnapshots, []) || [];
-  const [trash, departments, results, skills, details] = await Promise.all([
-    getWorkItemTrash(), getDepartments(), getTestResults(), getMachineSkills(), getMachineSkillDetails()
-  ]);
-  snapshots.unshift({
-    id: makeId(), createdAt: new Date().toISOString(), reason,
-    data: { workItems: structuredClone(customWorkItems), trash, departments, results, skills, details }
-  });
-  await dataStore.set(STORAGE_KEYS.safetySnapshots, snapshots.slice(0, 5));
-}
-
-function cleanupOldWeeklyData() {
-  const oldestWeekToKeep = formatDateKey(getPreviousWeekStart());
-  const weeklyPrefixes = [
-    STORAGE_KEYS.schedule,
-    STORAGE_KEYS.trainingLeaders,
-    STORAGE_KEYS.trainingLocations,
-    STORAGE_KEYS.extraPersonLocations,
-    STORAGE_KEYS.breakPlan,
-    STORAGE_KEYS.schedulePriorityLines
-  ].map(key => `${key}:`);
-
-  Object.keys(localStorage).forEach(key => {
-    const prefix = weeklyPrefixes.find(item => key.startsWith(item));
-    if (!prefix) return;
-    const weekKey = key.slice(prefix.length);
-    if (/^\d{4}-\d{2}-\d{2}$/.test(weekKey) && weekKey < oldestWeekToKeep) {
-      localStorage.removeItem(key);
-    }
-  });
+  await apiRequest("POST", "/work-items/snapshot", { reason });
+  documentCache.delete(documentCacheKey("global", "safetySnapshots"));
 }
 
 async function renderSchedulePrioritySelector(scheduleRoot) {
@@ -1660,28 +1541,29 @@ async function renderSchedulePrioritySelector(scheduleRoot) {
   });
 }
 
+const isPlainObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
 async function getAssessments() {
-  if (!appUnlocked || !sessionKey) return [];
-  const assessments = await decryptStoredItem(STORAGE_KEYS.assessments, []);
+  if (!isAdmin()) return [];
+  const assessments = await getGlobalDocument("assessments", []);
   return Array.isArray(assessments) ? assessments : [];
 }
 
 async function saveAssessments(assessments) {
-  await encryptStoredItem(STORAGE_KEYS.assessments, assessments);
+  await saveGlobalDocument("assessments", assessments);
 }
 
 async function getDepartments() {
-  if (!appUnlocked || !sessionKey) return [...DEFAULT_DEPARTMENTS];
-  const departments = await decryptStoredItem(STORAGE_KEYS.departments, null);
+  const departments = await getGlobalDocument("departments", null);
   if (!Array.isArray(departments)) {
-    await saveDepartments(DEFAULT_DEPARTMENTS);
+    if (canManageStaff()) await saveDepartments(DEFAULT_DEPARTMENTS);
     return [...DEFAULT_DEPARTMENTS];
   }
   return departments;
 }
 
 async function saveDepartments(departments) {
-  await encryptStoredItem(STORAGE_KEYS.departments, departments);
+  await saveGlobalDocument("departments", departments);
 }
 
 async function getDepartmentsFor(destination) {
@@ -1692,99 +1574,78 @@ async function getDepartmentsFor(destination) {
   });
 }
 
+// Test results and assessments are only visible to admins.
 async function getTestResults() {
-  if (!appUnlocked || !sessionKey) return {};
-  const results = await decryptStoredItem(STORAGE_KEYS.testResults, {});
-  return results && typeof results === "object" && !Array.isArray(results) ? results : {};
+  if (!isAdmin()) return {};
+  const results = await getGlobalDocument("testResults", {});
+  return isPlainObject(results) ? results : {};
 }
 
 async function saveTestResults(results) {
-  await encryptStoredItem(STORAGE_KEYS.testResults, results);
+  await saveGlobalDocument("testResults", results);
 }
 
-async function getMachineSkills() {
-  if (!appUnlocked || !sessionKey) return {};
-  const skills = await decryptStoredItem(STORAGE_KEYS.machineSkills, {});
-  return skills && typeof skills === "object" && !Array.isArray(skills) ? skills : {};
+// Competence is read by shift leaders too, since scheduling depends on it.
+async function getCompetenceDocument(key) {
+  if (!canManageStaff()) return {};
+  const value = await getGlobalDocument(key, {});
+  return isPlainObject(value) ? value : {};
 }
 
-async function saveMachineSkills(skills) {
-  await encryptStoredItem(STORAGE_KEYS.machineSkills, skills);
-}
-
-async function getMachineSkillUpdatedAt() {
-  if (!appUnlocked || !sessionKey) return {};
-  const timestamps = await decryptStoredItem(STORAGE_KEYS.machineSkillUpdatedAt, {});
-  return timestamps && typeof timestamps === "object" && !Array.isArray(timestamps)
-    ? timestamps
-    : {};
-}
-
-async function saveMachineSkillUpdatedAt(timestamps) {
-  await encryptStoredItem(STORAGE_KEYS.machineSkillUpdatedAt, timestamps);
-}
-
-async function getMachineRestrictions() {
-  if (!appUnlocked || !sessionKey) return {};
-  const restrictions = await decryptStoredItem(STORAGE_KEYS.machineRestrictions, {});
-  return restrictions && typeof restrictions === "object" && !Array.isArray(restrictions)
-    ? restrictions
-    : {};
-}
-
-async function saveMachineRestrictions(restrictions) {
-  await encryptStoredItem(STORAGE_KEYS.machineRestrictions, restrictions);
-}
-
-async function getMachineSkillDetails() {
-  if (!appUnlocked || !sessionKey) return {};
-  const details = await decryptStoredItem(STORAGE_KEYS.machineSkillDetails, {});
-  return details && typeof details === "object" && !Array.isArray(details) ? details : {};
-}
-
-async function saveMachineSkillDetails(details) {
-  await encryptStoredItem(STORAGE_KEYS.machineSkillDetails, details);
-}
+const getMachineSkills = () => getCompetenceDocument("machineSkills");
+const saveMachineSkills = skills => saveGlobalDocument("machineSkills", skills);
+const getMachineSkillUpdatedAt = () => getCompetenceDocument("machineSkillUpdatedAt");
+const saveMachineSkillUpdatedAt = timestamps => saveGlobalDocument("machineSkillUpdatedAt", timestamps);
+const getMachineRestrictions = () => getCompetenceDocument("machineRestrictions");
+const saveMachineRestrictions = restrictions => saveGlobalDocument("machineRestrictions", restrictions);
+const getMachineSkillDetails = () => getCompetenceDocument("machineSkillDetails");
+const saveMachineSkillDetails = details => saveGlobalDocument("machineSkillDetails", details);
 
 async function getProductionRecords() {
-  if (!appUnlocked || !sessionKey) return {};
-  const records = await decryptStoredItem(STORAGE_KEYS.productionRecords, {});
-  return records && typeof records === "object" && !Array.isArray(records) ? records : {};
+  if (!canEditActiveShift()) return {};
+  const records = await getShiftDocument("productionRecords", {});
+  return isPlainObject(records) ? records : {};
 }
 
 async function saveProductionRecords(records) {
-  await encryptStoredItem(STORAGE_KEYS.productionRecords, records);
+  await saveShiftDocument("productionRecords", records);
 }
 
 async function getProductionSettings() {
-  if (!appUnlocked || !sessionKey) return { dailyTarget: 160, factoryRecord: 0 };
-  const settings = await decryptStoredItem(STORAGE_KEYS.productionSettings, {});
+  const settings = await getGlobalDocument("productionSettings", {});
   return { dailyTarget: Number(settings?.dailyTarget) || 160, factoryRecord: Number(settings?.factoryRecord) || 0 };
 }
 
 async function saveProductionSettings(settings) {
-  await encryptStoredItem(STORAGE_KEYS.productionSettings, settings);
+  await saveGlobalDocument("productionSettings", settings);
 }
 
-async function getAuditLog() {
-  if (!appUnlocked || !sessionKey) return [];
-  const events = await decryptStoredItem(STORAGE_KEYS.auditLog, []);
-  if (!Array.isArray(events)) return [];
-  const today = formatDateKey(new Date());
-  const todaysEvents = events.filter(event => {
-    const createdAt = new Date(event?.createdAt);
-    return !Number.isNaN(createdAt.getTime()) && formatDateKey(createdAt) === today;
-  });
-  if (todaysEvents.length !== events.length) {
-    await encryptStoredItem(STORAGE_KEYS.auditLog, todaysEvents);
-  }
-  return todaysEvents;
+function getStartOfToday() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
 }
+
+// Today's changes in the current shift and in shared settings.
+async function getAuditLog() {
+  if (!canManageStaff()) return [];
+  const scopes = ["global", getShiftScope()].filter(scope => scope && (scope === "global" || canEditShift(scope)));
+  const data = await apiRequest("GET", `/audit?scopes=${scopes.map(encodeURIComponent).join(",")}&since=${encodeURIComponent(getStartOfToday().toISOString())}`);
+  return data.events;
+}
+
+// Settings and machines are shared by all shifts; everything else belongs to the current shift.
+const GLOBAL_AUDIT_TYPES = new Set(["settings", "department", "backup"]);
 
 async function addAuditEvent(type, title, detail = "", undo = null) {
-  const events = await getAuditLog();
-  events.unshift({ id: makeId(), type, title, detail, undo, createdAt: new Date().toISOString() });
-  await encryptStoredItem(STORAGE_KEYS.auditLog, events.slice(0, 500));
+  if (!canManageStaff()) return;
+  const scope = GLOBAL_AUDIT_TYPES.has(type) || !canEditActiveShift() ? "global" : getShiftScope();
+  try {
+    await apiRequest("POST", "/audit", { scope, type, title, detail, undo });
+  } catch (error) {
+    // The change itself is saved; a missing log line must not show as a failure.
+    console.warn("Could not log the change:", error);
+  }
   void renderDashboard();
 }
 
@@ -1792,8 +1653,7 @@ async function applyAuditUndo(event) {
   const undo = event?.undo;
   if (!undo || !confirm(`Återställ ändringen: ${event.title}?`)) return;
   if (undo.action === "availability") {
-    const people = await getPeople(); const person = people.find(item => item.id === undo.personId);
-    if (person) { person.availability = undo.value; await savePeople(people); }
+    await updatePerson(undo.personId, { availability: undo.value });
   } else if (undo.action === "test") {
     const results = await getTestResults(); results[undo.personId] ??= {};
     if (undo.value === "" || undo.value === undefined) delete results[undo.personId][undo.department];
@@ -1818,166 +1678,96 @@ async function applyAuditUndo(event) {
       await saveMachineSkills(skills);
     }
   }
-  const events = await getAuditLog();
-  const stored = events.find(item => item.id === event.id); if (stored) stored.undo = null;
-  await encryptStoredItem(STORAGE_KEYS.auditLog, events);
+  await apiRequest("DELETE", `/audit/${encodeURIComponent(event.id)}/undo`);
   await addAuditEvent("restore", `${event.title} återställd`, "Tidigare värde återställt");
   await refreshAppViews();
 }
 
+// Weekly schedule data for the current shift and selected week.
+
 async function getSchedule() {
-  if (!appUnlocked || !sessionKey) return createEmptySchedule();
-
-  const weekKey = getSelectedWeekKey();
-  const weeklyStorageKey = getWeekStorageKey(STORAGE_KEYS.schedule);
-  let schedule = await decryptStoredItem(weeklyStorageKey, createEmptySchedule());
-  const storedWeekKey = localStorage.getItem(STORAGE_KEYS.scheduleWeek);
-
-  if (schedule === null && storedWeekKey === weekKey) {
-    schedule = await decryptStoredItem(STORAGE_KEYS.schedule, createEmptySchedule());
-    if (schedule !== null) await saveSchedule(schedule);
-  }
-
-  if (schedule === null) return createEmptySchedule();
-  return normalizeSchedule(schedule);
+  const schedule = await getShiftDocument(getWeekDocumentKey("schedule"), null);
+  return schedule ? normalizeSchedule(schedule) : createEmptySchedule();
 }
 
 async function saveSchedule(schedule) {
-  await encryptStoredItem(getWeekStorageKey(STORAGE_KEYS.schedule), normalizeSchedule(schedule));
-  localStorage.setItem(STORAGE_KEYS.scheduleWeek, getSelectedWeekKey());
-  localStorage.setItem(`${STORAGE_KEYS.scheduleUpdatedAt}:${getSelectedWeekKey()}`, new Date().toISOString());
+  await saveShiftDocument(getWeekDocumentKey("schedule"), normalizeSchedule(schedule));
 }
 
 async function getTrainingLeaders() {
-  if (!appUnlocked || !sessionKey) return createEmptyTrainingLeaders();
-
-  const weekKey = getSelectedWeekKey();
-  let trainingLeaders = await decryptStoredItem(
-    getWeekStorageKey(STORAGE_KEYS.trainingLeaders),
-    createEmptyTrainingLeaders()
-  );
-  const storedWeekKey = localStorage.getItem(STORAGE_KEYS.trainingLeadersWeek);
-
-  if (trainingLeaders === null && storedWeekKey === weekKey) {
-    trainingLeaders = await decryptStoredItem(STORAGE_KEYS.trainingLeaders, createEmptyTrainingLeaders());
-    if (trainingLeaders !== null) await saveTrainingLeaders(trainingLeaders);
-  }
-
-  if (trainingLeaders === null) return createEmptyTrainingLeaders();
-  return normalizeTrainingLeaders(trainingLeaders);
+  const trainingLeaders = await getShiftDocument(getWeekDocumentKey("trainingLeaders"), null);
+  return trainingLeaders ? normalizeTrainingLeaders(trainingLeaders) : createEmptyTrainingLeaders();
 }
 
 async function saveTrainingLeaders(trainingLeaders) {
-  await encryptStoredItem(
-    getWeekStorageKey(STORAGE_KEYS.trainingLeaders),
-    normalizeTrainingLeaders(trainingLeaders)
-  );
-  localStorage.setItem(STORAGE_KEYS.trainingLeadersWeek, getSelectedWeekKey());
+  await saveShiftDocument(getWeekDocumentKey("trainingLeaders"), normalizeTrainingLeaders(trainingLeaders));
 }
 
 async function getTrainingLocations() {
-  if (!appUnlocked || !sessionKey) return createEmptyTrainingLocations();
-
-  const weekKey = getSelectedWeekKey();
-  let locations = await decryptStoredItem(
-    getWeekStorageKey(STORAGE_KEYS.trainingLocations),
-    createEmptyTrainingLocations()
-  );
-  const storedWeekKey = localStorage.getItem(STORAGE_KEYS.trainingLocationsWeek);
-
-  if (locations === null && storedWeekKey === weekKey) {
-    locations = await decryptStoredItem(STORAGE_KEYS.trainingLocations, createEmptyTrainingLocations());
-    if (locations !== null) await saveTrainingLocations(locations);
-  }
-
-  if (locations === null) return createEmptyTrainingLocations();
-  return normalizeTrainingLocations(locations);
+  const locations = await getShiftDocument(getWeekDocumentKey("trainingLocations"), null);
+  return locations ? normalizeTrainingLocations(locations) : createEmptyTrainingLocations();
 }
 
 async function saveTrainingLocations(trainingLocations) {
-  await encryptStoredItem(
-    getWeekStorageKey(STORAGE_KEYS.trainingLocations),
-    normalizeTrainingLocations(trainingLocations)
-  );
-  localStorage.setItem(STORAGE_KEYS.trainingLocationsWeek, getSelectedWeekKey());
+  await saveShiftDocument(getWeekDocumentKey("trainingLocations"), normalizeTrainingLocations(trainingLocations));
 }
 
 async function getExtraPersonLocations() {
-  if (!appUnlocked || !sessionKey) return createEmptyExtraPersonLocations();
-  const locations = await decryptStoredItem(
-    getWeekStorageKey(STORAGE_KEYS.extraPersonLocations),
-    createEmptyExtraPersonLocations()
-  );
-  return locations === null
-    ? createEmptyExtraPersonLocations()
-    : normalizeExtraPersonLocations(locations);
+  const locations = await getShiftDocument(getWeekDocumentKey("extraPersonLocations"), null);
+  return locations ? normalizeExtraPersonLocations(locations) : createEmptyExtraPersonLocations();
 }
 
 async function saveExtraPersonLocations(locations) {
-  await encryptStoredItem(
-    getWeekStorageKey(STORAGE_KEYS.extraPersonLocations),
-    normalizeExtraPersonLocations(locations)
-  );
+  await saveShiftDocument(getWeekDocumentKey("extraPersonLocations"), normalizeExtraPersonLocations(locations));
 }
 
 async function getBreakPlan() {
-  if (!appUnlocked || !sessionKey) return createEmptyBreakPlan();
-
-  const weekKey = getSelectedWeekKey();
-  let breakPlan = await decryptStoredItem(
-    getWeekStorageKey(STORAGE_KEYS.breakPlan),
-    createEmptyBreakPlan()
-  );
-  const storedWeekKey = localStorage.getItem(STORAGE_KEYS.breakPlanWeek);
-
-  if (breakPlan === null && storedWeekKey === weekKey) {
-    breakPlan = await decryptStoredItem(STORAGE_KEYS.breakPlan, createEmptyBreakPlan());
-    if (breakPlan !== null) await saveBreakPlan(breakPlan);
-  }
-
-  if (breakPlan === null) return createEmptyBreakPlan();
-  return normalizeBreakPlan(breakPlan);
+  const breakPlan = await getShiftDocument(getWeekDocumentKey("breakPlan"), null);
+  return breakPlan ? normalizeBreakPlan(breakPlan) : createEmptyBreakPlan();
 }
 
 async function saveBreakPlan(breakPlan) {
-  await encryptStoredItem(getWeekStorageKey(STORAGE_KEYS.breakPlan), normalizeBreakPlan(breakPlan));
-  localStorage.setItem(STORAGE_KEYS.breakPlanWeek, getSelectedWeekKey());
+  await saveShiftDocument(getWeekDocumentKey("breakPlan"), normalizeBreakPlan(breakPlan));
+}
+
+function getValidPriorityLineChoices() {
+  return new Set([
+    ...Object.keys(BREAK_LINE_WORKPLACES),
+    ...customWorkItems.filter(item => item.enabled && item.showInSchema && item.autoSchedule).map(item => item.name)
+  ]);
 }
 
 async function getSchedulePriorityLines() {
-  if (!appUnlocked || !sessionKey) return [];
-  const lines = await decryptStoredItem(
-    getWeekStorageKey(STORAGE_KEYS.schedulePriorityLines),
-    []
-  );
-  const validChoices = new Set([
-    ...Object.keys(BREAK_LINE_WORKPLACES),
-    ...customWorkItems.filter(item => item.enabled && item.showInSchema && item.autoSchedule).map(item => item.name)
-  ]);
-  return Array.isArray(lines)
-    ? lines.filter(line => validChoices.has(line))
-    : [];
+  if (!canEditActiveShift()) return [];
+  const lines = await getShiftDocument(getWeekDocumentKey("schedulePriorityLines"), []);
+  const validChoices = getValidPriorityLineChoices();
+  return Array.isArray(lines) ? lines.filter(line => validChoices.has(line)) : [];
 }
 
 async function saveSchedulePriorityLines(lines) {
-  const validChoices = new Set([
-    ...Object.keys(BREAK_LINE_WORKPLACES),
-    ...customWorkItems.filter(item => item.enabled && item.showInSchema && item.autoSchedule).map(item => item.name)
-  ]);
-  const normalized = Array.isArray(lines)
-    ? lines.filter(line => validChoices.has(line))
-    : [];
-  await encryptStoredItem(getWeekStorageKey(STORAGE_KEYS.schedulePriorityLines), normalized);
+  const validChoices = getValidPriorityLineChoices();
+  const normalized = Array.isArray(lines) ? lines.filter(line => validChoices.has(line)) : [];
+  await saveShiftDocument(getWeekDocumentKey("schedulePriorityLines"), normalized);
+}
+
+async function getScheduleTemplates() {
+  if (!canEditActiveShift()) return [];
+  const templates = await getShiftDocument("scheduleTemplates", []);
+  return Array.isArray(templates) ? templates : [];
+}
+
+async function saveScheduleTemplates(templates) {
+  await saveShiftDocument("scheduleTemplates", templates);
 }
 
 async function getTodos() {
-  if (!appUnlocked || !sessionKey) return [];
-  const todos = await decryptStoredItem(STORAGE_KEYS.todos, []);
+  if (!canEditActiveShift()) return [];
+  const todos = await getShiftDocument("todos", []);
   return Array.isArray(todos) ? todos : [];
 }
 
 async function saveTodos(todos) {
-  await encryptStoredItem(STORAGE_KEYS.todos, todos);
+  await saveShiftDocument("todos", todos);
 }
 
 function getTodoWeekKey(dateValue = new Date()) {
@@ -2122,10 +1912,15 @@ function enhanceAppShell() {
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("./service-worker.js").catch(error => console.warn("Offline cache could not start", error));
   const nav = document.querySelector(".nav");
   if (nav && !nav.querySelector('[href="installningar.html"]')) {
-    nav.insertAdjacentHTML("beforeend", '<a class="nav-link" href="installningar.html">Inställningar</a><a class="nav-link" href="hjalp.html">Hjälp</a>');
+    nav.insertAdjacentHTML("beforeend", '<a class="nav-link" href="profil.html">Min profil</a><a class="nav-link" href="installningar.html">Inställningar</a><a class="nav-link" href="hjalp.html">Hjälp</a>');
   }
+  nav?.querySelectorAll(".nav-link").forEach(link => {
+    if (!canOpenPage(link.getAttribute("href"))) link.remove();
+  });
+  renderSidebarAccount();
+  renderShiftNotice();
   const pageTips = {
-    "dashboard.html": "Här finns senaste status, ändringshistorik och knappar för krypterad backup och återställning.",
+    "dashboard.html": "Här finns senaste status och dagens ändringar för skiftet.",
     "personal.html": "Använd status för sjukdom, semester eller annan frånvaro; schemat visar orsaken direkt.",
     "add.html": "Pausa en arbetsplats när den inte används. Då bevaras historiken och den kan aktiveras igen.",
     "maskiner.html": "Registrerad kompetens används för att varna och hjälpa autoschemat.",
@@ -2134,7 +1929,8 @@ function enhanceAppShell() {
     "todo.html": "Uppgifter som inte blir klara följer med som påminnelser till nästa vecka.",
     "produktion.html": "Spara dagens resultat regelbundet; historiken finns kvar lokalt.",
     "rast.html": "Kontrollera att alla valda linjer täcks innan rastplanen används.",
-    "installningar.html": "Ändringar här gäller bara den här enheten och sparas automatiskt när du trycker Spara."
+    "installningar.html": "Inställningarna gäller alla skift och sparas när du trycker Spara.",
+    "profil.html": "Ändra din status här om du är sjuk eller borta, så ser skiftledaren det direkt."
   };
   const header = main?.querySelector(".header");
   if (!appSettings.showTips) main?.querySelector(".page-tip")?.remove();
@@ -2161,17 +1957,131 @@ function enhanceAppShell() {
   }
 }
 
+function renderSidebarAccount() {
+  const sidebar = document.querySelector(".sidebar");
+  if (!sidebar || !currentUser) return;
+  let box = document.getElementById("sidebarAccount");
+  if (!box) {
+    box = document.createElement("div");
+    box.id = "sidebarAccount";
+    box.className = "sidebar-account";
+    const logout = document.getElementById("logoutBtn");
+    if (logout) logout.before(box);
+    else sidebar.appendChild(box);
+  }
+  const scope = getShiftScope();
+  const shiftControl = canBrowseShifts() && shifts.length
+    ? `<label class="sidebar-shift"><span>Visar skift</span><select id="shiftSwitcher">${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === scope ? " selected" : ""}>${escapeHtml(shift.name)}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}</select></label>`
+    : `<div class="sidebar-shift"><span>Skift</span><strong>${escapeHtml(getShiftName(scope) || "Inget skift")}</strong></div>`;
+  box.innerHTML = `<a class="sidebar-user" href="profil.html"><strong>${escapeHtml(currentPerson?.name || currentUser.username)}</strong><small>${escapeHtml(ROLE_LABELS[currentUser.role] || "")}</small></a>${shiftControl}`;
+  box.querySelector("#shiftSwitcher")?.addEventListener("change", event => {
+    sessionStorage.setItem(ACTIVE_SHIFT_KEY, event.target.value);
+    location.reload();
+  });
+}
+
+// Tells the user which shift a schedule page shows and whether they can change it.
+function renderShiftNotice() {
+  const header = document.querySelector(".main .header");
+  const showsShift = document.getElementById("scheduleGrid") || document.getElementById("breakPlanner");
+  document.getElementById("shiftNotice")?.remove();
+  if (!header || !showsShift || !currentUser) return;
+  const scope = getShiftScope();
+  const notice = document.createElement("p");
+  notice.id = "shiftNotice";
+  notice.className = "shift-notice";
+  if (!scope) {
+    notice.classList.add("is-warning");
+    notice.textContent = isAdmin()
+      ? "Det finns inga skift ännu. Skapa skift under Inställningar."
+      : "Du tillhör inget skift ännu. Be en admin att lägga till dig i ett skift.";
+  } else if (canEditShift(scope)) {
+    notice.innerHTML = `<strong>${escapeHtml(getShiftName(scope))}</strong>`;
+  } else {
+    notice.classList.add("is-readonly");
+    notice.innerHTML = `<strong>${escapeHtml(getShiftName(scope))}</strong> · Endast läsning${isShiftLeader() ? " – du kan bara ändra ditt eget skift" : ""}`;
+  }
+  header.querySelector("h2")?.after(notice);
+}
+
+// "Min profil": everyone edits their own name, phone and status, and their password.
+async function renderProfilePage() {
+  const root = document.getElementById("profilePage");
+  if (!root || !currentUser || !currentPerson) return;
+  const person = currentPerson;
+  const availability = getPersonAvailability(person);
+  root.innerHTML = `
+    <form id="profileForm" class="card settings-card profile-card">
+      <div><h3>Mina uppgifter</h3><p>Användarnamn <strong>${escapeHtml(currentUser.username)}</strong> · ${escapeHtml(ROLE_LABELS[currentUser.role] || "")} · Skift: ${escapeHtml(getShiftName(person.shiftId) || "inget skift")}</p></div>
+      <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required autocomplete="name" /></label>
+      <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" autocomplete="tel" /></label>
+      <label>Status<select name="availability" class="person-availability person-availability-${availability}">${AVAILABILITY_OPTIONS.map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select><small>Är du sjuk eller borta? Ändra här så ser skiftledaren det direkt.</small></label>
+      <div class="settings-actions"><span id="profileMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara</button></div>
+    </form>
+    <form id="profilePasswordForm" class="card settings-card">
+      <div><h3>Byt lösenord</h3><p>Du loggas ut från dina andra enheter när lösenordet byts.</p></div>
+      <label>Nuvarande lösenord<input name="currentPassword" type="password" autocomplete="current-password" required /></label>
+      <label>Nytt lösenord<input name="newPassword" type="password" minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" required /><small>Minst ${MIN_PASSWORD_LENGTH} tecken.</small></label>
+      <label>Bekräfta nytt lösenord<input name="confirm" type="password" minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" required /></label>
+      <div class="settings-actions"><span id="passwordChangeMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara nytt lösenord</button></div>
+    </form>`;
+
+  const profileForm = root.querySelector("#profileForm");
+  const profileMessage = root.querySelector("#profileMessage");
+  profileForm.elements.availability.addEventListener("change", event => {
+    event.target.className = `person-availability person-availability-${event.target.value}`;
+  });
+  bindOnce(profileForm, "submit", async event => {
+    event.preventDefault();
+    const changes = {
+      name: profileForm.elements.name.value.trim(),
+      phone: profileForm.elements.phone.value.trim(),
+      availability: profileForm.elements.availability.value
+    };
+    try {
+      const me = await apiRequest("PATCH", "/me", changes);
+      currentPerson = me.person;
+      peopleCache = null;
+      profileMessage.textContent = "Dina uppgifter har sparats.";
+      profileMessage.className = "inline-message success";
+      renderSidebarAccount();
+    } catch (error) {
+      profileMessage.textContent = error instanceof ApiError ? error.message : "Det gick inte att spara.";
+      profileMessage.className = "inline-message error";
+    }
+  });
+
+  const passwordForm = root.querySelector("#profilePasswordForm");
+  const passwordMessage = root.querySelector("#passwordChangeMessage");
+  bindOnce(passwordForm, "submit", async event => {
+    event.preventDefault();
+    try {
+      checkNewPassword(passwordForm.elements.newPassword.value, passwordForm.elements.confirm.value);
+      await apiRequest("POST", "/me/password", {
+        currentPassword: passwordForm.elements.currentPassword.value,
+        newPassword: passwordForm.elements.newPassword.value
+      });
+      passwordForm.reset();
+      passwordMessage.textContent = "Lösenordet har bytts.";
+      passwordMessage.className = "inline-message success";
+    } catch (error) {
+      passwordMessage.textContent = error instanceof ApiError ? error.message : "Det gick inte att byta lösenord.";
+      passwordMessage.className = "inline-message error";
+    }
+  });
+}
+
 async function renderSettings() {
   const root = document.getElementById("settingsPage");
   if (!root) return;
-  const snapshots = await dataStore.get(STORAGE_KEYS.safetySnapshots, []) || [];
-  const automaticBackups = await dataStore.get(STORAGE_KEYS.automaticBackups, []) || [];
+  const snapshots = isAdmin() ? await getGlobalDocument("safetySnapshots", []) || [] : [];
+  const hasLegacyData = isAdmin() && Boolean(readLegacyLocalData());
   root.innerHTML = `
     <form id="generalSettingsForm" class="card settings-card">
-      <div><h3>Allmänt</h3><p>Grundinställningar för den här enheten.</p></div>
+      <div><h3>Allmänt</h3><p>Grundinställningar som gäller alla skift.</p></div>
       <label>Arbetsplatsens namn<input id="organizationNameSetting" value="${escapeHtml(appSettings.organizationName || "")}" placeholder="Företag eller avdelning" /></label>
       <fieldset><legend>Arbetsdagar</legend><div class="settings-day-grid">${ALL_DAYS.map(day => `<label><input type="checkbox" name="workDay" value="${day}"${DAYS.includes(day) ? " checked" : ""} /> ${day}</label>`).join("")}</div></fieldset>
-      <label>Automatisk låsning<select id="autoLockSetting"><option value="5">Efter 5 minuter</option><option value="15">Efter 15 minuter</option><option value="30">Efter 30 minuter</option><option value="60">Efter 1 timme</option><option value="0">Aldrig</option></select></label>
+      <label>Automatisk utloggning för admin och skiftledare<select id="autoLockSetting"><option value="5">Efter 5 minuter</option><option value="15">Efter 15 minuter</option><option value="30">Efter 30 minuter</option><option value="60">Efter 1 timme</option><option value="0">Aldrig</option></select></label>
       <label>E-post för feedback<input id="feedbackEmailSetting" type="email" value="${escapeHtml(appSettings.feedbackEmail || "")}" placeholder="namn@foretag.se" /></label>
       <label>Maskiner i produktion<input id="productionMachinesSetting" value="${escapeHtml(appSettings.productionMachines.join(", "))}" /><small>Separera med kommatecken.</small></label>
       <label>Uppgifter för extra person<textarea id="extraAssignmentsSetting" rows="3">${escapeHtml(appSettings.extraAssignments.join("\n"))}</textarea><small>En uppgift per rad.</small></label>
@@ -2180,8 +2090,19 @@ async function renderSettings() {
       <div class="settings-actions"><span id="settingsMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara inställningar</button></div>
     </form>
     <section class="card settings-card"><div><h3>Utseende</h3><p>${window.staffTheme?.supported ? "Välj ljust eller mörkt läge. Valet gäller den här enheten och sparas direkt." : "Mörkt läge stöds inte i den här webbläsaren. Uppdatera webbläsaren för att använda det."}</p></div>${window.staffTheme?.supported ? `<fieldset><legend>Tema</legend><div class="settings-theme-grid">${[["light", "Ljust"], ["dark", "Mörkt"], ["system", "Följ enhetens inställning"]].map(([value, label]) => `<label><input type="radio" name="themePreference" value="${value}"${window.staffTheme.getPreference() === value ? " checked" : ""} /> ${label}</label>`).join("")}</div></fieldset>` : ""}</section>
-    <section class="card settings-card"><div><h3>Maskiner, avdelningar och uppgifter</h3><p>Lägg till, redigera, pausa och ordna arbetsplatser från en samlad vy.</p></div><div class="settings-actions"><button id="removeDemoDataBtn" class="btn danger" type="button">Ta bort testdata</button><a class="btn primary settings-link" href="add.html#workItemForm">Öppna hanteraren</a></div></section>
-    <section class="card settings-card"><div><h3>Säkerhet och historik</h3><p>${snapshots.length} säkerhetspunkter och ${automaticBackups.length} automatiska helhetskopior finns sparade.</p></div><details class="password-change"><summary>Byt lösenord</summary><form id="changePasswordForm"><label>Nuvarande lösenord<input id="currentPasswordSetting" type="password" autocomplete="current-password" required /></label><label>Nytt lösenord<input id="newPasswordSetting" type="password" minlength="6" autocomplete="new-password" required /></label><label>Bekräfta nytt lösenord<input id="confirmPasswordSetting" type="password" minlength="6" autocomplete="new-password" required /></label><div class="settings-actions"><span id="passwordChangeMessage" class="inline-message"></span><button class="btn primary" type="submit">Spara nytt lösenord</button></div></form></details><div class="settings-actions"><button id="exportSettingsBackupBtn" class="btn" type="button">Exportera backup</button></div><h4>Automatiska helhetskopior</h4><div class="snapshot-list">${automaticBackups.map(item => `<article><div><strong>Automatisk backup</strong><small>${new Date(item.createdAt).toLocaleString("sv-SE")}</small></div><button class="btn" type="button" data-restore-auto-backup="${item.id}">Återställ</button></article>`).join("") || '<div class="empty-state">Den första kopian skapas automatiskt idag.</div>'}</div><h4>Säkerhetspunkter för arbetsplatser</h4><div id="snapshotList" class="snapshot-list">${snapshots.map(item => `<article><div><strong>${escapeHtml(item.reason)}</strong><small>${new Date(item.createdAt).toLocaleString("sv-SE")}</small></div><button class="btn" type="button" data-restore-snapshot="${item.id}">Återställ</button></article>`).join("") || '<div class="empty-state">Inga säkerhetspunkter ännu.</div>'}</div></section>`;
+    <section class="card settings-card"><div><h3>Maskiner, avdelningar och uppgifter</h3><p>Lägg till, redigera, pausa och ordna arbetsplatser från en samlad vy. De gäller alla skift.</p></div><div class="settings-actions">${isAdmin() ? '<button id="removeDemoDataBtn" class="btn danger" type="button">Ta bort testdata</button>' : ""}<a class="btn primary settings-link" href="add.html#workItemForm">Öppna hanteraren</a></div></section>
+    ${isAdmin() ? `
+    <section class="card settings-card" id="shiftSettings"><div><h3>Skift</h3><p>Varje skift har ett eget veckoschema. Personal och skiftledare kopplas till ett skift under Personal.</p></div>
+      <div class="shift-settings-list">${shifts.map(shift => `<article><input value="${escapeHtml(shift.name)}" aria-label="Namn på skiftet ${escapeHtml(shift.name)}" data-shift-name="${escapeHtml(shift.id)}" maxlength="60" /><button class="btn" type="button" data-rename-shift="${escapeHtml(shift.id)}">Byt namn</button><button class="btn danger" type="button" data-delete-shift="${escapeHtml(shift.id)}">Ta bort</button></article>`).join("") || '<div class="empty-state">Inga skift ännu. Lägg till det första nedan.</div>'}</div>
+      <form id="addShiftForm" class="shift-settings-add"><input name="name" placeholder="Nytt skift, t.ex. Dag eller Kväll" maxlength="60" required aria-label="Namn på nytt skift" /><button class="btn primary" type="submit">+ Lägg till skift</button></form>
+    </section>
+    <section class="card settings-card"><div><h3>Säkerhet och historik</h3><p>${snapshots.length} säkerhetspunkter för arbetsplatser finns sparade. Exportera en backup av all data på servern innan större förändringar. Lösenord ingår aldrig i backupen.</p></div>
+      <div class="settings-actions"><button id="exportDataBtn" class="btn" type="button">Exportera backup</button><button id="importDataBtn" class="btn" type="button">Importera backup</button><input id="importDataInput" type="file" accept="application/json,.json" hidden></div>
+      <h4>Säkerhetspunkter för arbetsplatser</h4><div id="snapshotList" class="snapshot-list">${snapshots.map(item => `<article><div><strong>${escapeHtml(item.reason)}</strong><small>${new Date(item.createdAt).toLocaleString("sv-SE")}</small></div><button class="btn" type="button" data-restore-snapshot="${escapeHtml(item.id)}">Återställ</button></article>`).join("") || '<div class="empty-state">Inga säkerhetspunkter ännu.</div>'}</div>
+    </section>
+    <section class="card settings-card"><div><h3>Flytta data från den gamla versionen</h3><p>Den gamla versionen sparade allt krypterat i en webbläsare. ${hasLegacyData ? "Det finns gammal data på den här enheten." : "Ingen gammal data hittades på den här enheten."} Du kan också läsa in en backupfil som exporterats från den gamla versionen via Importera backup ovan.</p></div>
+      ${hasLegacyData ? '<div class="settings-actions"><button id="importLegacyLocalBtn" class="btn primary" type="button">Flytta in data från den här enheten</button></div>' : ""}
+    </section>` : ""}`;
   root.querySelector("#autoLockSetting").value = String(appSettings.autoLockMinutes);
   root.querySelectorAll('[name="themePreference"]').forEach(input => input.addEventListener("change", () => {
     if (input.checked) window.staffTheme.setPreference(input.value);
@@ -2201,27 +2122,51 @@ async function renderSettings() {
     setupAutoLock();
     enhanceAppShell();
   });
-  bindOnce(root.querySelector("#exportSettingsBackupBtn"), "click", downloadBackup);
   bindOnce(root.querySelector("#removeDemoDataBtn"), "click", async () => {
-    const people = await getPeople();
-    const demoPeople = people.filter(person => person.demo);
+    const demoPeople = (await getAllPeople()).filter(person => person.demo);
     if (!demoPeople.length) return showAppToast("Det finns ingen testdata att ta bort.", "error");
-    await savePeople(people.filter(person => !person.demo));
+    if (!confirm(`Ta bort ${demoPeople.length} testpersoner?`)) return;
+    for (const person of demoPeople) await deletePersonRecord(person.id);
     showAppToast(`${demoPeople.length} testpersoner togs bort.`);
   });
-  bindOnce(root.querySelector("#changePasswordForm"), "submit", async event => {
+  if (!isAdmin()) return;
+
+  bindOnce(root.querySelector("#addShiftForm"), "submit", async event => {
     event.preventDefault();
-    const form = event.currentTarget;
-    const currentPassword = root.querySelector("#currentPasswordSetting").value;
-    const nextPassword = root.querySelector("#newPasswordSetting").value;
-    const confirmation = root.querySelector("#confirmPasswordSetting").value;
-    const status = root.querySelector("#passwordChangeMessage");
-    if (currentPassword !== getStoredSessionPassword()) { status.textContent = "Nuvarande lösenord är fel."; status.className = "inline-message error"; return; }
-    if (nextPassword.length < 6 || nextPassword !== confirmation) { status.textContent = "Det nya lösenordet måste vara minst 6 tecken och matcha."; status.className = "inline-message error"; return; }
-    await changeAppPassword(nextPassword);
-    form.reset();
-    status.textContent = "Lösenordet har ändrats och all data krypterats på nytt.";
-    status.className = "inline-message success";
+    const name = event.currentTarget.elements.name.value.trim();
+    if (!name) return;
+    const { shift } = await apiRequest("POST", "/shifts", { name });
+    shifts = [...shifts, shift];
+    if (!getShiftScope()) sessionStorage.setItem(ACTIVE_SHIFT_KEY, shift.id);
+    showAppToast(`Skiftet ${shift.name} har lagts till.`);
+    await renderSettings();
+    renderSidebarAccount();
+  });
+  root.querySelectorAll("[data-rename-shift]").forEach(button => bindOnce(button, "click", async () => {
+    const id = button.dataset.renameShift;
+    const name = root.querySelector(`[data-shift-name="${CSS.escape(id)}"]`).value.trim();
+    if (!name) return showAppToast("Skiftet måste ha ett namn.", "error");
+    const { shift } = await apiRequest("PATCH", `/shifts/${encodeURIComponent(id)}`, { name });
+    shifts = shifts.map(item => item.id === shift.id ? shift : item);
+    showAppToast("Namnet har sparats.");
+    renderSidebarAccount();
+  }));
+  root.querySelectorAll("[data-delete-shift]").forEach(button => bindOnce(button, "click", async () => {
+    const shift = shifts.find(item => item.id === button.dataset.deleteShift);
+    if (!shift || !confirm(`Ta bort skiftet ${shift.name}? Skiftets scheman, rastplaner och att göra-listor raderas. Personalen finns kvar men saknar skift tills du väljer ett nytt.`)) return;
+    await apiRequest("DELETE", `/shifts/${encodeURIComponent(shift.id)}`);
+    shifts = shifts.filter(item => item.id !== shift.id);
+    if (sessionStorage.getItem(ACTIVE_SHIFT_KEY) === shift.id) sessionStorage.removeItem(ACTIVE_SHIFT_KEY);
+    peopleCache = null;
+    showAppToast(`Skiftet ${shift.name} har tagits bort.`);
+    await renderSettings();
+    renderSidebarAccount();
+  }));
+  setupDataTools();
+  bindOnce(root.querySelector("#importLegacyLocalBtn"), "click", async () => {
+    const data = readLegacyLocalData();
+    if (!data) return showAppToast("Ingen gammal data hittades på den här enheten.", "error");
+    await openLegacyImportDialog(data, "local");
   });
   root.querySelectorAll("[data-restore-snapshot]").forEach(button => button.addEventListener("click", async () => {
     const snapshot = snapshots.find(item => item.id === button.dataset.restoreSnapshot);
@@ -2231,30 +2176,36 @@ async function renderSettings() {
     await addAuditEvent("backup", "Säkerhetspunkt återställd", snapshot.reason);
     location.reload();
   }));
-  root.querySelectorAll("[data-restore-auto-backup]").forEach(button => button.addEventListener("click", async () => {
-    const backup = automaticBackups.find(item => item.id === button.dataset.restoreAutoBackup);
-    if (!backup || !confirm("Återställ hela den lokala datan från denna tidpunkt?")) return;
-    const auth = { salt: localStorage.getItem(STORAGE_KEYS.salt), check: localStorage.getItem(STORAGE_KEYS.check) };
-    Object.keys(localStorage).filter(key => isAppStorageKey(key) && key !== STORAGE_KEYS.salt && key !== STORAGE_KEYS.check).forEach(key => localStorage.removeItem(key));
-    Object.entries(backup.data || {}).forEach(([key, value]) => { if (key !== STORAGE_KEYS.salt && key !== STORAGE_KEYS.check) localStorage.setItem(key, value); });
-    if (auth.salt) localStorage.setItem(STORAGE_KEYS.salt, auth.salt);
-    if (auth.check) localStorage.setItem(STORAGE_KEYS.check, auth.check);
-    location.reload();
-  }));
 }
 
 function renderHelpPage() {
   const root = document.getElementById("helpPage");
   if (!root) return;
-  root.innerHTML = `<section class="card help-intro"><div><h3>Kom igång</h3><p>All data sparas krypterat på den här enheten. Exportera backup regelbundet.</p></div><a class="btn primary" href="installningar.html">Öppna inställningar</a></section><div class="help-grid"><article class="card"><span>1</span><h3>Lägg till personal</h3><p>Öppna Lägg till, registrera namn och företag. Tillgänglighet ändras på personalsidan.</p></article><article class="card"><span>2</span><h3>Bygg arbetsplatser</h3><p>Lägg till maskiner, avdelningar, utbildningar och extraplatser. De kan pausas och ordnas.</p></article><article class="card"><span>3</span><h3>Skapa schema</h3><p>Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall.</p></article><article class="card"><span>4</span><h3>Kontrollera varningar</h3><p>Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt.</p></article><article class="card"><span>5</span><h3>Säkerhetskopiera</h3><p>Exportera en krypterad backup från Översikt eller Inställningar innan större förändringar.</p></article><article class="card"><span>6</span><h3>Installera</h3><p>I webbläsarens meny kan appen installeras på datorn när PWA-stödet är aktiverat.</p></article></div><section class="card help-feedback"><div><h3>Förslag eller problem?</h3><p>Skicka feedback till den adress som angetts i Inställningar.</p></div>${appSettings.feedbackEmail ? `<a class="btn" href="mailto:${escapeHtml(appSettings.feedbackEmail)}?subject=Staff%20Planner%20feedback">Skicka feedback</a>` : '<a class="btn" href="installningar.html">Ange feedbackadress</a>'}</section>`;
+  const steps = isOperator()
+    ? [
+      ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
+      ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
+      ["Sjuk eller borta?", "Öppna Min profil och ändra din status. Skiftledaren ser ändringen direkt."],
+      ["Lösenord", "Byt lösenord under Min profil. Har du glömt det, be din skiftledare om ett tillfälligt."]
+    ]
+    : [
+      ["Lägg till personal", "Öppna Lägg till, registrera namn, företag och skift. Skapa en inloggning om personen ska kunna se schemat själv."],
+      ["Bygg arbetsplatser", "Lägg till maskiner, avdelningar, utbildningar och extraplatser. De gäller alla skift och kan pausas och ordnas."],
+      ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
+      ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
+      ["Roller", "Admin kan allt. Skiftledare ändrar sitt eget skift och ser andra skift. Operatörer ser sitt schema och ändrar sin profil."],
+      ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen."]
+    ];
+  root.innerHTML = `<section class="card help-intro"><div><h3>Kom igång</h3><p>All data sparas på servern, så alla ser samma schema från sina egna enheter.</p></div><a class="btn primary" href="${isOperator() ? "profil.html" : "installningar.html"}">${isOperator() ? "Öppna min profil" : "Öppna inställningar"}</a></section><div class="help-grid">${steps.map(([title, text], index) => `<article class="card"><span>${index + 1}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></article>`).join("")}</div><section class="card help-feedback"><div><h3>Förslag eller problem?</h3><p>Skicka feedback till den adress som angetts i Inställningar.</p></div>${appSettings.feedbackEmail ? `<a class="btn" href="mailto:${escapeHtml(appSettings.feedbackEmail)}?subject=Staff%20Planner%20feedback">Skicka feedback</a>` : isOperator() ? "" : '<a class="btn" href="installningar.html">Ange feedbackadress</a>'}</section>`;
 }
 
+// First sign-in of the first admin: name the workplace, create shifts and add staff.
 async function setupOnboarding() {
-  if (appSettings.onboardingComplete || !document.getElementById("appShell") || document.getElementById("onboardingModal")) return;
+  if (!isAdmin() || appSettings.onboardingComplete || !document.getElementById("appShell") || document.getElementById("onboardingModal")) return;
   const overlay = document.createElement("div");
   overlay.id = "onboardingModal";
   overlay.className = "modal-overlay onboarding-overlay";
-  overlay.innerHTML = `<section class="onboarding-modal"><span class="onboarding-kicker">Välkommen</span><h2>Gör Staff Planner redo</h2><p>Tre små val räcker. Allt kan ändras senare i Inställningar.</p><form id="onboardingForm"><label>Arbetsplatsens namn<input id="onboardingOrganization" placeholder="Företag eller avdelning" /></label><fieldset><legend>Arbetsdagar</legend><div class="settings-day-grid">${ALL_DAYS.map(day => `<label><input type="checkbox" name="onboardingDay" value="${day}" checked /> ${day}</label>`).join("")}</div></fieldset><label>Personal, en person per rad<textarea id="onboardingPeople" rows="5" placeholder="Anna Andersson&#10;Erik Svensson"></textarea></label><label class="settings-switch"><input id="onboardingDemo" type="checkbox" /><span>Lägg till tre tydligt märkta testpersoner</span></label><div class="onboarding-actions"><button id="skipOnboarding" class="btn" type="button">Hoppa över</button><button class="btn primary" type="submit">Spara och börja</button></div></form></section>`;
+  overlay.innerHTML = `<section class="onboarding-modal"><span class="onboarding-kicker">Välkommen</span><h2>Gör Staff Planner redo</h2><p>Några små val räcker. Allt kan ändras senare i Inställningar.</p><form id="onboardingForm"><label>Arbetsplatsens namn<input id="onboardingOrganization" placeholder="Företag eller avdelning" /></label><fieldset><legend>Arbetsdagar</legend><div class="settings-day-grid">${ALL_DAYS.map(day => `<label><input type="checkbox" name="onboardingDay" value="${day}" checked /> ${day}</label>`).join("")}</div></fieldset>${shifts.length ? "" : '<label>Skift, separerade med kommatecken<input id="onboardingShifts" value="Dag, Kväll" /></label>'}<label>Personal i ${shifts.length ? escapeHtml(shifts[0].name) : "första skiftet"}, en person per rad<textarea id="onboardingPeople" rows="5" placeholder="Anna Andersson&#10;Erik Svensson"></textarea></label><label class="settings-switch"><input id="onboardingDemo" type="checkbox" /><span>Lägg till tre tydligt märkta testpersoner</span></label><div class="onboarding-actions"><button id="skipOnboarding" class="btn" type="button">Hoppa över</button><button class="btn primary" type="submit">Spara och börja</button></div></form></section>`;
   document.body.appendChild(overlay);
   const cleanupFocus = manageDialogFocus(overlay.querySelector(".onboarding-modal"));
   const complete = async extra => { await saveAppSettings({ ...appSettings, onboardingComplete: true, ...extra }); overlay.remove(); cleanupFocus(); showAppToast("Grundinställningen är klar."); };
@@ -2263,13 +2214,21 @@ async function setupOnboarding() {
     event.preventDefault();
     const workDays = [...overlay.querySelectorAll('[name="onboardingDay"]:checked')].map(input => input.value);
     if (!workDays.length) return showAppToast("Välj minst en arbetsdag.", "error");
+    const shiftNames = (overlay.querySelector("#onboardingShifts")?.value || "").split(",").map(value => value.trim()).filter(Boolean);
+    for (const name of shiftNames) {
+      const { shift } = await apiRequest("POST", "/shifts", { name });
+      shifts = [...shifts, shift];
+    }
+    const firstShiftId = shifts[0]?.id || null;
     const names = overlay.querySelector("#onboardingPeople").value.split("\n").map(value => value.trim()).filter(Boolean);
-    const people = await getPeople();
-    names.forEach(name => people.push({ id: makeId(), name, company: "", createdAt: new Date().toISOString() }));
-    if (overlay.querySelector("#onboardingDemo").checked) ["Testperson Anna", "Testperson Erik", "Testperson Sara"].forEach(name => people.push({ id: makeId(), name, company: "TESTDATA", demo: true, createdAt: new Date().toISOString() }));
-    await savePeople(people);
+    for (const name of names) await createPerson({ name, shiftId: firstShiftId });
+    if (overlay.querySelector("#onboardingDemo").checked) {
+      for (const name of ["Testperson Anna", "Testperson Erik", "Testperson Sara"]) {
+        await createPerson({ name, company: "TESTDATA", demo: true, shiftId: firstShiftId });
+      }
+    }
     await complete({ workDays, organizationName: overlay.querySelector("#onboardingOrganization").value.trim() });
-    await refreshAppViews();
+    location.reload();
   });
 }
 
@@ -2438,6 +2397,16 @@ function makeTimeField(labelText, value, duration, onChange) {
 }
 
 async function renderBreakPlanner() {
+  await renderBreakPlannerContent();
+  if (canEditActiveShift()) return;
+  // Operators and other shifts' leaders can switch days but not change anything.
+  const root = document.getElementById("breakPlanner");
+  root?.querySelector(".break-auto-groups-btn")?.remove();
+  root?.querySelectorAll("select, input, textarea, button:not(.break-day-tab)").forEach(control => { control.disabled = true; });
+  root?.classList.add("break-readonly");
+}
+
+async function renderBreakPlannerContent() {
   const root = document.getElementById("breakPlanner");
   if (!root) return;
 
@@ -3302,8 +3271,8 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   const remember = () => recordScheduleHistory(state.schedule, state.trainingLeaders, state.trainingLocations, state.extraPersonLocations);
   let tools = card.querySelector(".schedule-tools");
   if (!tools) { tools = document.createElement("div"); tools.className = "schedule-tools"; card.insertBefore(tools, root); }
-  const templates = await dataStore.get(STORAGE_KEYS.scheduleTemplates, []) || [];
-  const updatedAt = localStorage.getItem(`${STORAGE_KEYS.scheduleUpdatedAt}:${getSelectedWeekKey()}`);
+  const templates = await getScheduleTemplates();
+  const updatedAt = getDocumentUpdatedAt(getShiftScope(), getWeekDocumentKey("schedule"));
   const companies = [...new Set(people.map(person => person.company).filter(Boolean))].sort((a, b) => a.localeCompare(b, "sv"));
   const knownSkills = [...new Set(Object.values(skills).flat().filter(Boolean))].sort((a, b) => a.localeCompare(b, "sv"));
   tools.innerHTML = `<div class="schedule-filter-tools"><label>Företag<select id="scheduleCompanyFilter"><option value="">Alla</option>${companies.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></label><label>Status<select id="scheduleAvailabilityFilter"><option value="all">Alla</option><option value="available">Tillgänglig</option><option value="sick">Sjuk</option><option value="vab">Vård av barn</option><option value="vacation">Semester</option><option value="unavailable">Ej tillgänglig</option></select></label><label>Kompetens<select id="scheduleSkillFilter"><option value="">Alla</option>${knownSkills.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></label></div><div class="schedule-copy-tools"><label>Från<select id="copyDayFrom">${DAYS.map(day => `<option>${day}</option>`).join("")}</select></label><label>Till<select id="copyDayTo">${DAYS.map((day, index) => `<option${index === 1 ? " selected" : ""}>${day}</option>`).join("")}</select></label><button id="copyScheduleDay" class="btn" type="button">Kopiera dag</button></div><div class="schedule-template-tools"><select id="scheduleTemplateSelect"><option value="">Välj mall</option>${templates.map(item => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}</select><button id="saveScheduleTemplate" class="btn" type="button">Spara veckan som mall</button><button id="applyScheduleTemplate" class="btn" type="button">Använd mall</button></div><div class="schedule-history-tools"><button id="undoSchedule" class="btn" type="button"${scheduleUndoStack.length ? "" : " disabled"}>↶ Ångra</button><button id="redoSchedule" class="btn" type="button"${scheduleRedoStack.length ? "" : " disabled"}>↷ Gör om</button><span class="schedule-save-state">✓ ${updatedAt ? `Sparat ${new Date(updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Redo att spara"}</span></div>`;
@@ -3353,7 +3322,7 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   bindOnce(tools.querySelector("#saveScheduleTemplate"), "click", async () => {
     const name = window.prompt("Namn på mallen:", `Veckomall ${templates.length + 1}`)?.trim();
     if (!name) return;
-    await dataStore.set(STORAGE_KEYS.scheduleTemplates, [...templates, { id: makeId(), name, createdAt: new Date().toISOString(), ...structuredClone(state) }]);
+    await saveScheduleTemplates([...templates, { id: makeId(), name, createdAt: new Date().toISOString(), ...structuredClone(state) }]);
     showAppToast("Veckomallen har sparats."); await renderScheduleTools(schedule, people, skills, placementDetails);
   });
   bindOnce(tools.querySelector("#applyScheduleTemplate"), "click", async () => {
@@ -3378,6 +3347,93 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   });
 }
 
+// Read-only week for operators and for shift leaders looking at another shift.
+function renderReadOnlySchedule(root, { people, schedule, trainingLeaders, trainingLocations, extraPersonLocations }) {
+  const card = root.parentElement;
+  document.getElementById("autoScheduleBtn")?.classList.add("hidden");
+  document.getElementById("autoScheduleMessage")?.classList.add("hidden");
+  card?.querySelectorAll(".schedule-tools, .schedule-priority-panel, .availability-summary, .unassigned-summary, .schedule-history-notice").forEach(element => element.remove());
+  renderTrainingScheduleSummary(root, people, schedule, trainingLocations);
+  renderMyWeekSummary(root, { schedule, trainingLeaders, trainingLocations, extraPersonLocations });
+
+  const nameById = Object.fromEntries(people.map(person => [person.id, person.name]));
+  const ownId = currentPerson?.id || "";
+  const dates = getDatesForWeek();
+  root.classList.add("schedule-readonly");
+  root.innerHTML = "";
+  root.appendChild(makeCell("Uppgift", "header task"));
+  DAYS.forEach((day, index) => {
+    const header = document.createElement("div");
+    header.className = "cell header day-header";
+    header.innerHTML = `<span class="day-name-full">${day}</span><span class="day-name-short">${day.slice(0, 2)}</span><small>${dates[index]}</small>`;
+    root.appendChild(header);
+  });
+
+  TASKS.forEach(task => {
+    const isTrainingTask = isTrainingTaskName(task);
+    const isExtraTask = isExtraPersonTask(task);
+    const taskCell = makeCell("", isTrainingTask ? "task utbildning" : isExtraTask ? "task extra-person-task" : "task");
+    taskCell.innerHTML = `<span>${escapeHtml(task)}</span>`;
+    root.appendChild(taskCell);
+
+    DAYS.forEach(day => {
+      const cell = document.createElement("div");
+      cell.className = isTrainingTask ? "cell utbildning readonly-cell" : isExtraTask ? "cell extra-person-cell readonly-cell" : "cell readonly-cell";
+      const personId = schedule?.[task]?.[day] || "";
+      const lines = [];
+      const involved = [personId];
+      if (isTrainingTask) {
+        if (personId) {
+          const leaderId = trainingLeaders?.[task]?.[day] || "";
+          involved.push(leaderId);
+          lines.push(`<strong>${escapeHtml(nameById[personId] || "—")}</strong>`);
+          lines.push(`<small>Handledare: ${escapeHtml(nameById[leaderId] || "—")}</small>`);
+          lines.push(`<small>Plats: ${escapeHtml(trainingLocations?.[task]?.[day] || "—")}</small>`);
+        }
+      } else {
+        const training = TASKS.filter(isTrainingTaskName)
+          .find(item => schedule?.[item]?.[day] && trainingLocations?.[item]?.[day] === task);
+        if (training) {
+          involved.push(schedule[training][day]);
+          lines.push(`<strong>Utbildning</strong><small>${escapeHtml(nameById[schedule[training][day]] || "")}</small>`);
+        } else if (personId) {
+          lines.push(`<strong>${escapeHtml(nameById[personId] || "—")}</strong>`);
+          if (isExtraTask) lines.push(`<small>${escapeHtml(extraPersonLocations?.[task]?.[day] || "Ingen uppgift vald")}</small>`);
+        }
+      }
+      cell.innerHTML = lines.join("") || '<span class="readonly-empty">—</span>';
+      if (ownId && involved.includes(ownId)) {
+        cell.classList.add("is-mine");
+        cell.title = "Du";
+      }
+      root.appendChild(cell);
+    });
+  });
+}
+
+// "Min vecka": where the signed-in person works each day.
+function renderMyWeekSummary(root, { schedule, trainingLeaders, trainingLocations, extraPersonLocations }) {
+  const card = root.parentElement;
+  card?.querySelector(".my-week-summary")?.remove();
+  const ownId = currentPerson?.id;
+  if (!card || !ownId || currentPerson.shiftId !== getShiftScope()) return;
+  const dates = getDatesForWeek();
+  const days = DAYS.map((day, index) => {
+    const task = TASKS.find(item => schedule?.[item]?.[day] === ownId);
+    const leading = TASKS.filter(isTrainingTaskName).find(item => trainingLeaders?.[item]?.[day] === ownId);
+    let text = "Ingen placering";
+    if (task && isTrainingTaskName(task)) text = `Utbildning · ${trainingLocations?.[task]?.[day] || "plats ej vald"}`;
+    else if (task && isExtraPersonTask(task)) text = `${task} · ${extraPersonLocations?.[task]?.[day] || "uppgift ej vald"}`;
+    else if (task) text = task;
+    else if (leading) text = `Handledare · ${trainingLocations?.[leading]?.[day] || leading}`;
+    return { day, date: dates[index], text, placed: Boolean(task || leading) };
+  });
+  const summary = document.createElement("section");
+  summary.className = "my-week-summary";
+  summary.innerHTML = `<div class="my-week-heading"><strong>Min vecka</strong><span>${escapeHtml(currentPerson.name)}</span></div><div class="my-week-days">${days.map(entry => `<article class="${entry.placed ? "is-placed" : ""}"><small>${escapeHtml(entry.day)} ${escapeHtml(entry.date)}</small><strong>${escapeHtml(entry.text)}</strong></article>`).join("")}</div>`;
+  card.insertBefore(summary, card.firstChild);
+}
+
 async function renderSchedule() {
   const root = document.getElementById("scheduleGrid");
   if (!root) return;
@@ -3396,6 +3452,10 @@ async function renderSchedule() {
     ]);
   const dates = getDatesForWeek();
 
+  if (!canEditActiveShift()) {
+    renderReadOnlySchedule(root, { people, schedule, trainingLeaders, trainingLocations, extraPersonLocations });
+    return;
+  }
   await renderScheduleTools(schedule, people, skills, { trainingLeaders, trainingLocations, extraPersonLocations });
 
   renderAvailabilitySummary(root, people);
@@ -3788,13 +3848,88 @@ async function renderSchedule() {
   }
 }
 
+const AVAILABILITY_OPTIONS = [
+  ["available", "Tillgänglig"],
+  ["sick", "Sjuk"],
+  ["vab", "Vård av barn"],
+  ["vacation", "Semester"],
+  ["unavailable", "Inte tillgänglig"]
+];
+
+function canCreateAccountFor(person, role = ROLES.OPERATOR) {
+  if (isAdmin()) return true;
+  return canEditPerson(person) && role === ROLES.OPERATOR;
+}
+
+function canResetPasswordFor(person) {
+  if (!person.account) return false;
+  if (isAdmin()) return true;
+  return canEditPerson(person) && person.account.role === ROLES.OPERATOR;
+}
+
+function describeAccount(person) {
+  if (!person.account) return "Ingen inloggning";
+  return `${ROLE_LABELS[person.account.role] || "Operatör"} · ${person.account.username}`;
+}
+
+// Clears someone who is away from the selected week's schedule in their shift,
+// as the app always did when a status was changed on the staff page.
+async function removePersonFromSelectedWeek(personId, shiftId) {
+  if (!canEditShift(shiftId)) return;
+  const [storedSchedule, storedLeaders, storedLocations] = await Promise.all([
+    getDocument(shiftId, getWeekDocumentKey("schedule"), null),
+    getDocument(shiftId, getWeekDocumentKey("trainingLeaders"), null),
+    getDocument(shiftId, getWeekDocumentKey("trainingLocations"), null)
+  ]);
+  const schedule = normalizeSchedule(storedSchedule);
+  const trainingLeaders = normalizeTrainingLeaders(storedLeaders);
+  const trainingLocations = normalizeTrainingLocations(storedLocations);
+  let scheduleChanged = false, leadersChanged = false, locationsChanged = false;
+  TASKS.forEach(task => {
+    DAYS.forEach(day => {
+      if (schedule[task]?.[day] === personId) {
+        schedule[task][day] = "";
+        scheduleChanged = true;
+        if (isTrainingTaskName(task) && trainingLocations[task]?.[day]) {
+          trainingLocations[task][day] = "";
+          locationsChanged = true;
+        }
+      }
+      if (trainingLeaders[task]?.[day] === personId) {
+        trainingLeaders[task][day] = "";
+        leadersChanged = true;
+      }
+    });
+  });
+  await Promise.all([
+    scheduleChanged ? saveDocument(shiftId, getWeekDocumentKey("schedule"), schedule) : null,
+    leadersChanged ? saveDocument(shiftId, getWeekDocumentKey("trainingLeaders"), trainingLeaders) : null,
+    locationsChanged ? saveDocument(shiftId, getWeekDocumentKey("trainingLocations"), trainingLocations) : null
+  ]);
+}
+
+function ensurePeopleShiftFilter() {
+  const bar = document.querySelector("#peopleList")?.closest(".card")?.querySelector(".filter-bar");
+  if (!bar || document.getElementById("peopleShiftFilter")) return;
+  const select = document.createElement("select");
+  select.id = "peopleShiftFilter";
+  select.setAttribute("aria-label", "Visa skift");
+  select.innerHTML = `<option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shift.name)}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}<option value="none">Utan skift</option>`;
+  // Shift leaders start in their own shift; admins see everyone.
+  select.value = isShiftLeader() && getOwnShiftId() ? getOwnShiftId() : "";
+  select.addEventListener("change", () => void renderPeople());
+  bar.prepend(select);
+}
+
 async function renderPeople() {
   const list = document.getElementById("peopleList");
   if (!list) return;
 
-  const allPeople = await getPeople();
+  ensurePeopleShiftFilter();
+  const allPeople = await getAllPeople();
   const query = (document.getElementById("peopleSearch")?.value || "").trim().toLocaleLowerCase();
   const statusFilter = document.getElementById("availabilityFilter")?.value || "";
+  const shiftFilter = document.getElementById("peopleShiftFilter")?.value || "";
   const availabilityOrder = {
     available: 0,
     vacation: 1,
@@ -3804,12 +3939,14 @@ async function renderPeople() {
   };
   const people = allPeople
     .filter(person =>
-      (!query || `${person.name} ${person.company || ""}`.toLocaleLowerCase().includes(query)) &&
-      (!statusFilter || getPersonAvailability(person) === statusFilter)
+      (!query || `${person.name} ${person.company || ""} ${person.account?.username || ""}`.toLocaleLowerCase().includes(query)) &&
+      (!statusFilter || getPersonAvailability(person) === statusFilter) &&
+      (!shiftFilter || (shiftFilter === "none" ? !person.shiftId : person.shiftId === shiftFilter))
     )
     .sort((firstPerson, secondPerson) =>
       (availabilityOrder[getPersonAvailability(firstPerson)] ?? 4) -
-      (availabilityOrder[getPersonAvailability(secondPerson)] ?? 4)
+      (availabilityOrder[getPersonAvailability(secondPerson)] ?? 4) ||
+      firstPerson.name.localeCompare(secondPerson.name, "sv")
     );
   list.innerHTML = "";
 
@@ -3818,9 +3955,8 @@ async function renderPeople() {
     const meta = document.createElement("div");
     const actions = document.createElement("div");
     const availabilitySelect = document.createElement("select");
-    const editBtn = document.createElement("button");
-    const deleteBtn = document.createElement("button");
     const availability = getPersonAvailability(person);
+    const editable = canEditPerson(person);
 
     row.className = `person-row person-row-${availability}`;
     meta.className = "person-meta";
@@ -3830,21 +3966,16 @@ async function renderPeople() {
     availabilitySelect.title = availability === "available"
       ? `${person.name} är tillgänglig.`
       : getUnavailableMessage(person);
-    editBtn.className = "btn";
-    deleteBtn.className = "btn danger";
+    availabilitySelect.disabled = !editable;
 
+    const details = [person.company, getShiftName(person.shiftId) || "Inget skift"].filter(Boolean).join(" · ");
     meta.innerHTML = `
       <h3 title="${escapeHtml(availabilitySelect.title)}">${escapeHtml(person.name)}</h3>
-      <p>${escapeHtml(person.company || "")}</p>
+      <p>${escapeHtml(details)}</p>
+      <span class="person-role-badge${person.account ? ` role-${escapeHtml(person.account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>
     `;
 
-    [
-      ["available", "Tillgänglig"],
-      ["sick", "Sjuk"],
-      ["vab", "Vård av barn"],
-      ["vacation", "Semester"],
-      ["unavailable", "Inte tillgänglig"]
-    ].forEach(([value, label]) => {
+    AVAILABILITY_OPTIONS.forEach(([value, label]) => {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = label;
@@ -3853,44 +3984,35 @@ async function renderPeople() {
     });
 
     availabilitySelect.addEventListener("change", async () => {
-      person.availability = availabilitySelect.value;
-      await savePeople(allPeople);
-      await addAuditEvent("availability", `${person.name}: ${getAvailabilityLabel(availabilitySelect.value)}`, "Tillgänglighet uppdaterad", { action: "availability", personId: person.id, value: availability });
-
-      if (availabilitySelect.value !== "available") {
-        const schedule = await getSchedule();
-        const trainingLeaders = await getTrainingLeaders();
-        const trainingLocations = await getTrainingLocations();
-
-        TASKS.forEach(task => {
-          DAYS.forEach(day => {
-            if (schedule[task]?.[day] === person.id) {
-              schedule[task][day] = "";
-              if (isTrainingTaskName(task) && trainingLocations[task]?.[day]) {
-                trainingLocations[task][day] = "";
-              }
-            }
-            if (trainingLeaders[task]?.[day] === person.id) {
-              trainingLeaders[task][day] = "";
-            }
-          });
-        });
-
-        await saveSchedule(schedule);
-        await saveTrainingLeaders(trainingLeaders);
-        await saveTrainingLocations(trainingLocations);
+      const nextAvailability = availabilitySelect.value;
+      availabilitySelect.disabled = true;
+      try {
+        // The server logs the change in the shift's history.
+        await updatePerson(person.id, { availability: nextAvailability });
+        if (nextAvailability !== "available" && person.shiftId) await removePersonFromSelectedWeek(person.id, person.shiftId);
+      } finally {
+        await refreshAppViews();
       }
-
-      await refreshAppViews();
     });
 
-    editBtn.textContent = "Redigera";
-    editBtn.onclick = () => editPerson(person.id);
-
-    deleteBtn.textContent = "Ta bort";
-    deleteBtn.onclick = () => deletePerson(person.id);
-
-    actions.append(availabilitySelect, editBtn, deleteBtn);
+    actions.append(availabilitySelect);
+    if (editable) {
+      const editBtn = document.createElement("button");
+      editBtn.className = "btn";
+      editBtn.type = "button";
+      editBtn.textContent = "Redigera";
+      editBtn.addEventListener("click", () => void editPerson(person.id));
+      actions.append(editBtn);
+    }
+    // Removing people and their logins is reserved for admins.
+    if (isAdmin() && person.id !== currentPerson?.id) {
+      const deleteBtn = document.createElement("button");
+      deleteBtn.className = "btn danger";
+      deleteBtn.type = "button";
+      deleteBtn.textContent = "Ta bort";
+      deleteBtn.addEventListener("click", () => void deletePerson(person.id));
+      actions.append(deleteBtn);
+    }
     row.append(meta, actions);
     list.appendChild(row);
   });
@@ -4133,14 +4255,19 @@ async function renderTestResults() {
 async function renderTrainingReminders() {
   const main = document.querySelector("#appShell .main");
   if (!main) return;
+  // Planning training means editing competence, which only admins do.
+  if (!isAdmin()) {
+    document.getElementById("trainingReminderPanel")?.remove();
+    return;
+  }
 
-  const dismissedDay = localStorage.getItem(STORAGE_KEYS.trainingReminderDismissedDay);
+  const dismissedDay = localStorage.getItem(TRAINING_REMINDER_DISMISSED_KEY);
   const currentDay = formatDateKey(new Date());
   if (dismissedDay === currentDay) {
     document.getElementById("trainingReminderPanel")?.remove();
     return;
   }
-  if (dismissedDay) localStorage.removeItem(STORAGE_KEYS.trainingReminderDismissedDay);
+  if (dismissedDay) localStorage.removeItem(TRAINING_REMINDER_DISMISSED_KEY);
 
   const [people, departments, skills, timestamps] = await Promise.all([
     getPeople(),
@@ -4216,7 +4343,7 @@ async function renderTrainingReminders() {
     </div>
   `;
   panel.querySelector(".training-reminder-close").addEventListener("click", () => {
-    localStorage.setItem(STORAGE_KEYS.trainingReminderDismissedDay, currentDay);
+    localStorage.setItem(TRAINING_REMINDER_DISMISSED_KEY, currentDay);
     panel.remove();
   });
 }
@@ -4445,7 +4572,7 @@ async function getScheduleForDate(dateKey) {
   const weekday = date.getDay();
   date.setDate(date.getDate() - weekday + (weekday === 0 ? -6 : 1));
   const weekKey = formatDateKey(date);
-  const schedule = await decryptStoredItem(`${STORAGE_KEYS.schedule}:${weekKey}`, null);
+  const schedule = await getShiftDocument(`schedule:${weekKey}`, null);
   return schedule ? normalizeSchedule(schedule) : createEmptySchedule();
 }
 
@@ -4612,17 +4739,17 @@ async function renderDashboard() {
   const latestProduction = Object.values(productionRecords).sort((a, b) => b.date.localeCompare(a.date))[0];
   root.innerHTML = `
     <div class="dashboard-stats">
-      <article><span>Personal</span><strong>${people.length}</strong><small>registrerade</small></article>
+      <article><span>Personal</span><strong>${people.length}</strong><small>${escapeHtml(getShiftName(getShiftScope()) || "inget skift")}</small></article>
       <article class="stat-green"><span>Tillgängliga i gruppen</span><strong>${available}</strong><small>kan schemaläggas</small></article>
       <article class="stat-red"><span>Sjuka</span><strong>${sick}</strong><small>ej tillgängliga</small></article>
       <article class="stat-yellow"><span>Semester</span><strong>${vacation}</strong><small>frånvarande</small></article>
       <article class="stat-green"><span>Full kompetens</span><strong>${fullyQualified}</strong><small>alla maskiner</small></article>
-      <article><span>Testade</span><strong>${tested}</strong><small>av ${people.length}</small></article>
+      ${isAdmin() ? `<article><span>Testade</span><strong>${tested}</strong><small>av ${people.length}</small></article>` : ""}
       <article><span>Senaste produktion</span><strong>${latestProduction?.total || 0}</strong><small>${latestProduction?.date || "ingen dag"}</small></article>
     </div>
     <div class="dashboard-columns">
-      <section class="card data-tools-card"><div><h3>Data och säkerhet</h3><p>Exportera en krypterad säkerhetskopia eller återställ från en tidigare fil.</p></div><div class="data-tool-actions"><button id="exportDataBtn" class="btn primary" type="button">Exportera backup</button><button id="importDataBtn" class="btn" type="button">Importera backup</button><input id="importDataInput" type="file" accept="application/json,.json" hidden></div></section>
-      <section class="card audit-card"><div class="audit-heading"><div><h3>Dagens ändringar</h3><p>Aktiviteter som registrerats idag</p></div><span>${events.length}</span></div><div class="audit-list">${events.map(event => `<article><span class="audit-dot"></span><div><strong>${escapeHtml(event.title)}</strong><p>${escapeHtml(event.detail || "")}</p><small>${new Date(event.createdAt).toLocaleString("sv-SE")}</small></div>${event.undo ? `<button class="audit-undo" data-audit-id="${event.id}" type="button">Återställ</button>` : ""}</article>`).join("") || '<div class="empty-state">Inga ändringar registrerade idag.</div>'}</div></section>
+      ${isAdmin() ? '<section class="card data-tools-card"><div><h3>Data och säkerhet</h3><p>Exportera en säkerhetskopia av all data på servern eller återställ från en tidigare fil. Lösenord ingår inte.</p></div><div class="data-tool-actions"><button id="exportDataBtn" class="btn primary" type="button">Exportera backup</button><button id="importDataBtn" class="btn" type="button">Importera backup</button><input id="importDataInput" type="file" accept="application/json,.json" hidden></div></section>' : ""}
+      <section class="card audit-card"><div class="audit-heading"><div><h3>Dagens ändringar</h3><p>Aktiviteter som registrerats idag</p></div><span>${events.length}</span></div><div class="audit-list">${events.map(event => `<article><span class="audit-dot"></span><div><strong>${escapeHtml(event.title)}</strong><p>${escapeHtml(event.detail || "")}</p><small>${new Date(event.createdAt).toLocaleString("sv-SE")}${event.userName ? ` · ${escapeHtml(event.userName)}` : ""}</small></div>${event.undo && (isAdmin() || event.undo.action === "availability") ? `<button class="audit-undo" data-audit-id="${escapeHtml(event.id)}" type="button">Återställ</button>` : ""}</article>`).join("") || '<div class="empty-state">Inga ändringar registrerade idag.</div>'}</div></section>
     </div>
   `;
   setupDataTools();
@@ -4632,89 +4759,50 @@ async function renderDashboard() {
   }));
 }
 
-const BACKUP_VERSION = 1;
-const MAX_BACKUP_SIZE_BYTES = 10 * 1024 * 1024;
+const MAX_BACKUP_SIZE_BYTES = 20 * 1024 * 1024;
 
-function isAppStorageKey(key) {
-  return key.startsWith("staff_") || key === STORAGE_KEYS.salt || key === STORAGE_KEYS.check;
-}
-
-function createBackupPayload() {
-  const data = {};
-  Object.keys(localStorage).forEach(key => {
-    if (isAppStorageKey(key)) data[key] = localStorage.getItem(key);
-  });
-  return {
-    app: "Staff Planner",
-    version: BACKUP_VERSION,
-    exportedAt: new Date().toISOString(),
-    data
-  };
-}
-
-async function createAutomaticBackupIfNeeded() {
-  const storedBackups = await dataStore.get(STORAGE_KEYS.automaticBackups, []);
-  const backups = Array.isArray(storedBackups) ? storedBackups : [];
-  const today = formatDateKey(new Date());
-  if (backups.some(item => formatDateKey(new Date(item.createdAt)) === today)) return;
-  const payload = createBackupPayload();
-  delete payload.data[STORAGE_KEYS.automaticBackups];
-  delete payload.data[STORAGE_KEYS.salt];
-  delete payload.data[STORAGE_KEYS.check];
-  backups.unshift({ id: makeId(), createdAt: new Date().toISOString(), data: payload.data });
-  await dataStore.set(STORAGE_KEYS.automaticBackups, backups.slice(0, 7));
-}
-
-function isValidBackupPayload(payload) {
-  if (
-    payload?.app !== "Staff Planner" ||
-    payload.version !== BACKUP_VERSION ||
-    !payload.data ||
-    typeof payload.data !== "object" ||
-    Array.isArray(payload.data)
-  ) {
-    return false;
-  }
-
-  // Imported ciphertext needs the original salt and password check to remain readable.
-  try {
-    if (typeof payload.data[STORAGE_KEYS.salt] !== "string" || fromBase64(payload.data[STORAGE_KEYS.salt]).length !== 16) return false;
-    const check = JSON.parse(payload.data[STORAGE_KEYS.check]);
-    if (typeof check?.iv !== "string" || typeof check?.data !== "string" || fromBase64(check.iv).length !== 12 || fromBase64(check.data).length < 16) return false;
-  } catch { return false; }
-
-  return Object.entries(payload.data).every(([key, value]) => {
-    if (!isAppStorageKey(key) || typeof value !== "string") return false;
-    if (!key.includes("_enc")) return true;
-    try {
-      const encrypted = JSON.parse(value);
-      return typeof encrypted?.iv === "string" && typeof encrypted?.data === "string" && encrypted.iv.length > 8 && encrypted.data.length > 8;
-    } catch { return false; }
-  });
-}
-
-function downloadBackup() {
-  const payload = createBackupPayload();
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+function downloadJson(data, filename) {
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
-  link.download = `staff-planner-backup-${formatDateKey(new Date())}.json`;
+  link.download = filename;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+// Admin backup of everything on the server. Passwords are not included.
+async function downloadBackup() {
+  const payload = await apiRequest("GET", "/admin/export");
+  downloadJson(payload, `staff-planner-backup-${formatDateKey(new Date())}.json`);
+  await addAuditEvent("backup", "Backup exporterad", formatDateKey(new Date()));
+}
+
+// Accepts both new backups and encrypted backups from the old single-device version.
+async function importBackupFile(file) {
+  if (file.size > MAX_BACKUP_SIZE_BYTES) throw new ApiError(400, "Backupfilen är för stor.");
+  let payload;
+  try {
+    payload = JSON.parse(await file.text());
+  } catch {
+    throw new ApiError(400, "Backupfilen är ogiltig eller skadad.");
+  }
+  if (payload?.app !== "Staff Planner") throw new ApiError(400, "Filen är inte en backup från Staff Planner.");
+  if (payload.version === 1 && isPlainObject(payload.data)) {
+    await openLegacyImportDialog(payload.data, "file");
+    return;
+  }
+  if (!confirm("Importen ersätter scheman, inställningar och övrig data på servern. Personal och skift uppdateras, men ingen tas bort. Vill du fortsätta?")) return;
+  const result = await apiRequest("POST", "/admin/import", payload);
+  showAppToast(`Backupen har lästs in: ${result.people} personer och ${result.documents} dataposter.`);
+  setTimeout(() => location.reload(), 900);
 }
 
 function setupDataTools() {
   const exportButton = document.getElementById("exportDataBtn");
   const importButton = document.getElementById("importDataBtn");
   const input = document.getElementById("importDataInput");
-  if (exportButton && exportButton.dataset.bound !== "true") {
-    exportButton.dataset.bound = "true";
-    exportButton.addEventListener("click", () => {
-      downloadBackup();
-      void addAuditEvent("backup", "Backup exporterad", formatDateKey(new Date()));
-    });
-  }
+  bindOnce(exportButton, "click", downloadBackup);
   if (importButton && input && importButton.dataset.bound !== "true") {
     importButton.dataset.bound = "true";
     importButton.addEventListener("click", () => input.click());
@@ -4722,22 +4810,137 @@ function setupDataTools() {
       const file = input.files?.[0];
       if (!file) return;
       try {
-        if (file.size > MAX_BACKUP_SIZE_BYTES) throw new Error("Backup is too large");
-        const payload = JSON.parse(await file.text());
-        if (!isValidBackupPayload(payload)) throw new Error("Invalid backup");
-        if (!confirm("Importen ersätter all lokal data. Vill du fortsätta?")) return;
-        clearPersistentData();
-        Object.entries(payload.data).forEach(([key, value]) => localStorage.setItem(key, value));
-        clearStoredSessionPassword();
-        location.reload();
+        await importBackupFile(file);
       } catch (error) {
         console.error("Could not import backup", error);
-        showAppToast("Backupfilen är ogiltig eller skadad.", "error");
+        showAppToast(error instanceof ApiError ? error.message : "Backupfilen är ogiltig eller skadad.", "error");
       } finally {
         input.value = "";
       }
     });
   }
+}
+
+// Moving data from the old version, where everything was encrypted in one browser.
+
+const LEGACY_META_KEYS = [
+  "staff_people_year", "staff_schedule_week", "staff_training_leaders_week", "staff_training_locations_week",
+  "staff_break_plan_week", "staff_data_schema_version", "staff_people", "staff_schedule"
+];
+
+function isLegacyStorageKey(key) {
+  return key === LEGACY_STORAGE_KEYS.salt || key === LEGACY_STORAGE_KEYS.check || /_enc(?::|$)/.test(key)
+    || LEGACY_META_KEYS.includes(key) || key.startsWith("staff_schedule_updated_at:");
+}
+
+function readLegacyLocalData() {
+  const data = {};
+  try {
+    Object.keys(localStorage).filter(isLegacyStorageKey).forEach(key => { data[key] = localStorage.getItem(key); });
+  } catch {
+    return null;
+  }
+  return data[LEGACY_STORAGE_KEYS.salt] && data[LEGACY_STORAGE_KEYS.check] ? data : null;
+}
+
+function removeLegacyLocalData() {
+  try {
+    Object.keys(localStorage).filter(isLegacyStorageKey).forEach(key => localStorage.removeItem(key));
+  } catch (error) {
+    console.warn("Could not remove the old local data:", error);
+  }
+}
+
+async function decryptLegacyData(data, password) {
+  let key;
+  try {
+    key = await deriveAesKey(password, fromBase64(data[LEGACY_STORAGE_KEYS.salt]));
+    const check = await decryptJson(JSON.parse(data[LEGACY_STORAGE_KEYS.check]), key);
+    if (check?.ok !== true) throw new Error("Check failed");
+  } catch {
+    throw new ApiError(400, "Fel lösenord för den gamla datan.");
+  }
+  const result = { people: [], global: {}, shift: {}, skipped: 0 };
+  for (const [storageKey, raw] of Object.entries(data)) {
+    if (typeof raw !== "string") continue;
+    const separator = storageKey.indexOf(":");
+    const base = separator === -1 ? storageKey : storageKey.slice(0, separator);
+    const week = separator === -1 ? "" : storageKey.slice(separator + 1);
+    let target = null;
+    if (storageKey === LEGACY_STORAGE_KEYS.people) target = ["people"];
+    else if (LEGACY_GLOBAL_DOCUMENTS[storageKey]) target = ["global", LEGACY_GLOBAL_DOCUMENTS[storageKey]];
+    else if (LEGACY_SHIFT_DOCUMENTS[storageKey]) target = ["shift", LEGACY_SHIFT_DOCUMENTS[storageKey]];
+    else if (LEGACY_WEEKLY_DOCUMENTS[base] && /^\d{4}-\d{2}-\d{2}$/.test(week)) target = ["shift", `${LEGACY_WEEKLY_DOCUMENTS[base]}:${week}`];
+    if (!target) continue;
+    try {
+      const value = await decryptJson(JSON.parse(raw), key);
+      if (target[0] === "people") result.people = Array.isArray(value) ? value : [];
+      else result[target[0]][target[1]] = value;
+    } catch (error) {
+      console.warn(`Skipped a damaged record: ${storageKey}`, error);
+      result.skipped += 1;
+    }
+  }
+  return result;
+}
+
+function openLegacyImportDialog(data, source) {
+  return new Promise(resolve => {
+    if (!shifts.length) {
+      showAppToast("Skapa minst ett skift under Inställningar innan du flyttar in gammal data.", "error");
+      resolve(false);
+      return;
+    }
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `<section class="replacement-modal legacy-import-modal">
+      <h3>Flytta in data från den gamla versionen</h3>
+      <p>Den gamla versionen sparade allt krypterat ${source === "file" ? "i backupfilen" : "på den här enheten"}. Ange lösenordet ni använde där. Personal och scheman läggs i skiftet du väljer. Data med samma namn på servern skrivs över.</p>
+      <form>
+        <label>Skift<select name="shiftId" required>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === getShiftScope() ? " selected" : ""}>${escapeHtml(shift.name)}</option>`).join("")}</select></label>
+        <label>Gamla lösenordet<input name="password" type="password" autocomplete="off" required /></label>
+        <p class="inline-message" role="status" aria-live="polite"></p>
+        <div><button class="btn" type="button" data-action="cancel">Avbryt</button><button class="btn primary" type="submit">Flytta in data</button></div>
+      </form>
+    </section>`;
+    document.body.appendChild(overlay);
+    const form = overlay.querySelector("form");
+    const status = overlay.querySelector(".inline-message");
+    let cleanupFocus;
+    const close = value => { overlay.remove(); cleanupFocus?.(); resolve(value); };
+    cleanupFocus = manageDialogFocus(overlay.querySelector(".replacement-modal"), () => close(false));
+    overlay.querySelector('[data-action="cancel"]').addEventListener("click", () => close(false));
+    bindOnce(form, "submit", async event => {
+      event.preventDefault();
+      status.className = "inline-message";
+      status.textContent = "Läser den gamla datan…";
+      try {
+        const decrypted = await decryptLegacyData(data, form.elements.password.value);
+        const shiftName = getShiftName(form.elements.shiftId.value);
+        const documentCount = Object.keys(decrypted.global).length + Object.keys(decrypted.shift).length;
+        if (!confirm(`${decrypted.people.length} personer och ${documentCount} dataposter flyttas till skiftet ${shiftName}. Fortsätt?`)) {
+          status.textContent = "";
+          return;
+        }
+        const result = await apiRequest("POST", "/admin/import-legacy", {
+          shiftId: form.elements.shiftId.value,
+          people: decrypted.people,
+          global: decrypted.global,
+          shift: decrypted.shift
+        });
+        await addAuditEvent("backup", "Data flyttad från gamla versionen", `${result.people} personer till ${shiftName}`);
+        if (source === "local" && confirm("Datan finns nu på servern. Vill du ta bort den gamla krypterade kopian från den här enheten?")) {
+          removeLegacyLocalData();
+        }
+        showAppToast(`Klart: ${result.people} personer och ${result.documents} dataposter flyttades in${decrypted.skipped ? `, ${decrypted.skipped} skadade poster hoppades över` : ""}.`);
+        close(true);
+        setTimeout(() => location.reload(), 900);
+      } catch (error) {
+        status.className = "inline-message error";
+        status.textContent = error instanceof ApiError ? error.message : "Datan kunde inte flyttas. Försök igen.";
+      }
+    });
+  });
 }
 
 function setupMobileNavigation() {
@@ -4835,6 +5038,7 @@ function setupFilterControls() {
 }
 
 async function refreshAppViews() {
+  enhanceAppShell();
   await renderSchedule();
   await renderBreakPlanner();
   await renderPeople();
@@ -4848,76 +5052,160 @@ async function refreshAppViews() {
   renderExtraAssignmentManager();
 }
 
-async function editPerson(id) {
-  const people = await getPeople();
-  const person = people.find(item => item.id === id);
-  if (!person) return;
+const TEMPORARY_PASSWORD_CHARACTERS = "abcdefghjkmnpqrstuvwxyz23456789";
 
-  const newName = prompt("Nytt namn:", person.name);
-  if (newName === null) return;
-
-  const newCompany = prompt("Nytt företag:", person.company || "");
-  if (newCompany === null) return;
-
-  person.name = newName.trim() || person.name;
-  person.company = newCompany.trim();
-
-  await savePeople(people);
-  await addAuditEvent("person", `${person.name} redigerad`, person.company || "");
-  await refreshAppViews();
+function generateTemporaryPassword() {
+  const values = crypto.getRandomValues(new Uint32Array(10));
+  return [...values].map(value => TEMPORARY_PASSWORD_CHARACTERS[value % TEMPORARY_PASSWORD_CHARACTERS.length]).join("");
 }
 
+function suggestUsername(name) {
+  return String(name || "")
+    .toLocaleLowerCase("sv")
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")
+    .trim().split(/\s+/).filter(Boolean).join(".")
+    .replace(/[^a-z0-9._-]/g, "")
+    .slice(0, 40);
+}
+
+function shiftOptionsHtml(selectedId, { allowNone = true } = {}) {
+  return `${allowNone ? `<option value=""${selectedId ? "" : " selected"}>Inget skift</option>` : ""}${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === selectedId ? " selected" : ""}>${escapeHtml(shift.name)}</option>`).join("")}`;
+}
+
+function roleOptionsHtml(selectedRole = ROLES.OPERATOR) {
+  const roles = isAdmin() ? [ROLES.OPERATOR, ROLES.LEADER, ROLES.ADMIN] : [ROLES.OPERATOR];
+  return roles.map(role => `<option value="${role}"${role === selectedRole ? " selected" : ""}>${ROLE_LABELS[role]}</option>`).join("");
+}
+
+function loginInstructions(username, password) {
+  return `Inloggning: användarnamn ${username}, tillfälligt lösenord ${password}. Personen väljer ett eget lösenord vid första inloggningen.`;
+}
+
+function renderAccountSection(person) {
+  if (person.account) {
+    const lastLogin = person.account.lastLoginAt ? new Date(person.account.lastLoginAt).toLocaleString("sv-SE") : "aldrig";
+    return `<p><strong>${escapeHtml(person.account.username)}</strong> · ${escapeHtml(ROLE_LABELS[person.account.role] || "")} · senast inloggad ${escapeHtml(lastLogin)}${person.account.mustChangePassword ? " · väntar på nytt lösenord" : ""}</p>
+      ${isAdmin() && person.id !== currentPerson?.id ? `<div class="person-account-row"><label>Roll<select name="role">${roleOptionsHtml(person.account.role)}</select></label><button class="btn" type="button" data-account-action="role">Spara roll</button></div>` : ""}
+      ${canResetPasswordFor(person) && person.id !== currentPerson?.id ? `<div class="person-account-row"><label>Tillfälligt lösenord<input name="resetPassword" autocomplete="off" minlength="${MIN_PASSWORD_LENGTH}" /></label><button class="btn" type="button" data-account-action="suggest">Föreslå</button><button class="btn" type="button" data-account-action="reset">Återställ lösenord</button></div>` : ""}
+      ${isAdmin() && person.id !== currentPerson?.id ? '<div class="person-account-row"><button class="btn danger" type="button" data-account-action="remove">Ta bort inloggning</button></div>' : ""}`;
+  }
+  if (!canCreateAccountFor(person)) return "<p>Ingen inloggning.</p>";
+  return `<p>Personen har ingen inloggning. Skapa en så kan personen se schemat och ändra sin status själv.</p>
+    <div class="person-account-row"><label>Användarnamn<input name="newUsername" value="${escapeHtml(suggestUsername(person.name))}" autocomplete="off" /></label><label>Roll<select name="newRole">${roleOptionsHtml()}</select></label></div>
+    <div class="person-account-row"><label>Tillfälligt lösenord<input name="newPassword" value="${generateTemporaryPassword()}" autocomplete="off" minlength="${MIN_PASSWORD_LENGTH}" /></label><button class="btn primary" type="button" data-account-action="create">Skapa inloggning</button></div>`;
+}
+
+async function editPerson(id) {
+  const person = (await getAllPeople()).find(item => item.id === id);
+  if (!person || !canEditPerson(person)) return;
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<section class="replacement-modal person-modal">
+    <h3>${escapeHtml(person.name)}</h3>
+    <form class="person-modal-form">
+      <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required /></label>
+      <label>Företag<input name="company" value="${escapeHtml(person.company || "")}" maxlength="120" /></label>
+      <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" /></label>
+      <label>Skift<select name="shiftId"${isAdmin() ? "" : " disabled"}>${shiftOptionsHtml(person.shiftId)}</select>${isAdmin() ? "" : "<small>Endast admin kan flytta personal mellan skift.</small>"}</label>
+      <div><button class="btn" type="button" data-action="close">Stäng</button><button class="btn primary" type="submit">Spara</button></div>
+    </form>
+    <section class="person-account"><h4>Inloggning</h4><div class="person-account-body">${renderAccountSection(person)}</div><p class="inline-message" role="status" aria-live="polite"></p></section>
+  </section>`;
+  document.body.appendChild(overlay);
+  const modal = overlay.querySelector(".person-modal");
+  const form = overlay.querySelector("form");
+  const status = overlay.querySelector(".person-account .inline-message");
+  let cleanupFocus;
+  let changed = false;
+  const close = () => {
+    overlay.remove();
+    cleanupFocus?.();
+    if (changed) void refreshAppViews();
+  };
+  cleanupFocus = manageDialogFocus(modal, close);
+  overlay.querySelector('[data-action="close"]').addEventListener("click", close);
+  const showStatus = (text, type = "success") => {
+    status.textContent = text;
+    status.className = `inline-message ${type}`;
+  };
+
+  bindOnce(form, "submit", async event => {
+    event.preventDefault();
+    const changes = {
+      name: form.elements.name.value.trim(),
+      company: form.elements.company.value.trim(),
+      phone: form.elements.phone.value.trim()
+    };
+    if (isAdmin()) changes.shiftId = form.elements.shiftId.value || null;
+    if (!changes.name) return showStatus("Namnet får inte vara tomt.", "error");
+    await updatePerson(person.id, changes);
+    await addAuditEvent("person", `${changes.name} redigerad`, changes.company);
+    changed = true;
+    close();
+  });
+
+  const accountBody = overlay.querySelector(".person-account-body");
+  accountBody.addEventListener("click", async event => {
+    const action = event.target.closest("[data-account-action]")?.dataset.accountAction;
+    if (!action) return;
+    const field = name => accountBody.querySelector(`[name="${name}"]`);
+    const button = event.target.closest("button");
+    button.disabled = true;
+    try {
+      let result = null;
+      if (action === "suggest") {
+        field("resetPassword").value = generateTemporaryPassword();
+        return;
+      }
+      if (action === "create") {
+        const username = field("newUsername").value.trim();
+        const password = field("newPassword").value;
+        if (password.length < MIN_PASSWORD_LENGTH) return showStatus(`Lösenordet måste vara minst ${MIN_PASSWORD_LENGTH} tecken.`, "error");
+        result = await apiRequest("POST", `/people/${encodeURIComponent(person.id)}/account`, { username, password, role: field("newRole").value });
+        showStatus(loginInstructions(result.person.account.username, password));
+      } else if (action === "role") {
+        result = await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { role: field("role").value });
+        showStatus(`Rollen är nu ${ROLE_LABELS[result.person.account.role]}.`);
+      } else if (action === "reset") {
+        const password = field("resetPassword").value;
+        if (password.length < MIN_PASSWORD_LENGTH) return showStatus(`Lösenordet måste vara minst ${MIN_PASSWORD_LENGTH} tecken.`, "error");
+        result = await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { password });
+        showStatus(loginInstructions(result.person.account.username, password));
+      } else if (action === "remove") {
+        if (!confirm(`Ta bort inloggningen för ${person.name}? Personen finns kvar i personallistan.`)) return;
+        result = await apiRequest("DELETE", `/people/${encodeURIComponent(person.id)}/account`);
+        showStatus("Inloggningen har tagits bort.");
+      }
+      if (result?.person) {
+        changed = true;
+        peopleCache = null;
+        const message = status.textContent;
+        const type = status.className;
+        accountBody.innerHTML = renderAccountSection(result.person);
+        status.textContent = message;
+        status.className = type;
+      }
+    } catch (error) {
+      showStatus(error instanceof ApiError ? error.message : "Det gick inte att spara.", "error");
+    } finally {
+      if (button.isConnected) button.disabled = false;
+    }
+  });
+}
+
+// Only admins delete people. The server also removes them from every shift's
+// schedules, competence, test results and assessments.
 async function deletePerson(id) {
-  const shouldDelete = confirm("Vill du ta bort personen och alla personens bedömningar?");
-  if (!shouldDelete) return;
-
-  const allPeople = await getPeople();
-  const removedPerson = allPeople.find(person => person.id === id);
-  const people = allPeople.filter(person => person.id !== id);
-  const schedule = await getSchedule();
-  const trainingLeaders = await getTrainingLeaders();
-  const assessments = (await getAssessments()).filter(item => item.personId !== id);
-  const testResults = await getTestResults();
-  const machineSkills = await getMachineSkills();
-  const machineSkillUpdatedAt = await getMachineSkillUpdatedAt();
-  const machineRestrictions = await getMachineRestrictions();
-  const machineSkillDetails = await getMachineSkillDetails();
-
-  await savePeople(people);
-  delete testResults[id];
-  delete machineSkills[id];
-  delete machineSkillUpdatedAt[id];
-  delete machineRestrictions[id];
-  delete machineSkillDetails[id];
-
-  TASKS.forEach(task => {
-    DAYS.forEach(day => {
-      if (schedule[task]?.[day] === id) {
-        schedule[task][day] = "";
-      }
-    });
-  });
-
-  await saveSchedule(schedule);
-
-  Object.keys(trainingLeaders).forEach(task => {
-    DAYS.forEach(day => {
-      if (trainingLeaders[task]?.[day] === id) {
-        trainingLeaders[task][day] = "";
-      }
-    });
-  });
-
-  await saveTrainingLeaders(trainingLeaders);
-  await saveAssessments(assessments);
-  await saveTestResults(testResults);
-  await saveMachineSkills(machineSkills);
-  await saveMachineSkillUpdatedAt(machineSkillUpdatedAt);
-  await saveMachineRestrictions(machineRestrictions);
-  await saveMachineSkillDetails(machineSkillDetails);
-  await addAuditEvent("person", `${removedPerson?.name || "Person"} borttagen`, "Personal och kopplade uppgifter raderades");
+  if (!isAdmin()) return;
+  const person = (await getAllPeople()).find(item => item.id === id);
+  if (!person) return;
+  const loginNote = person.account ? " Personens inloggning tas också bort." : "";
+  if (!confirm(`Vill du ta bort ${person.name} och alla personens bedömningar, testresultat och schemaplaceringar?${loginNote}`)) return;
+  await deletePersonRecord(id);
+  invalidateCachedData();
   if (selectedAssessmentPersonId === id) selectedAssessmentPersonId = "";
   if (selectedTestPersonId === id) selectedTestPersonId = "";
+  showAppToast(`${person.name} har tagits bort.`);
   await refreshAppViews();
 }
 
@@ -4946,9 +5234,43 @@ function showAddSuccessMessage(message) {
   }, 2000);
 }
 
+// Shift and login fields are added here so every page keeps the same markup.
+function ensureAddFormExtras(form) {
+  if (form.querySelector("#shiftInput")) return;
+  const actions = form.querySelector(".actions");
+  const ownShift = getOwnShiftId();
+  const shiftField = isAdmin()
+    ? `<label for="shiftInput">Skift</label><select id="shiftInput">${shiftOptionsHtml(getShiftScope())}</select>`
+    : `<label for="shiftInput">Skift</label><select id="shiftInput" disabled>${shiftOptionsHtml(ownShift, { allowNone: false })}</select><small class="form-hint">Du lägger till personal i ditt eget skift.</small>`;
+  actions.insertAdjacentHTML("beforebegin", `${shiftField}
+    <label class="settings-switch add-login-toggle"><input id="createLoginInput" type="checkbox" /><span>Skapa inloggning så att personen kan se schemat och ändra sin status</span></label>
+    <div id="addLoginFields" class="add-login-fields hidden">
+      <label for="usernameInput">Användarnamn</label><input id="usernameInput" type="text" autocomplete="off" />
+      <label for="temporaryPasswordInput">Tillfälligt lösenord</label><input id="temporaryPasswordInput" type="text" autocomplete="off" minlength="${MIN_PASSWORD_LENGTH}" />
+      <label for="roleInput">Roll</label><select id="roleInput">${roleOptionsHtml()}</select>
+    </div>`);
+  const loginToggle = form.querySelector("#createLoginInput");
+  const loginFields = form.querySelector("#addLoginFields");
+  const nameInput = form.querySelector("#nameInput");
+  const usernameInput = form.querySelector("#usernameInput");
+  loginToggle.addEventListener("change", () => {
+    loginFields.classList.toggle("hidden", !loginToggle.checked);
+    if (loginToggle.checked) {
+      if (!usernameInput.value) usernameInput.value = suggestUsername(nameInput.value);
+      const passwordInput = form.querySelector("#temporaryPasswordInput");
+      if (!passwordInput.value) passwordInput.value = generateTemporaryPassword();
+    }
+  });
+  nameInput.addEventListener("input", () => {
+    if (loginToggle.checked && !usernameInput.dataset.edited) usernameInput.value = suggestUsername(nameInput.value);
+  });
+  usernameInput.addEventListener("input", () => { usernameInput.dataset.edited = "true"; });
+}
+
 function setupAddForm() {
   const form = document.getElementById("addForm");
   if (!form) return;
+  ensureAddFormExtras(form);
 
   const nameInput = document.getElementById("nameInput");
   const companyInput = document.getElementById("companyInput");
@@ -4960,103 +5282,61 @@ function setupAddForm() {
 
     const name = nameInput.value.trim();
     const company = companyInput.value.trim();
-
     if (!name) return;
 
-    const people = await getPeople();
-    people.push({
-      id: makeId(),
-      name,
-      company
-    });
-
-    await savePeople(people);
+    const shiftId = isAdmin() ? form.querySelector("#shiftInput").value || null : getOwnShiftId();
+    const createLogin = form.querySelector("#createLoginInput").checked;
+    const username = form.querySelector("#usernameInput").value.trim();
+    const password = form.querySelector("#temporaryPasswordInput").value;
+    if (createLogin && password.length < MIN_PASSWORD_LENGTH) {
+      message.textContent = `Lösenordet måste vara minst ${MIN_PASSWORD_LENGTH} tecken.`;
+      message.className = "message error";
+      return;
+    }
+    const account = createLogin ? { username, password, role: form.querySelector("#roleInput").value } : undefined;
+    let person;
+    try {
+      person = await createPerson({ name, company, shiftId, account });
+    } catch (error) {
+      clearAddSuccessMessage(message);
+      message.textContent = error instanceof ApiError ? error.message : "Personen kunde inte läggas till.";
+      message.className = "message error";
+      return;
+    }
     await addAuditEvent("person", `${name} tillagd`, company);
     form.reset();
-    showAddSuccessMessage(message);
+    form.querySelector("#addLoginFields").classList.add("hidden");
+    delete form.querySelector("#usernameInput").dataset.edited;
+    if (isAdmin()) form.querySelector("#shiftInput").value = shiftId || "";
+    if (account) {
+      clearAddSuccessMessage(message);
+      message.textContent = `${person.name} är tillagd. ${loginInstructions(person.account.username, password)}`;
+      message.className = "message success";
+    } else {
+      showAddSuccessMessage(message);
+    }
     nameInput.focus();
   });
 
   bindOnce(clearBtn, "click", () => {
     form.reset();
+    form.querySelector("#addLoginFields")?.classList.add("hidden");
     clearAddSuccessMessage(message);
   });
 }
 
+// Machines are shared by all shifts, so the server renames them in every shift's
+// schedules, templates, competence and test results at once.
 async function renameWorkItemReferences(previousName, nextName) {
   if (previousName === nextName) return;
-  const [departments, results, skills, details] = await Promise.all([
-    getDepartments(), getTestResults(), getMachineSkills(), getMachineSkillDetails()
-  ]);
-  const renamedDepartments = departments.map(value => value === previousName ? nextName : value);
-  Object.values(results).forEach(personResults => {
-    if (personResults && Object.hasOwn(personResults, previousName)) {
-      personResults[nextName] = personResults[previousName];
-      delete personResults[previousName];
-    }
-  });
-  Object.keys(skills).forEach(personId => {
-    if (Array.isArray(skills[personId])) {
-      skills[personId] = skills[personId].map(value => value === previousName ? nextName : value);
-    }
-  });
-  Object.values(details).forEach(personDetails => {
-    if (personDetails && Object.hasOwn(personDetails, previousName)) {
-      personDetails[nextName] = personDetails[previousName];
-      delete personDetails[previousName];
-    }
-  });
-  await Promise.all([
-    saveDepartments(renamedDepartments), saveTestResults(results),
-    saveMachineSkills(skills), saveMachineSkillDetails(details)
-  ]);
-
-  const weeklyKeys = Object.keys(localStorage).filter(key =>
-    [STORAGE_KEYS.schedule, STORAGE_KEYS.trainingLeaders, STORAGE_KEYS.trainingLocations, STORAGE_KEYS.extraPersonLocations]
-      .some(prefix => key.startsWith(`${prefix}:`))
-  );
-  for (const key of weeklyKeys) {
-    const stored = await decryptStoredItem(key, null);
-    if (!stored || typeof stored !== "object") continue;
-    let changed = false;
-    if (Object.hasOwn(stored, previousName)) {
-      stored[nextName] = stored[previousName];
-      delete stored[previousName];
-      changed = true;
-    }
-    if (key.startsWith(`${STORAGE_KEYS.trainingLocations}:`)) {
-      Object.values(stored).forEach(days => Object.keys(days || {}).forEach(day => {
-        if (days[day] === previousName) { days[day] = nextName; changed = true; }
-      }));
-    }
-    if (changed) await encryptStoredItem(key, stored);
-  }
-  const templates = await dataStore.get(STORAGE_KEYS.scheduleTemplates, []);
-  if (Array.isArray(templates)) {
-    templates.forEach(template => {
-      ["schedule", "trainingLeaders", "trainingLocations", "extraPersonLocations"].forEach(key => {
-        if (template[key] && Object.hasOwn(template[key], previousName)) {
-          template[key][nextName] = template[key][previousName];
-          delete template[key][previousName];
-        }
-      });
-      Object.values(template.trainingLocations || {}).forEach(days => Object.keys(days || {}).forEach(day => {
-        if (days[day] === previousName) days[day] = nextName;
-      }));
-    });
-    await dataStore.set(STORAGE_KEYS.scheduleTemplates, templates);
-  }
+  await apiRequest("POST", "/work-items/rename", { from: previousName, to: nextName });
+  invalidateCachedData();
   resetScheduleHistory();
 }
 
 async function getWorkItemUsageCount(name) {
-  let count = 0;
-  const keys = Object.keys(localStorage).filter(key => key.startsWith(`${STORAGE_KEYS.schedule}:`));
-  for (const key of keys) {
-    const stored = await dataStore.get(key, {});
-    count += Object.values(stored?.[name] || {}).filter(Boolean).length;
-  }
-  return count;
+  const data = await apiRequest("GET", `/work-items/usage?name=${encodeURIComponent(name)}`);
+  return data.count;
 }
 
 function chooseWorkItemReplacement(item, usageCount) {
@@ -5315,7 +5595,6 @@ async function setupWorkItemManager() {
 }
 
 function initializeAppContent() {
-  cleanupOldWeeklyData();
   enhanceAppShell();
   if (document.getElementById("breakPlanner")) {
     resetBreakPlannerToToday();
@@ -5332,6 +5611,7 @@ function initializeAppContent() {
   void renderProduction();
   void renderTodoList();
   void renderSettings();
+  void renderProfilePage();
   renderHelpPage();
   setupAddForm();
   void setupWorkItemManager();
@@ -5345,125 +5625,206 @@ function initializeAppContent() {
   setupTodoPage();
 }
 
+// Signing in.
+
+const AUTH_NOTICE_KEY = "staff_auth_notice";
+
+function setSession(me) {
+  currentUser = me.user;
+  currentPerson = me.person;
+  shifts = Array.isArray(me.shifts) ? me.shifts : [];
+  sessionStorage.setItem(SIGNED_IN_HINT_KEY, "1");
+}
+
+async function signOut(notice = "") {
+  clearTimeout(autoLockTimeoutId);
+  currentUser = null;
+  try {
+    await apiRequest("POST", "/logout");
+  } catch (error) {
+    console.warn("Logout request failed:", error);
+  }
+  sessionStorage.removeItem(SIGNED_IN_HINT_KEY);
+  sessionStorage.removeItem(ACTIVE_SHIFT_KEY);
+  if (notice) sessionStorage.setItem(AUTH_NOTICE_KEY, notice);
+  location.reload();
+}
+
+// Reloads shared data, for example after someone else changed it.
+async function reloadSharedData() {
+  invalidateCachedData();
+  await loadAppSettings();
+  await loadCustomWorkItems();
+  await refreshAppViews();
+}
+
 async function openAppUI() {
-  const { authScreen, appShell, logoutBtn } = getAuthElements();
-
+  if (!canOpenPage(getCurrentPage())) {
+    location.replace("index.html");
+    return;
+  }
   setAuthenticatedView(true);
-  authScreen?.classList.add("hidden");
-  appShell?.classList.remove("hidden");
+  document.getElementById("authScreen")?.classList.add("hidden");
+  document.getElementById("appShell")?.classList.remove("hidden");
   finishInitialViewSetup();
-
-  bindOnce(logoutBtn, "click", async () => {
-    lockApp();
-    await setupAuthUI();
-  });
+  bindOnce(document.getElementById("logoutBtn"), "click", () => signOut());
 
   await loadAppSettings();
   await loadCustomWorkItems();
-  try {
-    await createAutomaticBackupIfNeeded();
-  } catch (error) {
-    // A backup failure must never prevent the user from opening the app.
-    console.error("Automatic backup failed:", error);
-  }
   initializeAppContent();
 }
 
-async function setupAuthUI() {
-  const {
-    authScreen,
-    appShell,
-    authTitle,
-    authBtn,
-    passwordInput,
-    passwordConfirmInput,
-    wipeBtn
-  } = getAuthElements();
-
-  if (passwordInput) {
-    passwordInput.setAttribute("aria-label", "Lösenord");
-    passwordInput.autocomplete = hasPasswordSetup() ? "current-password" : "new-password";
+const AUTH_FORMS = {
+  login: {
+    title: "Logga in",
+    subtitle: "Logga in med ditt användarnamn och lösenord.",
+    button: "Logga in",
+    fields: [
+      { name: "username", type: "text", label: "Användarnamn", autocomplete: "username" },
+      { name: "password", type: "password", label: "Lösenord", autocomplete: "current-password" }
+    ]
+  },
+  setup: {
+    title: "Skapa admin-konto",
+    subtitle: "Det finns inga användare ännu. Skapa det första admin-kontot. Installationskoden är värdet på SETUP_CODE i Railway.",
+    button: "Skapa admin-konto",
+    fields: [
+      { name: "setupCode", type: "password", label: "Installationskod", autocomplete: "off" },
+      { name: "name", type: "text", label: "Ditt namn", autocomplete: "name" },
+      { name: "username", type: "text", label: "Användarnamn", autocomplete: "username" },
+      { name: "password", type: "password", label: `Lösenord (minst ${MIN_PASSWORD_LENGTH} tecken)`, autocomplete: "new-password" },
+      { name: "confirm", type: "password", label: "Bekräfta lösenord", autocomplete: "new-password" }
+    ]
+  },
+  changePassword: {
+    title: "Välj ett nytt lösenord",
+    subtitle: "Du loggade in med ett tillfälligt lösenord. Välj ett eget lösenord innan du fortsätter.",
+    button: "Spara lösenord",
+    fields: [
+      { name: "currentPassword", type: "password", label: "Tillfälligt lösenord", autocomplete: "current-password" },
+      { name: "newPassword", type: "password", label: `Nytt lösenord (minst ${MIN_PASSWORD_LENGTH} tecken)`, autocomplete: "new-password" },
+      { name: "confirm", type: "password", label: "Bekräfta nytt lösenord", autocomplete: "new-password" }
+    ]
   }
-  if (passwordConfirmInput) {
-    passwordConfirmInput.setAttribute("aria-label", "Bekräfta lösenord");
-    passwordConfirmInput.autocomplete = "new-password";
-  }
+};
 
-  if (!authScreen || !appShell) {
-    finishInitialViewSetup();
-    initializeAppContent();
-    return;
-  }
-
-  if (await restoreSession()) {
-    await openAppUI();
-    return;
-  }
-
-  setAuthenticatedView(false);
-  appShell.classList.add("hidden");
-  authScreen.classList.remove("hidden");
-  finishInitialViewSetup();
-  clearAuthMessage();
-  resetAuthInputs(passwordInput, passwordConfirmInput);
-  updateAuthMode(hasPasswordSetup(), authTitle, authBtn, passwordConfirmInput);
-
-  bindOnce(authBtn, "click", async () => {
-    clearAuthMessage();
-
-    const password = passwordInput?.value.trim() || "";
-    const confirmPassword = passwordConfirmInput?.value.trim() || "";
-    const isLoginMode = hasPasswordSetup();
-
-    if (password.length < 6) {
-      showAuthMessage("Lösenordet måste vara minst 6 tecken.");
-      return;
-    }
-
-    if (!isLoginMode && password !== confirmPassword) {
-      showAuthMessage("Lösenorden matchar inte.");
-      return;
-    }
-
-    try {
-      const success = isLoginMode ? await unlockApp(password) : true;
-
-      if (isLoginMode && !success) {
-        showAuthMessage("Fel lösenord.");
-        return;
-      }
-
-      if (!isLoginMode) {
-        await setupPassword(password);
-      }
-
-      await openAppUI();
-      resetAuthInputs(passwordInput, passwordConfirmInput);
-    } catch (error) {
-      console.error(error);
-      showAuthMessage(
-        isLoginMode ? "Det gick inte att logga in." : "Det gick inte att skapa lösenord."
-      );
-    }
-  });
-
-  bindOnce(wipeBtn, "click", () => {
-    if (confirm("Vill du radera all lokal data?")) {
-      wipeAllData();
-    }
-  });
-
-  bindEnterToClick(passwordInput, authBtn);
-  bindEnterToClick(passwordConfirmInput, authBtn);
+function checkNewPassword(password, confirmation) {
+  if (password.length < MIN_PASSWORD_LENGTH) throw new ApiError(400, `Lösenordet måste vara minst ${MIN_PASSWORD_LENGTH} tecken.`);
+  if (password !== confirmation) throw new ApiError(400, "Lösenorden matchar inte.");
 }
 
-// Avoid flashing the login screen between pages while the saved session is
-// being verified. The script is loaded at the end of <body>, before first paint.
+function renderAuthForm(mode, onSubmit) {
+  const config = AUTH_FORMS[mode];
+  const current = document.getElementById("authForm");
+  if (!current) return;
+  document.getElementById("authTitle").textContent = config.title;
+  document.getElementById("authSubtitle").textContent = config.subtitle;
+  // A fresh element drops the listeners from the previous mode.
+  const form = current.cloneNode(false);
+  form.innerHTML = `${config.fields.map(field => `<input name="${field.name}" type="${field.type}" placeholder="${escapeHtml(field.label)}" aria-label="${escapeHtml(field.label)}" autocomplete="${field.autocomplete}" required />`).join("")}
+    <div class="actions"><button class="btn primary" type="submit">${escapeHtml(config.button)}</button>${mode === "changePassword" ? '<button class="btn" type="button" data-auth-logout>Logga ut</button>' : ""}</div>`;
+  current.replaceWith(form);
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    clearAuthMessage();
+    const button = form.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+      await onSubmit(Object.fromEntries(new FormData(form)));
+    } catch (error) {
+      console.error(error);
+      showAuthMessage(error instanceof ApiError ? error.message : "Något gick fel. Försök igen.");
+    } finally {
+      button.disabled = false;
+    }
+  });
+  form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut());
+  form.querySelector("input")?.focus();
+}
+
+async function continueAfterSignIn(me) {
+  setSession(me);
+  if (me.user.mustChangePassword) {
+    showAuthScreen("changePassword");
+    return;
+  }
+  await openAppUI();
+}
+
+function showAuthScreen(mode) {
+  setAuthenticatedView(false);
+  document.getElementById("appShell")?.classList.add("hidden");
+  document.getElementById("authScreen")?.classList.remove("hidden");
+  finishInitialViewSetup();
+  clearAuthMessage();
+  if (mode === "login") {
+    renderAuthForm("login", async values => {
+      await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }));
+    });
+  } else if (mode === "setup") {
+    renderAuthForm("setup", async values => {
+      checkNewPassword(values.password, values.confirm);
+      await continueAfterSignIn(await apiRequest("POST", "/setup", {
+        setupCode: values.setupCode, name: values.name, username: values.username, password: values.password
+      }));
+    });
+  } else {
+    renderAuthForm("changePassword", async values => {
+      checkNewPassword(values.newPassword, values.confirm);
+      await continueAfterSignIn(await apiRequest("POST", "/me/password", { currentPassword: values.currentPassword, newPassword: values.newPassword }));
+    });
+  }
+  const notice = sessionStorage.getItem(AUTH_NOTICE_KEY);
+  sessionStorage.removeItem(AUTH_NOTICE_KEY);
+  if (notice) showAuthMessage(notice, false);
+}
+
+async function setupAuthUI() {
+  if (!document.getElementById("authScreen") || !document.getElementById("appShell")) {
+    finishInitialViewSetup();
+    return;
+  }
+  let me = null;
+  try {
+    me = await apiRequest("GET", "/me");
+  } catch (error) {
+    if (error.status !== 401) throw error;
+  }
+  if (me) {
+    await continueAfterSignIn(me);
+    return;
+  }
+  sessionStorage.removeItem(SIGNED_IN_HINT_KEY);
+  const setup = await apiRequest("GET", "/setup");
+  showAuthScreen(setup.needsSetup ? "setup" : "login");
+}
+
+// Avoid flashing the login screen between pages while the session is checked.
+// The script is loaded at the end of <body>, before first paint.
 try {
-  if (getStoredSessionPassword()) setAuthenticatedView(true);
+  if (sessionStorage.getItem(SIGNED_IN_HINT_KEY)) setAuthenticatedView(true);
 } catch (error) {
   console.warn("Could not read the saved session:", error);
 }
+
+// Save failures from handlers without their own error handling still reach the user.
+window.addEventListener("unhandledrejection", event => {
+  if (!(event.reason instanceof ApiError)) return;
+  event.preventDefault();
+  showAppToast(event.reason.message, "error");
+});
+
+// Pick up other people's changes when someone returns to a tab after a while.
+let pageHiddenSince = 0;
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    pageHiddenSince = Date.now();
+    return;
+  }
+  const hiddenFor = Date.now() - pageHiddenSince;
+  pageHiddenSince = 0;
+  if (currentUser && hiddenFor > 60 * 1000 && hiddenFor < 24 * 60 * 60 * 1000) void reloadSharedData();
+});
 
 document.addEventListener("DOMContentLoaded", () => {
   setupThemeToggles();
@@ -5473,13 +5834,12 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("appShell")?.classList.add("hidden");
     document.getElementById("authScreen")?.classList.remove("hidden");
     finishInitialViewSetup();
-    const reason = error instanceof Error && error.message ? ` (${error.message})` : "";
-    showAuthMessage(`Appen kunde inte starta korrekt${reason}. Ladda om sidan och försök igen.`);
-    showRepairDataButton();
+    showAuthMessage(error instanceof ApiError ? error.message : "Appen kunde inte starta. Ladda om sidan och försök igen.");
   });
 });
 
 window.addEventListener("pageshow", event => {
+  pageIsUnloading = false;
   if (!event.persisted || !document.getElementById("breakPlanner")) return;
   resetBreakPlannerToToday();
   renderWeekNavigation();
