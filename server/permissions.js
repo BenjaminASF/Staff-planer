@@ -100,6 +100,13 @@ function editablePersonFields(user, person) {
   return [];
 }
 
+// Operators may not mark themselves "unavailable"; only admins and shift leaders set that status.
+const LEADER_ONLY_AVAILABILITY = ["unavailable"];
+
+function canSetAvailability(user, availability) {
+  return user?.role !== ROLES.OPERATOR || !LEADER_ONLY_AVAILABILITY.includes(availability);
+}
+
 function canDeletePerson(user) {
   return isAdmin(user);
 }
@@ -143,5 +150,6 @@ module.exports = {
   canCreateAccount,
   canResetPassword,
   canChangeRole,
-  canDeleteAccount
+  canDeleteAccount,
+  canSetAvailability
 };
