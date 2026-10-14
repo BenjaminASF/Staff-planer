@@ -2,7 +2,8 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScopeOwner
+  isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScopeOwner,
+  sharedFlagKey, weekRequiringShare
 } = require("../permissions");
 const {
   readDocuments, writeDocument, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot, addAuditEvent
@@ -27,13 +28,26 @@ function documentRoutes({ pool }) {
 
   // GET /api/documents?scope=global&keys=appSettings,workItems
   // Keys the user may not read are listed in `forbidden` instead of failing the request.
+  // Schedule documents for a week that has not been shared yet are listed in `unshared`
+  // and left out for operators.
   router.get("/documents", async (req, res) => {
     const scope = String(req.query.scope || "");
     const keys = [...new Set(String(req.query.keys || "").split(",").map(key => key.trim()).filter(Boolean))].slice(0, 100);
     await assertScopeExists(pool, scope);
-    const readable = keys.filter(key => canReadDocument(req.user, scope, key));
+    let readable = keys.filter(key => canReadDocument(req.user, scope, key));
     const forbidden = keys.filter(key => !readable.includes(key));
-    res.json({ documents: await readDocuments(pool, scope, readable), forbidden });
+    const weeks = [...new Set(readable.map(key => weekRequiringShare(req.user, scope, key)).filter(Boolean))];
+    let unshared = [];
+    if (weeks.length) {
+      const flags = await readDocuments(pool, scope, weeks.map(sharedFlagKey));
+      const isShared = week => flags[sharedFlagKey(week)]?.value?.shared === true;
+      unshared = readable.filter(key => {
+        const week = weekRequiringShare(req.user, scope, key);
+        return week && !isShared(week);
+      });
+      readable = readable.filter(key => !unshared.includes(key));
+    }
+    res.json({ documents: await readDocuments(pool, scope, readable), forbidden, unshared });
   });
 
   // Saves one document. baseVersion is the version the client last read (0 if it did not exist).
