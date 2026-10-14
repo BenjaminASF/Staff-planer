@@ -155,11 +155,23 @@ function canChangeRole(user) {
   return isAdmin(user);
 }
 
+// The chat is shared by everyone who plans the shifts.
+function canUseChat(user) {
+  return isAdminOrLeader(user);
+}
+
+// Authors remove their own chat messages; admins can remove any.
+function canDeleteChatMessage(user, message) {
+  return isAdmin(user) || (Boolean(message.user_id) && message.user_id === user?.id);
+}
+
 function canDeleteAccount(user) {
   return isAdmin(user);
 }
 
 module.exports = {
+  canUseChat,
+  canDeleteChatMessage,
   ROLES,
   ROLE_VALUES,
   AVAILABILITY_VALUES,

@@ -22,6 +22,7 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 | Hantera alla profiler: namn, telefon, status, skift, användarnamn, roll och lösenord | ✓ | | |
 | Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | |
 | Ta bort användare från sidan Användare | ✓ | | |
+| Chatt med text och bilder | ✓ | ✓ | |
 | Ta bort personal och användare, ändra roller | ✓ | | |
 | Skapa och ta bort skift, backup och import | ✓ | | |
 
@@ -63,6 +64,12 @@ Den tidigare versionen sparade allt krypterat i en enda webbläsare. Så här fl
 - **Från en backupfil:** välj **Inställningar → Importera backup** och välj filen som exporterades från den gamla versionen.
 
 Ange det gamla lösenordet och välj vilket skift personalen och schemana ska höra till. Datan dekrypteras i webbläsaren och skickas sedan till servern.
+
+### Chatt
+
+Admin och skiftledare har en gemensam chatt bakom knappen i nedre högra hörnet. Där kan man skicka text och bilder, och man kan också klistra in en bild direkt. Nya meddelanden visas med en röd siffra på knappen och en kort förhandsvisning. Appen kollar efter nya meddelanden var 15:e sekund, och var 4:e sekund när chatten är öppen.
+
+Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och sparas sedan i databasen. Man kan ta bort sina egna meddelanden, och admin kan ta bort alla. Meddelanden tas aldrig bort automatiskt, och chatten ingår inte i appens backupfil.
 
 ### Backup
 
