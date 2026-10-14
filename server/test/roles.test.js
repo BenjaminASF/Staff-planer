@@ -102,6 +102,23 @@ describe("roles and permissions", () => {
     assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { shiftId: eveningShift.id })).status, 403);
   });
 
+  test("shift leader cannot change an admin's details, even in their own shift", async () => {
+    const adminInShift = (await admin.post("/api/people", {
+      name: "Alva Admin", shiftId: dayShift.id, phone: "070-1",
+      account: { username: "alva", password: PASSWORD, role: "admin", mustChangePassword: false }
+    })).data.person;
+    for (const change of [{ name: "Annat Namn" }, { phone: "070-2" }, { company: "X AB" }, { availability: "sick" }]) {
+      assert.equal((await leader.patch(`/api/people/${adminInShift.id}`, change)).status, 403, JSON.stringify(change));
+    }
+    assert.equal((await leader.patch(`/api/people/${adminInShift.id}/account`, { username: "alva2" })).status, 403);
+    assert.equal((await leader.patch(`/api/people/${adminInShift.id}/account`, { password: "nyttlosen123" })).status, 403);
+    const unchanged = (await admin.get("/api/people")).data.people.find(person => person.id === adminInShift.id);
+    assert.equal(unchanged.name, "Alva Admin");
+    assert.equal(unchanged.phone, "070-1");
+    assert.equal((await admin.patch(`/api/people/${adminInShift.id}`, { name: "Alva Andersson" })).status, 200, "admins still can");
+    assert.equal((await admin.delete(`/api/people/${adminInShift.id}`)).status, 200);
+  });
+
   test("shift leader cannot delete users or change roles", async () => {
     assert.equal((await leader.delete(`/api/people/${boPerson.id}`)).status, 403);
     assert.equal((await leader.delete(`/api/people/${annaPerson.id}/account`)).status, 403);

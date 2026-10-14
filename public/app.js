@@ -398,7 +398,8 @@ function canEditActiveShift() {
 function canEditPerson(person) {
   if (!person || !currentUser) return false;
   if (isAdmin()) return true;
-  return isShiftLeader() && Boolean(person.shiftId) && person.shiftId === getOwnShiftId();
+  // Shift leaders manage the staff in their shift, but never an admin's details.
+  return isShiftLeader() && Boolean(person.shiftId) && person.shiftId === getOwnShiftId() && person.account?.role !== ROLES.ADMIN;
 }
 
 // Server API.
@@ -5359,7 +5360,7 @@ async function renderUsersPage() {
         <p>${details}</p>
         <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${account?.mustChangePassword ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
       </div>
-      <div class="person-actions"><button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>${isAdmin() && person.id !== currentPerson?.id ? `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>` : ""}</div>
+      <div class="person-actions">${canEditPerson(person) ? `<button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>` : ""}${isAdmin() && person.id !== currentPerson?.id ? `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>` : ""}</div>
     </div>`;
   }).join("") || `<div class="empty-state">${people.length ? "Ingen användare matchar filtret." : isAdmin() ? "Ingen personal har lagts till ännu." : getOwnShiftId() ? "Ingen personal i ditt skift ännu." : "Du tillhör inget skift ännu. Be en admin att lägga till dig i ett skift."}</div>`;
   list.querySelectorAll("[data-manage-user]").forEach(button => button.addEventListener("click", () => void editPerson(button.dataset.manageUser)));
