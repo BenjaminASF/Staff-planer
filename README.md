@@ -8,13 +8,13 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 
 | | Admin | Skiftledare | Operatör |
 |---|:---:|:---:|:---:|
-| Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ |
+| Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ (när veckan är delad) |
 | Ändra sin egen profil (namn, telefon, status, lösenord) | ✓ | ✓ | ✓ |
 | Sätta statusen Inte tillgänglig | ✓ | ✓ | |
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | |
 | Egen att göra-lista (bara man själv ser den) | ✓ | ✓ | |
-| Dela schemat med gruppen | ✓ | ✓ | |
+| Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | |
 | Lägga till personal och skapa operatörskonton | Alla skift | Eget skift | |
 | Återställa lösenord | Alla | Operatörer i eget skift | |
 | Ändra maskiner, avdelningar och inställningar (gäller alla skift) | ✓ | ✓ | |
@@ -24,6 +24,12 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 | Ta bort användare från sidan Användare | ✓ | | |
 | Ta bort personal och användare, ändra roller | ✓ | | |
 | Skapa och ta bort skift, backup och import | ✓ | | |
+
+Operatörer ser en veckas schema och rastplan först när admin eller skiftledaren har klickat på **Dela schema** för den veckan. Delningen kan tas tillbaka med **Sluta dela**.
+
+Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas för hela månaden, och den 10:e i nästa månad tas förra månadens dagar bort automatiskt. Fabriksrekordet och det dagliga målet finns kvar.
+
+Skiftledare kan aldrig ändra en admins uppgifter (namn, företag, telefon, status eller inloggning), inte ens om admin hör till samma skift.
 
 Skiftledare kan läsa kompetens eftersom autoschemat och schemats varningar bygger på den.
 

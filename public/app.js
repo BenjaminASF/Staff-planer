@@ -398,7 +398,8 @@ function canEditActiveShift() {
 function canEditPerson(person) {
   if (!person || !currentUser) return false;
   if (isAdmin()) return true;
-  return isShiftLeader() && Boolean(person.shiftId) && person.shiftId === getOwnShiftId();
+  // Shift leaders manage the staff in their shift, but never an admin's details.
+  return isShiftLeader() && Boolean(person.shiftId) && person.shiftId === getOwnShiftId() && person.account?.role !== ROLES.ADMIN;
 }
 
 // Server API.
@@ -907,6 +908,7 @@ function showSchedulePreview(result, people, options = {}) {
     const nameById = Object.fromEntries(people.map(person => [person.id, person.name]));
     const dates = getDatesForWeek();
     const isShareView = options.mode === "share";
+    const isShared = Boolean(options.shared);
     const previewTasks = isShareView ? TASKS : TASKS.filter(task => !isTrainingTaskName(task));
     const rows = previewTasks.map(task => `
       <div class="preview-task">${escapeHtml(task)}</div>
@@ -929,9 +931,13 @@ function showSchedulePreview(result, people, options = {}) {
       }).join("")}
     `).join("");
     modal.innerHTML = `
-      <div class="preview-heading"><div><small>${isShareView ? "DELA MED GRUPPEN" : "FÖRHANDSVISNING"}</small><h3>Veckoschema</h3><p>${escapeHtml(result.message)}</p></div><button type="button" class="preview-close" aria-label="Stäng">×</button></div>
+      <div class="preview-heading"><div><small>${isShareView ? (isShared ? "DELAT MED OPERATÖRERNA" : "DELA SCHEMA") : "FÖRHANDSVISNING"}</small><h3>Veckoschema</h3><p>${escapeHtml(result.message)}</p></div><button type="button" class="preview-close" aria-label="Stäng">×</button></div>
       <div class="schedule-preview-grid"><div class="preview-task preview-header">Uppgift</div>${DAYS.map((day, index) => `<div class="preview-header"><strong>${escapeHtml(day)}</strong><small>${escapeHtml(dates[index])}</small></div>`).join("")}${rows}</div>
-      <div class="preview-actions">${isShareView ? '<button type="button" class="btn primary preview-save">Stäng</button>' : '<button type="button" class="btn preview-cancel">Avbryt</button><button type="button" class="btn primary preview-save">Spara schema</button>'}</div>
+      <div class="preview-actions">${isShareView
+        ? isShared
+          ? '<button type="button" class="btn preview-unshare">Sluta dela</button><button type="button" class="btn primary preview-cancel">Stäng</button>'
+          : '<button type="button" class="btn preview-cancel">Avbryt</button><button type="button" class="btn primary preview-save">Dela schema</button>'
+        : '<button type="button" class="btn preview-cancel">Avbryt</button><button type="button" class="btn primary preview-save">Spara schema</button>'}</div>
     `;
     modal.style.setProperty("--schedule-day-count", String(DAYS.length));
     overlay.appendChild(modal);
@@ -941,7 +947,8 @@ function showSchedulePreview(result, people, options = {}) {
     cleanupFocus = manageDialogFocus(modal, () => close(false));
     modal.querySelector(".preview-close").addEventListener("click", () => close(false));
     modal.querySelector(".preview-cancel")?.addEventListener("click", () => close(false));
-    modal.querySelector(".preview-save").addEventListener("click", () => close(!isShareView));
+    modal.querySelector(".preview-save")?.addEventListener("click", () => close(isShareView ? "share" : true));
+    modal.querySelector(".preview-unshare")?.addEventListener("click", () => close("unshare"));
     overlay.addEventListener("click", event => { if (event.target === overlay) close(false); });
   });
 }
@@ -1412,7 +1419,30 @@ async function saveAppSettings(nextSettings) {
   applyAppSettings(normalized);
 }
 
-// Sharing the schedule is for admins and shift leaders only.
+// Operators see a week's schedule and break plan only after an admin or shift
+// leader has shared it. Sharing is for admins and shift leaders only.
+async function getScheduleShare() {
+  const share = await getShiftDocument(getWeekDocumentKey("scheduleShared"), null);
+  return share?.shared === true ? share : null;
+}
+
+async function saveScheduleShare(shared) {
+  await saveShiftDocument(getWeekDocumentKey("scheduleShared"), shared
+    ? { shared: true, sharedAt: new Date().toISOString(), sharedBy: currentPerson?.name || "" }
+    : { shared: false });
+}
+
+async function updateShareScheduleButton() {
+  const button = document.getElementById("shareScheduleBtn");
+  if (!button) return;
+  button.classList.toggle("hidden", !canEditActiveShift());
+  if (!canEditActiveShift()) return;
+  const shared = Boolean(await getScheduleShare());
+  button.classList.toggle("is-shared", shared);
+  button.textContent = shared ? "Schemat är delat" : "Dela schema";
+  button.title = shared ? "Operatörerna ser veckans schema och rastplan" : "Operatörerna ser inte veckans schema förrän det delas";
+}
+
 function setupShareSchedule() {
   const button = document.getElementById("shareScheduleBtn");
   if (!button) return;
@@ -1423,28 +1453,46 @@ function setupShareSchedule() {
   if (button.dataset.bound === "true") return;
   button.dataset.bound = "true";
   button.addEventListener("click", async () => {
+    if (!canEditActiveShift()) return;
     button.disabled = true;
     try {
-      const [schedule, trainingLeaders, trainingLocations, extraPersonLocations, people] = await Promise.all([
+      const [schedule, trainingLeaders, trainingLocations, extraPersonLocations, people, share] = await Promise.all([
         getSchedule(),
         getTrainingLeaders(),
         getTrainingLocations(),
         getExtraPersonLocations(),
-        getPeople()
+        getPeople(),
+        getScheduleShare()
       ]);
       const assignmentCount = TASKS.reduce((total, task) =>
         total + DAYS.filter(day => Boolean(schedule?.[task]?.[day])).length, 0);
-      await showSchedulePreview({
+      const sharedText = share?.sharedAt
+        ? ` · delat ${new Date(share.sharedAt).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}${share.sharedBy ? ` av ${share.sharedBy}` : ""}`
+        : "";
+      const choice = await showSchedulePreview({
         schedule,
         trainingLeaders,
         trainingLocations,
         extraPersonLocations,
-        message: `${formatWeekRange()} · ${assignmentCount} placeringar`
-      }, people, { mode: "share" });
+        message: `${formatWeekRange()} · ${assignmentCount} placeringar${sharedText}`
+      }, people, { mode: "share", shared: Boolean(share) });
+      if (choice !== "share" && choice !== "unshare") return;
+      await saveScheduleShare(choice === "share");
+      await addAuditEvent("schedule", choice === "share" ? "Schemat delat" : "Schemat delas inte längre", formatWeekRange());
+      showAppToast(choice === "share" ? "Schemat är delat med operatörerna." : "Operatörerna ser inte längre veckans schema.");
+    } catch (error) {
+      showAppToast(error.message || "Det gick inte att dela schemat.", "error");
     } finally {
       button.disabled = false;
+      await updateShareScheduleButton();
     }
   });
+}
+
+function renderUnsharedScheduleNotice(root) {
+  root.parentElement?.querySelectorAll(".my-week-summary, .training-schedule-summary").forEach(element => element.remove());
+  root.classList.add("schedule-readonly");
+  root.innerHTML = `<div class="empty-state schedule-unshared-notice"><strong>Schemat för ${escapeHtml(formatWeekRange())} är inte delat än</strong><p>Det visas här när skiftledaren har delat det.</p></div>`;
 }
 
 function isExtraPersonTaskName(task) {
@@ -1629,19 +1677,35 @@ const saveMachineRestrictions = restrictions => saveGlobalDocument("machineRestr
 const getMachineSkillDetails = () => getCompetenceDocument("machineSkillDetails");
 const saveMachineSkillDetails = details => saveGlobalDocument("machineSkillDetails", details);
 
-async function getProductionRecords() {
-  if (!canEditActiveShift()) return {};
-  const records = await getShiftDocument("productionRecords", {});
-  return isPlainObject(records) ? records : {};
+// Production is kept for the current month. Last month's days stay until the 10th,
+// then they are removed (the server does the same for shifts nobody opens).
+function getProductionRetentionStart(today = new Date()) {
+  const start = new Date(today.getFullYear(), today.getMonth() - (today.getDate() >= 10 ? 0 : 1), 1);
+  return formatDateKey(start);
 }
 
-async function saveProductionRecords(records) {
-  await saveShiftDocument("productionRecords", records);
+async function getProductionRecords(scope = getShiftScope()) {
+  if (!canEditShift(scope)) return {};
+  const records = await getDocument(scope, "productionRecords", {});
+  if (!isPlainObject(records)) return {};
+  const start = getProductionRetentionStart();
+  return Object.fromEntries(Object.entries(records).filter(([date]) => date >= start));
 }
 
+async function saveProductionRecords(records, scope = getShiftScope()) {
+  await saveDocument(scope, "productionRecords", records);
+}
+
+// recordDate is the day that set the factory record and recordPrevious the record it beat,
+// so a typing mistake on that day can be corrected without leaving a false record behind.
 async function getProductionSettings() {
   const settings = await getGlobalDocument("productionSettings", {});
-  return { dailyTarget: Number(settings?.dailyTarget) || 160, factoryRecord: Number(settings?.factoryRecord) || 0 };
+  return {
+    dailyTarget: Number(settings?.dailyTarget) || 160,
+    factoryRecord: Number(settings?.factoryRecord) || 0,
+    recordDate: typeof settings?.recordDate === "string" ? settings.recordDate : "",
+    recordPrevious: Number(settings?.recordPrevious) || 0
+  };
 }
 
 async function saveProductionSettings(settings) {
@@ -1962,7 +2026,7 @@ function enhanceAppShell() {
     "testresultat.html": "Sök fram en person och registrera resultaten per maskin eller avdelning.",
     "bedomning.html": "Spara återkommande bedömningar för att se utveckling över tid.",
     "todo.html": "Uppgifter som inte blir klara följer med som påminnelser till nästa vecka.",
-    "produktion.html": "Spara dagens resultat regelbundet; historiken finns kvar lokalt.",
+    "produktion.html": "Allt du skriver sparas automatiskt. Förra månadens dagar tas bort den 10:e.",
     "rast.html": "Kontrollera att alla valda linjer täcks innan rastplanen används.",
     "installningar.html": "Inställningarna gäller alla skift och sparas när du trycker Spara.",
     "profil.html": "Ändra din status här om du är sjuk eller borta, så ser skiftledaren det direkt."
@@ -2435,10 +2499,14 @@ function makeTimeField(labelText, value, duration, onChange) {
 }
 
 async function renderBreakPlanner() {
+  const root = document.getElementById("breakPlanner");
+  if (root && isOperator() && !(await getScheduleShare())) {
+    root.innerHTML = `<div class="empty-state schedule-unshared-notice"><strong>Rastplanen för ${escapeHtml(formatWeekRange())} är inte delad än</strong><p>Den visas här när skiftledaren har delat schemat.</p></div>`;
+    return;
+  }
   await renderBreakPlannerContent();
   if (canEditActiveShift()) return;
   // Operators and other shifts' leaders can switch days but not change anything.
-  const root = document.getElementById("breakPlanner");
   root?.querySelector(".break-auto-groups-btn")?.remove();
   root?.querySelectorAll("select, input, textarea, button:not(.break-day-tab)").forEach(control => { control.disabled = true; });
   root?.classList.add("break-readonly");
@@ -3489,6 +3557,13 @@ async function renderSchedule() {
       getMachineRestrictions()
     ]);
   const dates = getDatesForWeek();
+  void updateShareScheduleButton();
+
+  if (isOperator() && !(await getScheduleShare())) {
+    document.getElementById("autoScheduleBtn")?.classList.add("hidden");
+    renderUnsharedScheduleNotice(root);
+    return;
+  }
 
   if (!canEditActiveShift()) {
     renderReadOnlySchedule(root, { people, schedule, trainingLeaders, trainingLocations, extraPersonLocations });
@@ -4642,11 +4717,91 @@ function convertProductionCansToBoxes(value) {
   return wholeBoxes + (remainingCans >= PRODUCTION_CANS_PER_BOX * 0.6 ? 1 : 0);
 }
 
+// Everything typed on the production page is saved automatically, shortly after
+// the last change. The pending save lives outside renderProduction so it can be
+// finished before the page is drawn again or left.
+const PRODUCTION_AUTOSAVE_DELAY = 700;
+const productionAutosave = { timer: null, run: null, saving: Promise.resolve() };
+const productionAuditedDates = new Set();
+const productionCelebratedDates = new Set();
+
+function flushProductionAutosave() {
+  clearTimeout(productionAutosave.timer);
+  productionAutosave.timer = null;
+  const run = productionAutosave.run;
+  productionAutosave.run = null;
+  if (run) productionAutosave.saving = productionAutosave.saving.catch(() => {}).then(run);
+  return productionAutosave.saving.catch(() => {});
+}
+
+window.addEventListener("pagehide", () => void flushProductionAutosave());
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") void flushProductionAutosave();
+});
+window.addEventListener("beforeunload", event => {
+  if (productionAutosave.run) { void flushProductionAutosave(); event.preventDefault(); }
+});
+
+// Saves one day, merged into the latest records so other days saved meanwhile are kept.
+async function saveProductionDay(scope, dayRecord) {
+  const [records, settings] = await Promise.all([getProductionRecords(scope), getProductionSettings()]);
+  records[dayRecord.date] = dayRecord;
+  const next = { ...settings, dailyTarget: dayRecord.target };
+  const setRecordEarlier = settings.recordDate === dayRecord.date;
+  const recordToBeat = setRecordEarlier ? settings.recordPrevious : settings.factoryRecord;
+  if (setRecordEarlier) next.factoryRecord = Math.max(recordToBeat, dayRecord.total);
+  if (dayRecord.total > recordToBeat) {
+    Object.assign(next, { factoryRecord: dayRecord.total, recordDate: dayRecord.date, recordPrevious: recordToBeat });
+  } else if (setRecordEarlier) {
+    Object.assign(next, { recordDate: "", recordPrevious: 0 });
+  }
+  await saveProductionRecords(records, scope);
+  if (JSON.stringify(next) !== JSON.stringify(settings)) await saveProductionSettings(next);
+  return { records, settings: next, brokeRecord: dayRecord.total > recordToBeat, previousRecord: recordToBeat };
+}
+
+function renderProductionHistory(root, records) {
+  const section = root.querySelector(".production-history");
+  if (!section) return;
+  const days = Object.values(records).filter(item => item?.date).sort((a, b) => b.date.localeCompare(a.date));
+  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= Number(item.target) ? "history-met" : "history-missed"}">${Number(item.total) >= Number(item.target) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button><button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button></div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
+  section.querySelectorAll("[data-production-menu]").forEach(button => button.addEventListener("click", event => {
+    event.stopPropagation();
+    const menu = section.querySelector(`[data-production-actions="${button.dataset.productionMenu}"]`);
+    section.querySelectorAll(".production-history-menu").forEach(item => {
+      if (item !== menu) item.hidden = true;
+    });
+    if (menu) menu.hidden = !menu.hidden;
+  }));
+  section.querySelectorAll("[data-production-view]").forEach(button => button.addEventListener("click", async () => {
+    await flushProductionAutosave();
+    selectedProductionDate = button.dataset.productionView;
+    void renderProduction();
+  }));
+  section.querySelectorAll("[data-production-delete]").forEach(button => button.addEventListener("click", async () => {
+    const date = button.dataset.productionDelete;
+    const displayDate = new Date(date + "T12:00:00").toLocaleDateString("sv-SE");
+    if (!confirm(`Vill du ta bort produktionsresultatet för ${displayDate}?`)) return;
+    await flushProductionAutosave();
+    const scope = getShiftScope();
+    const latest = await getProductionRecords(scope);
+    delete latest[date];
+    await saveProductionRecords(latest, scope);
+    await addAuditEvent("production", `Produktion ${date} borttagen`, "Resultatet raderades från historiken");
+    await renderProduction();
+    await renderDashboard();
+  }));
+}
+
 async function renderProduction() {
   const root = document.getElementById("productionPage");
   if (!root) return;
+  await flushProductionAutosave();
+  const scope = getShiftScope();
+  const retentionStart = getProductionRetentionStart();
+  if (selectedProductionDate < retentionStart) selectedProductionDate = formatDateKey(new Date());
   const [people, records, settings, schedule] = await Promise.all([
-    getPeople(), getProductionRecords(), getProductionSettings(), getScheduleForDate(selectedProductionDate)
+    getPeople(), getProductionRecords(scope), getProductionSettings(), getScheduleForDate(selectedProductionDate)
   ]);
   const configuredMachines = appSettings.productionMachines;
   const machines = [...new Set([...configuredMachines, ...Object.keys(records[selectedProductionDate]?.machines || {})])];
@@ -4666,13 +4821,20 @@ async function renderProduction() {
   };
   const total = machines.reduce((sum, machine) => sum + (Number(record.machines?.[machine]?.result) || 0), 0);
   const target = Number(record.target ?? settings.dailyTarget);
+  const savedText = stored?.updatedAt ? `Sparat ${new Date(stored.updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Sparas automatiskt";
   const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
   root.innerHTML = `
-    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" value="${selectedProductionDate}" /></label><div class="production-settings"><label>Dagligt mål<input id="productionTarget" type="number" min="0" value="${target}" /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><button id="saveProductionBtn" class="btn primary" type="button">Spara dagen</button></div>
+    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label>Dagligt mål<input id="productionTarget" type="number" min="0" value="${target}" /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
     <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small><button id="editFactoryRecordBtn" type="button">Ändra manuellt</button></article></div>
     <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select></label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
-    <section class="production-history card"><div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet.</p></div><span>${Object.keys(records).length} dagar</span></div><div class="production-history-list">${Object.values(records).sort((a,b) => b.date.localeCompare(a.date)).map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= Number(item.target) ? "history-met" : "history-missed"}">${Number(item.total) >= Number(item.target) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button><button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button></div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div></section>
+    <section class="production-history card"></section>
   `;
+  renderProductionHistory(root, records);
+  const saveStatus = root.querySelector("#productionSaveStatus");
+  const setSaveStatus = (text, state = "") => {
+    saveStatus.textContent = text;
+    saveStatus.className = `production-save-status${state ? ` is-${state}` : ""}`;
+  };
   const updateSummary = () => {
     const currentTotal = [...root.querySelectorAll(".production-result")].reduce((sum, input) => sum + (Number(input.value) || 0), 0);
     const currentTarget = Number(root.querySelector("#productionTarget").value) || 0;
@@ -4682,6 +4844,59 @@ async function renderProduction() {
     const status = root.querySelector("#productionStatus");
     status.textContent = currentTotal >= currentTarget ? "Målet uppnått" : "Under målet";
     status.className = `production-status ${currentTotal >= currentTarget ? "goal-met" : "goal-missed"}`;
+  };
+  const field = (machine, name) => root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="${name}"]`);
+  const collectDayRecord = () => {
+    const dayRecord = { date: selectedProductionDate, target: Number(root.querySelector("#productionTarget").value) || 0, machines: {}, updatedAt: new Date().toISOString() };
+    machines.forEach(machine => {
+      const personId = field(machine, "personId").value;
+      const cans = field(machine, "cans").value;
+      dayRecord.machines[machine] = {
+        personId,
+        personName: people.find(person => person.id === personId)?.name || record.machines?.[machine]?.personName || "",
+        cans: cans === "" ? null : Number(cans),
+        result: Number(field(machine, "result").value) || 0,
+        waste: Number(field(machine, "waste").value) || 0,
+        comment: field(machine, "comment").value.trim()
+      };
+    });
+    dayRecord.total = machines.reduce((sum, machine) => sum + dayRecord.machines[machine].result, 0);
+    return dayRecord;
+  };
+  const date = selectedProductionDate;
+  const queueSave = () => {
+    // Invalid numbers are not saved; the field shows why and the next valid change saves.
+    if (![...root.querySelectorAll('input[type="number"]')].every(input => input.checkValidity())) {
+      setSaveStatus("Rätta det markerade fältet för att spara", "error");
+      clearTimeout(productionAutosave.timer);
+      productionAutosave.run = null;
+      return;
+    }
+    const dayRecord = collectDayRecord();
+    setSaveStatus("Sparar…", "saving");
+    clearTimeout(productionAutosave.timer);
+    productionAutosave.run = async () => {
+      try {
+        const result = await saveProductionDay(scope, dayRecord);
+        if (!productionAuditedDates.has(`${scope}|${date}`)) {
+          productionAuditedDates.add(`${scope}|${date}`);
+          await addAuditEvent("production", `Produktion ${date}`, `${dayRecord.total} box`);
+        }
+        if (!root.isConnected || selectedProductionDate !== date || getShiftScope() !== scope) return;
+        if (!productionAutosave.run) setSaveStatus(`Sparat ${new Date().toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`, "saved");
+        root.querySelector("#factoryRecordValue").textContent = result.settings.factoryRecord;
+        settings.factoryRecord = result.settings.factoryRecord;
+        renderProductionHistory(root, result.records);
+        if (result.brokeRecord && !productionCelebratedDates.has(`${scope}|${date}`)) {
+          productionCelebratedDates.add(`${scope}|${date}`);
+          showProductionCelebration(dayRecord.total, result.previousRecord);
+        }
+      } catch (error) {
+        if (root.isConnected) setSaveStatus(error.message || "Det gick inte att spara. Försök igen.", "error");
+        throw error;
+      }
+    };
+    productionAutosave.timer = setTimeout(() => void flushProductionAutosave(), PRODUCTION_AUTOSAVE_DELAY);
   };
   root.querySelectorAll(".production-cans, .production-result").forEach(input => {
     const selectZero = () => {
@@ -4703,10 +4918,19 @@ async function renderProduction() {
     updateSummary();
   }));
   root.querySelector("#productionTarget").addEventListener("input", updateSummary);
-  root.querySelector("#productionDate").addEventListener("change", event => { if (!event.target.value || !event.target.reportValidity()) return; selectedProductionDate = event.target.value; void renderProduction(); });
+  root.querySelector(".production-entry").addEventListener("input", queueSave);
+  root.querySelector(".production-entry").addEventListener("change", queueSave);
+  root.querySelector("#productionTarget").addEventListener("input", queueSave);
+  root.querySelector("#productionDate").addEventListener("change", async event => {
+    if (!event.target.value || !event.target.reportValidity()) return;
+    await flushProductionAutosave();
+    selectedProductionDate = event.target.value;
+    void renderProduction();
+  });
   root.querySelector("#syncScheduleBtn").addEventListener("click", async () => {
     const currentSchedule = await getScheduleForDate(selectedProductionDate);
-    machines.forEach(machine => { const select = root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="personId"]`); select.value = scheduleDay ? currentSchedule[machine]?.[scheduleDay] || "" : ""; });
+    machines.forEach(machine => { field(machine, "personId").value = scheduleDay ? currentSchedule[machine]?.[scheduleDay] || "" : ""; });
+    queueSave();
   });
   root.querySelector("#editFactoryRecordBtn").addEventListener("click", async () => {
     const enteredValue = prompt("Ange fabriksrekord (box):", String(settings.factoryRecord));
@@ -4716,49 +4940,13 @@ async function renderProduction() {
       showAppToast("Ange ett giltigt fabriksrekord.", "error");
       return;
     }
-    settings.factoryRecord = Math.round(newRecord);
-    await saveProductionSettings(settings);
-    await addAuditEvent("production", "Fabriksrekord ändrat", `${settings.factoryRecord} box`);
+    await flushProductionAutosave();
+    const latest = await getProductionSettings();
+    // A manual record is the official one; no day may lower it again.
+    await saveProductionSettings({ ...latest, factoryRecord: Math.round(newRecord), recordDate: "", recordPrevious: 0 });
+    await addAuditEvent("production", "Fabriksrekord ändrat", `${Math.round(newRecord)} box`);
     await renderProduction();
   });
-  bindOnce(root.querySelector("#saveProductionBtn"), "click", async () => {
-    if (![...root.querySelectorAll('input[type="number"]')].every(input => input.reportValidity())) return;
-    const previousRecord = settings.factoryRecord;
-    const dayRecord = { date: selectedProductionDate, target: Number(root.querySelector("#productionTarget").value) || 0, machines: {}, updatedAt: new Date().toISOString() };
-    machines.forEach(machine => { const personId = root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="personId"]`).value; dayRecord.machines[machine] = { personId, personName: people.find(person => person.id === personId)?.name || record.machines?.[machine]?.personName || "", cans: root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="cans"]`).value === "" ? null : Number(root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="cans"]`).value), result: Number(root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="result"]`).value) || 0, waste: Number(root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="waste"]`).value) || 0, comment: root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="comment"]`).value.trim() }; });
-    dayRecord.total = machines.reduce((sum, machine) => sum + dayRecord.machines[machine].result, 0);
-    records[selectedProductionDate] = dayRecord;
-    settings.dailyTarget = dayRecord.target;
-    const brokeRecord = dayRecord.total > settings.factoryRecord;
-    if (brokeRecord) settings.factoryRecord = dayRecord.total;
-    await Promise.all([saveProductionRecords(records), saveProductionSettings(settings)]);
-    await addAuditEvent("production", `Produktion ${selectedProductionDate}`, `${dayRecord.total} box`);
-    if (brokeRecord) showProductionCelebration(dayRecord.total, previousRecord);
-    await renderProduction();
-    await renderDashboard();
-  });
-  root.querySelectorAll("[data-production-menu]").forEach(button => button.addEventListener("click", event => {
-    event.stopPropagation();
-    const menu = root.querySelector(`[data-production-actions="${button.dataset.productionMenu}"]`);
-    root.querySelectorAll(".production-history-menu").forEach(item => {
-      if (item !== menu) item.hidden = true;
-    });
-    if (menu) menu.hidden = !menu.hidden;
-  }));
-  root.querySelectorAll("[data-production-view]").forEach(button => button.addEventListener("click", () => {
-    selectedProductionDate = button.dataset.productionView;
-    void renderProduction();
-  }));
-  root.querySelectorAll("[data-production-delete]").forEach(button => button.addEventListener("click", async () => {
-    const date = button.dataset.productionDelete;
-    const displayDate = new Date(date + "T12:00:00").toLocaleDateString("sv-SE");
-    if (!confirm(`Vill du ta bort produktionsresultatet för ${displayDate}?`)) return;
-    delete records[date];
-    await saveProductionRecords(records);
-    await addAuditEvent("production", `Produktion ${date} borttagen`, "Resultatet raderades från historiken");
-    await renderProduction();
-    await renderDashboard();
-  }));
   bindOnce(root, "click", event => {
     if (!event.target.closest(".production-history-item")) {
       root.querySelectorAll(".production-history-menu").forEach(menu => { menu.hidden = true; });
@@ -5173,7 +5361,7 @@ async function renderUsersPage() {
         <p>${details}</p>
         <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${account?.mustChangePassword ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
       </div>
-      <div class="person-actions"><button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>${isAdmin() && person.id !== currentPerson?.id ? `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>` : ""}</div>
+      <div class="person-actions">${canEditPerson(person) ? `<button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>` : ""}${isAdmin() && person.id !== currentPerson?.id ? `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>` : ""}</div>
     </div>`;
   }).join("") || `<div class="empty-state">${people.length ? "Ingen användare matchar filtret." : isAdmin() ? "Ingen personal har lagts till ännu." : getOwnShiftId() ? "Ingen personal i ditt skift ännu." : "Du tillhör inget skift ännu. Be en admin att lägga till dig i ett skift."}</div>`;
   list.querySelectorAll("[data-manage-user]").forEach(button => button.addEventListener("click", () => void editPerson(button.dataset.manageUser)));
