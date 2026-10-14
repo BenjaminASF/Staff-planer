@@ -4978,6 +4978,10 @@ function setupMobileNavigation() {
 }
 
 const THEME_LABELS = { light: "Ljust läge", dark: "Mörkt läge" };
+const THEME_ICONS = {
+  light: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+  dark: '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>'
+};
 
 function updateThemeToggles() {
   const theme = window.staffTheme?.current() || "light";
@@ -4986,8 +4990,7 @@ function updateThemeToggles() {
     button.dataset.nextTheme = next;
     button.setAttribute("aria-label", `Byt till ${THEME_LABELS[next].toLowerCase()}`);
     button.title = `Byt till ${THEME_LABELS[next].toLowerCase()}`;
-    button.querySelector(".theme-toggle-icon").textContent = next === "dark" ? "☾" : "☀";
-    button.querySelector(".theme-toggle-label").textContent = THEME_LABELS[next];
+    button.innerHTML = THEME_ICONS[next];
   });
   document.querySelectorAll('[name="themePreference"]').forEach(input => {
     input.checked = input.value === window.staffTheme?.getPreference();
@@ -5000,10 +5003,15 @@ function setupThemeToggles() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `theme-toggle ${extraClass}`;
-    button.innerHTML = '<span class="theme-toggle-icon" aria-hidden="true"></span><span class="theme-toggle-label"></span>';
     button.addEventListener("click", () => window.staffTheme.setPreference(button.dataset.nextTheme));
     return button;
   };
+  // Top right of the page header on wide screens; on narrow screens the header toggle is
+  // hidden and the one in the top bar, next to the menu button, is shown instead.
+  const header = document.querySelector(".main .header");
+  if (header && !header.querySelector(".theme-toggle")) {
+    header.prepend(createToggle("header-theme-toggle"));
+  }
   const logoutButton = document.querySelector(".sidebar .sidebar-logout");
   if (logoutButton && !document.querySelector(".sidebar .theme-toggle")) {
     logoutButton.insertAdjacentElement("beforebegin", createToggle("sidebar-theme-toggle"));
