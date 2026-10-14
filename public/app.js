@@ -907,6 +907,7 @@ function showSchedulePreview(result, people, options = {}) {
     const nameById = Object.fromEntries(people.map(person => [person.id, person.name]));
     const dates = getDatesForWeek();
     const isShareView = options.mode === "share";
+    const isShared = Boolean(options.shared);
     const previewTasks = isShareView ? TASKS : TASKS.filter(task => !isTrainingTaskName(task));
     const rows = previewTasks.map(task => `
       <div class="preview-task">${escapeHtml(task)}</div>
@@ -929,9 +930,13 @@ function showSchedulePreview(result, people, options = {}) {
       }).join("")}
     `).join("");
     modal.innerHTML = `
-      <div class="preview-heading"><div><small>${isShareView ? "DELA MED GRUPPEN" : "FÖRHANDSVISNING"}</small><h3>Veckoschema</h3><p>${escapeHtml(result.message)}</p></div><button type="button" class="preview-close" aria-label="Stäng">×</button></div>
+      <div class="preview-heading"><div><small>${isShareView ? (isShared ? "DELAT MED OPERATÖRERNA" : "DELA SCHEMA") : "FÖRHANDSVISNING"}</small><h3>Veckoschema</h3><p>${escapeHtml(result.message)}</p></div><button type="button" class="preview-close" aria-label="Stäng">×</button></div>
       <div class="schedule-preview-grid"><div class="preview-task preview-header">Uppgift</div>${DAYS.map((day, index) => `<div class="preview-header"><strong>${escapeHtml(day)}</strong><small>${escapeHtml(dates[index])}</small></div>`).join("")}${rows}</div>
-      <div class="preview-actions">${isShareView ? '<button type="button" class="btn primary preview-save">Stäng</button>' : '<button type="button" class="btn preview-cancel">Avbryt</button><button type="button" class="btn primary preview-save">Spara schema</button>'}</div>
+      <div class="preview-actions">${isShareView
+        ? isShared
+          ? '<button type="button" class="btn preview-unshare">Sluta dela</button><button type="button" class="btn primary preview-cancel">Stäng</button>'
+          : '<button type="button" class="btn preview-cancel">Avbryt</button><button type="button" class="btn primary preview-save">Dela schema</button>'
+        : '<button type="button" class="btn preview-cancel">Avbryt</button><button type="button" class="btn primary preview-save">Spara schema</button>'}</div>
     `;
     modal.style.setProperty("--schedule-day-count", String(DAYS.length));
     overlay.appendChild(modal);
@@ -941,7 +946,8 @@ function showSchedulePreview(result, people, options = {}) {
     cleanupFocus = manageDialogFocus(modal, () => close(false));
     modal.querySelector(".preview-close").addEventListener("click", () => close(false));
     modal.querySelector(".preview-cancel")?.addEventListener("click", () => close(false));
-    modal.querySelector(".preview-save").addEventListener("click", () => close(!isShareView));
+    modal.querySelector(".preview-save")?.addEventListener("click", () => close(isShareView ? "share" : true));
+    modal.querySelector(".preview-unshare")?.addEventListener("click", () => close("unshare"));
     overlay.addEventListener("click", event => { if (event.target === overlay) close(false); });
   });
 }
@@ -1412,7 +1418,30 @@ async function saveAppSettings(nextSettings) {
   applyAppSettings(normalized);
 }
 
-// Sharing the schedule is for admins and shift leaders only.
+// Operators see a week's schedule and break plan only after an admin or shift
+// leader has shared it. Sharing is for admins and shift leaders only.
+async function getScheduleShare() {
+  const share = await getShiftDocument(getWeekDocumentKey("scheduleShared"), null);
+  return share?.shared === true ? share : null;
+}
+
+async function saveScheduleShare(shared) {
+  await saveShiftDocument(getWeekDocumentKey("scheduleShared"), shared
+    ? { shared: true, sharedAt: new Date().toISOString(), sharedBy: currentPerson?.name || "" }
+    : { shared: false });
+}
+
+async function updateShareScheduleButton() {
+  const button = document.getElementById("shareScheduleBtn");
+  if (!button) return;
+  button.classList.toggle("hidden", !canEditActiveShift());
+  if (!canEditActiveShift()) return;
+  const shared = Boolean(await getScheduleShare());
+  button.classList.toggle("is-shared", shared);
+  button.textContent = shared ? "Schemat är delat" : "Dela schema";
+  button.title = shared ? "Operatörerna ser veckans schema och rastplan" : "Operatörerna ser inte veckans schema förrän det delas";
+}
+
 function setupShareSchedule() {
   const button = document.getElementById("shareScheduleBtn");
   if (!button) return;
@@ -1423,28 +1452,46 @@ function setupShareSchedule() {
   if (button.dataset.bound === "true") return;
   button.dataset.bound = "true";
   button.addEventListener("click", async () => {
+    if (!canEditActiveShift()) return;
     button.disabled = true;
     try {
-      const [schedule, trainingLeaders, trainingLocations, extraPersonLocations, people] = await Promise.all([
+      const [schedule, trainingLeaders, trainingLocations, extraPersonLocations, people, share] = await Promise.all([
         getSchedule(),
         getTrainingLeaders(),
         getTrainingLocations(),
         getExtraPersonLocations(),
-        getPeople()
+        getPeople(),
+        getScheduleShare()
       ]);
       const assignmentCount = TASKS.reduce((total, task) =>
         total + DAYS.filter(day => Boolean(schedule?.[task]?.[day])).length, 0);
-      await showSchedulePreview({
+      const sharedText = share?.sharedAt
+        ? ` · delat ${new Date(share.sharedAt).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}${share.sharedBy ? ` av ${share.sharedBy}` : ""}`
+        : "";
+      const choice = await showSchedulePreview({
         schedule,
         trainingLeaders,
         trainingLocations,
         extraPersonLocations,
-        message: `${formatWeekRange()} · ${assignmentCount} placeringar`
-      }, people, { mode: "share" });
+        message: `${formatWeekRange()} · ${assignmentCount} placeringar${sharedText}`
+      }, people, { mode: "share", shared: Boolean(share) });
+      if (choice !== "share" && choice !== "unshare") return;
+      await saveScheduleShare(choice === "share");
+      await addAuditEvent("schedule", choice === "share" ? "Schemat delat" : "Schemat delas inte längre", formatWeekRange());
+      showAppToast(choice === "share" ? "Schemat är delat med operatörerna." : "Operatörerna ser inte längre veckans schema.");
+    } catch (error) {
+      showAppToast(error.message || "Det gick inte att dela schemat.", "error");
     } finally {
       button.disabled = false;
+      await updateShareScheduleButton();
     }
   });
+}
+
+function renderUnsharedScheduleNotice(root) {
+  root.parentElement?.querySelectorAll(".my-week-summary, .training-schedule-summary").forEach(element => element.remove());
+  root.classList.add("schedule-readonly");
+  root.innerHTML = `<div class="empty-state schedule-unshared-notice"><strong>Schemat för ${escapeHtml(formatWeekRange())} är inte delat än</strong><p>Det visas här när skiftledaren har delat det.</p></div>`;
 }
 
 function isExtraPersonTaskName(task) {
@@ -2435,10 +2482,14 @@ function makeTimeField(labelText, value, duration, onChange) {
 }
 
 async function renderBreakPlanner() {
+  const root = document.getElementById("breakPlanner");
+  if (root && isOperator() && !(await getScheduleShare())) {
+    root.innerHTML = `<div class="empty-state schedule-unshared-notice"><strong>Rastplanen för ${escapeHtml(formatWeekRange())} är inte delad än</strong><p>Den visas här när skiftledaren har delat schemat.</p></div>`;
+    return;
+  }
   await renderBreakPlannerContent();
   if (canEditActiveShift()) return;
   // Operators and other shifts' leaders can switch days but not change anything.
-  const root = document.getElementById("breakPlanner");
   root?.querySelector(".break-auto-groups-btn")?.remove();
   root?.querySelectorAll("select, input, textarea, button:not(.break-day-tab)").forEach(control => { control.disabled = true; });
   root?.classList.add("break-readonly");
@@ -3489,6 +3540,13 @@ async function renderSchedule() {
       getMachineRestrictions()
     ]);
   const dates = getDatesForWeek();
+  void updateShareScheduleButton();
+
+  if (isOperator() && !(await getScheduleShare())) {
+    document.getElementById("autoScheduleBtn")?.classList.add("hidden");
+    renderUnsharedScheduleNotice(root);
+    return;
+  }
 
   if (!canEditActiveShift()) {
     renderReadOnlySchedule(root, { people, schedule, trainingLeaders, trainingLocations, extraPersonLocations });

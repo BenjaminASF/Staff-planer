@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Schema</title>
-  <script src="theme.js?v=20261014-8"></script>
-  <link rel="stylesheet" href="style.css?v=20261014-8" />
+  <script src="theme.js?v=20261014-9"></script>
+  <link rel="stylesheet" href="style.css?v=20261014-9" />
 </head>
 <body class="app-booting">
   <div id="authScreen" class="auth-screen">
@@ -49,7 +49,7 @@
               <button id="autoScheduleBtn" class="btn primary auto-schedule-btn" type="button">
                 Skapa veckoschema
               </button>
-              <button id="shareScheduleBtn" class="btn share-schedule-btn" type="button">Dela med gruppen</button>
+              <button id="shareScheduleBtn" class="btn share-schedule-btn" type="button">Dela schema</button>
             </div>
           </div>
           <p id="autoScheduleMessage" class="auto-schedule-message" aria-live="polite"></p>
@@ -69,6 +69,6 @@
   <script>
     if ("serviceWorker" in navigator) navigator.serviceWorker.getRegistrations().then(items => items.forEach(item => item.update()));
   </script>
-<script src="app.js?v=20261014-8"></script>
+<script src="app.js?v=20261014-9"></script>
 </body>
 </html>

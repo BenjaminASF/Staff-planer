@@ -5,8 +5,9 @@
 //                schedules read-only, may add staff to their own shift and may
 //                change shared machines and settings. May not delete users,
 //                change roles, or edit competence, test results or assessments.
-// Operatör     – sees their own shift's schedule and break plan, edits their own
-//                profile (name, phone, status) and password.
+// Operatör     – sees their own shift's schedule and break plan once an admin or
+//                shift leader has shared that week, edits their own profile
+//                (name, phone, status) and password.
 //
 // Personal documents ("Att göra") belong to one user and only that user reads
 // and writes them, whatever the role.
@@ -38,6 +39,7 @@ const GLOBAL_DOCUMENTS = Object.freeze({
 const SHIFT_DOCUMENTS = [
   [new RegExp(`^(schedule|trainingLeaders|trainingLocations|extraPersonLocations|breakPlan):${WEEK_KEY}$`), "shiftPlan"],
   [new RegExp(`^schedulePriorityLines:${WEEK_KEY}$`), "shiftWork"],
+  [new RegExp(`^scheduleShared:${WEEK_KEY}$`), "shiftShare"],
   [/^(scheduleTemplates|productionRecords)$/, "shiftWork"]
 ];
 
@@ -47,6 +49,10 @@ const PERSONAL_DOCUMENTS = ["todos"];
 
 const personalScope = userId => `${PERSONAL_SCOPE_PREFIX}${userId}`;
 const personalScopeOwner = scope => scope.startsWith(PERSONAL_SCOPE_PREFIX) ? scope.slice(PERSONAL_SCOPE_PREFIX.length) : null;
+
+// Marks a shift's week as shared with its operators (scope = shift id).
+const SHARED_FLAG_PREFIX = "scheduleShared";
+const sharedFlagKey = weekKey => `${SHARED_FLAG_PREFIX}:${weekKey}`;
 
 const WEEKLY_SCHEDULE_PREFIXES = ["schedule", "trainingLeaders", "trainingLocations", "extraPersonLocations"];
 
@@ -71,7 +77,8 @@ function canReadDocument(user, scope, key) {
     case "competence": return isAdminOrLeader(user);
     case "sensitive": return isAdmin(user);
     // Shift leaders may look at every shift's schedule; operators only their own.
-    case "shiftPlan": return isAdminOrLeader(user) || (Boolean(user?.shiftId) && user.shiftId === scope);
+    case "shiftPlan":
+    case "shiftShare": return isAdminOrLeader(user) || (Boolean(user?.shiftId) && user.shiftId === scope);
     case "shiftWork": return canEditShift(user, scope);
     case "personal": return Boolean(user?.id) && personalScopeOwner(scope) === user.id;
     default: return false;
@@ -85,10 +92,18 @@ function canWriteDocument(user, scope, key) {
     case "competence":
     case "sensitive": return isAdmin(user);
     case "shiftPlan":
-    case "shiftWork": return canEditShift(user, scope);
+    case "shiftWork":
+    case "shiftShare": return canEditShift(user, scope);
     case "personal": return Boolean(user?.id) && personalScopeOwner(scope) === user.id;
     default: return false;
   }
+}
+
+// Operators see a week's schedule and break plan only after it has been shared.
+// Returns the week the document belongs to when the user needs that week shared, otherwise null.
+function weekRequiringShare(user, scope, key) {
+  if (isAdminOrLeader(user) || documentCategory(scope, key) !== "shiftPlan") return null;
+  return key.slice(key.indexOf(":") + 1);
 }
 
 function canReadAuditScope(user, scope) {
@@ -155,6 +170,8 @@ module.exports = {
   isAdminOrLeader,
   canEditShift,
   documentCategory,
+  sharedFlagKey,
+  weekRequiringShare,
   canReadDocument,
   canWriteDocument,
   canReadAuditScope,

@@ -165,8 +165,18 @@ describe("roles and permissions", () => {
     const own = people.data.people.find(person => person.id === erikPerson.id);
     assert.ok(!own.limited && own.account.username === "erik");
 
-    const ownShift = await otherOperator.get(`/api/documents?scope=${eveningShift.id}&keys=schedule:${WEEK},breakPlan:${WEEK},scheduleTemplates,productionRecords`);
+    const ownShiftKeys = `schedule:${WEEK},breakPlan:${WEEK},scheduleTemplates,productionRecords`;
+    const beforeShare = await otherOperator.get(`/api/documents?scope=${eveningShift.id}&keys=${ownShiftKeys}`);
+    assert.equal(beforeShare.data.documents[`schedule:${WEEK}`], undefined, "unshared week is hidden");
+    assert.deepEqual(beforeShare.data.unshared.sort(), [`breakPlan:${WEEK}`, `schedule:${WEEK}`]);
+    assert.equal((await otherOperator.put(`/api/documents/${eveningShift.id}/scheduleShared:${WEEK}`, { value: { shared: true }, baseVersion: 0 })).status, 403);
+    assert.equal((await leader.put(`/api/documents/${eveningShift.id}/scheduleShared:${WEEK}`, { value: { shared: true }, baseVersion: 0 })).status, 403);
+    assert.equal((await admin.put(`/api/documents/${eveningShift.id}/scheduleShared:${WEEK}`, { value: { shared: true }, baseVersion: 0 })).status, 200);
+
+    const ownShift = await otherOperator.get(`/api/documents?scope=${eveningShift.id}&keys=${ownShiftKeys},scheduleShared:${WEEK}`);
     assert.ok(ownShift.data.documents[`schedule:${WEEK}`]);
+    assert.ok(ownShift.data.documents[`scheduleShared:${WEEK}`].value.shared);
+    assert.deepEqual(ownShift.data.unshared, []);
     assert.deepEqual(ownShift.data.forbidden.sort(), ["productionRecords", "scheduleTemplates"]);
     const dayShiftRead = await otherOperator.get(`/api/documents?scope=${dayShift.id}&keys=schedule:${WEEK}`);
     assert.deepEqual(dayShiftRead.data.forbidden, [`schedule:${WEEK}`]);

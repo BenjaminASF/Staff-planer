@@ -5533,3 +5533,22 @@ button {
 .remove-user-options .btn.danger small { color: inherit; opacity: .8; }
 .users-shift-notice { justify-self: start; margin: 0 !important; }
 .users-stats:has(> article:nth-child(4):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+.share-schedule-btn.is-shared {
+  color: #187347;
+  color: light-dark(#187347, #75c897);
+}
+
+.share-schedule-btn.is-shared::before {
+  content: "✓";
+}
+
+.schedule-unshared-notice {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 6px;
+}
+
+.schedule-unshared-notice p {
+  margin: 0;
+}
