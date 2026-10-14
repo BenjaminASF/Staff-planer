@@ -4381,11 +4381,20 @@ body.app-authenticated #appShell {
 }
 
 .rating-options label {
+  position: relative;
   cursor: pointer;
 }
 
 .rating-options input {
   position: absolute;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
   opacity: 0;
   pointer-events: none;
 }
@@ -4405,6 +4414,11 @@ body.app-authenticated #appShell {
   border-color: #5c86ef;
   background: var(--primary);
   color: #fff;
+}
+
+.rating-options input:focus-visible + span {
+  outline: 3px solid rgba(53, 109, 243, .42);
+  outline-offset: 2px;
 }
 
 .assessment-submit-bar {
