@@ -444,7 +444,7 @@ async function apiRequest(method, path, body) {
 }
 
 // Server documents, cached for the life of the page. Reads started in the same
-// tick are sent as one request per scope ("global" or a shift id).
+// tick are sent as one request per scope ("global", a shift id or "user:<id>").
 const documentCache = new Map();
 const documentBatches = new Map();
 const documentSaveQueues = new Map();
@@ -1788,14 +1788,17 @@ async function saveScheduleTemplates(templates) {
   await saveShiftDocument("scheduleTemplates", templates);
 }
 
+// "Att göra" is personal: every user has their own list, which nobody else sees.
+const getPersonalScope = () => currentUser ? `user:${currentUser.id}` : "";
+
 async function getTodos() {
-  if (!canEditActiveShift()) return [];
-  const todos = await getShiftDocument("todos", []);
+  if (!currentUser) return [];
+  const todos = await getDocument(getPersonalScope(), "todos", []);
   return Array.isArray(todos) ? todos : [];
 }
 
 async function saveTodos(todos) {
-  await saveShiftDocument("todos", todos);
+  await saveDocument(getPersonalScope(), "todos", todos);
 }
 
 function getTodoWeekKey(dateValue = new Date()) {
