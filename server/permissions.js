@@ -3,7 +3,8 @@
 // Admin        – everything.
 // Skiftledare  – like admin, but changes only their own shift, sees other shifts'
 //                schedules read-only, may add staff to their own shift and may
-//                change shared machines and settings. May not delete users,
+//                change shared machines and settings. May not change an admin's
+//                details, delete users,
 //                change roles, or edit competence, test results or assessments.
 // Operatör     – sees their own shift's schedule and break plan once an admin or
 //                shift leader has shared that week, edits their own profile
@@ -123,7 +124,8 @@ function canCreatePerson(user, shiftId) {
 // Which fields of `person` the user may change. An empty list means none.
 function editablePersonFields(user, person) {
   if (isAdmin(user)) return ["name", "company", "phone", "availability", "shiftId"];
-  if (leadsShift(user, person.shiftId)) return ["name", "company", "phone", "availability"];
+  // Shift leaders manage the staff in their shift, but never an admin's details.
+  if (leadsShift(user, person.shiftId) && person.account?.role !== ROLES.ADMIN) return ["name", "company", "phone", "availability"];
   if (user?.personId === person.id) return ["name", "phone", "availability"];
   return [];
 }

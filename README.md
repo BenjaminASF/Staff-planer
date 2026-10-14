@@ -29,6 +29,8 @@ Operatörer ser en veckas schema och rastplan först när admin eller skiftledar
 
 Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas för hela månaden, och den 10:e i nästa månad tas förra månadens dagar bort automatiskt. Fabriksrekordet och det dagliga målet finns kvar.
 
+Skiftledare kan aldrig ändra en admins uppgifter (namn, företag, telefon, status eller inloggning), inte ens om admin hör till samma skift.
+
 Skiftledare kan läsa kompetens eftersom autoschemat och schemats varningar bygger på den.
 
 Alla regler finns samlade i [`server/permissions.js`](server/permissions.js) och kontrolleras på servern. Gränssnittet döljer bara det man inte har behörighet till.
