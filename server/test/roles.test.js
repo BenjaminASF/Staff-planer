@@ -223,6 +223,24 @@ describe("roles and permissions", () => {
     assert.ok(evening.data.documents[`schedule:${WEEK}`].value["GD-1"]);
   });
 
+  test("moving someone to another shift clears them from the old shift from this week on", async () => {
+    const { currentWeekKey } = require("../store");
+    const thisWeek = currentWeekKey();
+    const mover = (await admin.post("/api/people", { name: "Flytt Person", shiftId: dayShift.id })).data.person;
+    const place = async week => {
+      const existing = (await admin.get(`/api/documents?scope=${dayShift.id}&keys=schedule:${week}`)).data.documents[`schedule:${week}`];
+      const value = { ...(existing?.value || {}), GD4: { Fredag: mover.id } };
+      const saved = await admin.put(`/api/documents/${dayShift.id}/schedule:${week}`, { value, baseVersion: existing?.version || 0 });
+      assert.equal(saved.status, 200);
+    };
+    await place(thisWeek);
+    await place("2020-01-06");
+    assert.equal((await admin.patch(`/api/people/${mover.id}`, { shiftId: eveningShift.id })).status, 200);
+    const docs = await admin.get(`/api/documents?scope=${dayShift.id}&keys=schedule:${thisWeek},schedule:2020-01-06`);
+    assert.equal(docs.data.documents[`schedule:${thisWeek}`].value.GD4.Fredag, "");
+    assert.equal(docs.data.documents["schedule:2020-01-06"].value.GD4.Fredag, mover.id, "history is kept");
+  });
+
   test("only admin deletes people, which removes them everywhere", async () => {
     await admin.put("/api/documents/global/machineSkills", { value: { [annaPerson.id]: ["GD"] }, baseVersion: 0 });
     assert.equal((await admin.delete(`/api/people/${annaPerson.id}`)).status, 200);

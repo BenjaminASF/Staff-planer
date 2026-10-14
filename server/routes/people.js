@@ -5,7 +5,9 @@ const {
   ROLES, ROLE_VALUES, AVAILABILITY_VALUES, isAdmin, canSeeAllPeople, canCreatePerson, editablePersonFields,
   canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canDeleteAccount
 } = require("../permissions");
-const { newId, serializePerson, PERSON_SELECT, getPersonById, purgePersonFromDocuments, addAuditEvent } = require("../store");
+const {
+  newId, serializePerson, PERSON_SELECT, getPersonById, purgePersonFromDocuments, clearPersonFromShiftSchedules, addAuditEvent
+} = require("../store");
 const { availabilityLabel, cleanPersonFields, cleanText } = require("../validation");
 
 async function requirePerson(db, id) {
@@ -103,6 +105,9 @@ function peopleRoutes({ pool }) {
       }
       const sets = Object.keys(changes).map((column, index) => `${column} = $${index + 2}`);
       await client.query(`UPDATE people SET ${sets.join(", ")}, updated_at = now() WHERE id = $1`, [person.id, ...Object.values(changes)]);
+      if ("shift_id" in changes && person.shiftId && changes.shift_id !== person.shiftId) {
+        await clearPersonFromShiftSchedules(client, person.id, person.shiftId, req.user.id);
+      }
       if (changes.availability && changes.availability !== person.availability && person.shiftId) {
         await addAuditEvent(client, {
           scope: person.shiftId,

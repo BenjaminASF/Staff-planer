@@ -150,6 +150,40 @@ async function purgePersonFromDocuments(db, personId, userId) {
   }, userId);
 }
 
+// Monday of the current week as YYYY-MM-DD, in the workplace's time zone.
+function currentWeekKey(timeZone = process.env.APP_TIME_ZONE || "Europe/Stockholm") {
+  const [year, month, day] = new Date().toLocaleDateString("sv-SE", { timeZone }).split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
+  return date.toISOString().slice(0, 10);
+}
+
+// Takes someone who moved to another shift out of the old shift's schedules from
+// this week on. Earlier weeks keep their history.
+async function clearPersonFromShiftSchedules(db, personId, shiftId, userId) {
+  const fromWeek = currentWeekKey();
+  await updateDocumentsWhere(
+    db,
+    "scope = $1 AND (key LIKE 'schedule:%' OR key LIKE 'trainingLeaders:%') AND split_part(key, ':', 2) >= $2",
+    [shiftId, fromWeek],
+    value => clearPersonFromPlacements(value, personId),
+    userId
+  );
+  await updateDocumentsWhere(db, "scope = $1 AND key LIKE 'breakPlan:%' AND split_part(key, ':', 2) >= $2", [shiftId, fromWeek], value => {
+    if (!isPlainObject(value)) return false;
+    let changed = false;
+    Object.values(value).forEach(day => {
+      ["groups", "workplaces"].forEach(field => {
+        if (isPlainObject(day?.[field]) && Object.hasOwn(day[field], personId)) {
+          delete day[field][personId];
+          changed = true;
+        }
+      });
+    });
+    return changed;
+  }, userId);
+}
+
 function renameKey(object, from, to) {
   if (!isPlainObject(object) || !Object.hasOwn(object, from)) return false;
   object[to] = object[from];
@@ -258,6 +292,8 @@ module.exports = {
   writeDocument,
   putDocument,
   purgePersonFromDocuments,
+  clearPersonFromShiftSchedules,
+  currentWeekKey,
   renameWorkItemReferences,
   countWorkItemUsage,
   createSafetySnapshot,
