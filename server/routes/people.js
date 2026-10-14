@@ -9,7 +9,7 @@ const {
   newId, serializePerson, PERSON_SELECT, getPersonById, purgePersonFromDocuments, deletePersonalDocuments,
   clearPersonFromShiftSchedules, addAuditEvent
 } = require("../store");
-const { availabilityLabel, cleanPersonFields, cleanText } = require("../validation");
+const { availabilityLabel, cleanPersonFields, cleanText, cleanEmail } = require("../validation");
 
 async function requirePerson(db, id) {
   const person = await getPersonById(db, id);
@@ -77,8 +77,8 @@ function peopleRoutes({ pool }) {
       await assertShiftExists(client, shiftId);
       const personId = newId();
       await client.query(
-        "INSERT INTO people (id, name, company, phone, availability, shift_id, demo) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-        [personId, name, cleanText(body.company, 120), cleanText(body.phone, 40), availability, shiftId, body.demo === true]
+        "INSERT INTO people (id, name, company, phone, email, availability, shift_id, demo) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+        [personId, name, cleanText(body.company, 120), cleanText(body.phone, 40), cleanEmail(body.email), availability, shiftId, body.demo === true]
       );
       if (account) {
         const role = account.role || ROLES.OPERATOR;

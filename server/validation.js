@@ -17,6 +17,15 @@ function cleanText(value, maxLength) {
   return String(value ?? "").trim().slice(0, maxLength);
 }
 
+// An empty string means no e-mail address.
+function cleanEmail(value) {
+  const email = String(value ?? "").trim().toLowerCase();
+  if (email && (email.length > 200 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) {
+    throw new HttpError(400, "Ange en giltig e-postadress.");
+  }
+  return email;
+}
+
 // Colors a shift can be marked with. An empty string means no color.
 const SHIFT_COLORS = ["red", "blue", "yellow", "green", "purple", "orange"];
 
@@ -30,7 +39,7 @@ function cleanShiftColor(value) {
 // database columns. Unknown or disallowed fields are rejected.
 function cleanPersonFields(body, allowedFields) {
   const columns = {};
-  const requested = Object.keys(body).filter(field => ["name", "company", "phone", "availability", "shiftId"].includes(field));
+  const requested = Object.keys(body).filter(field => ["name", "company", "phone", "email", "availability", "shiftId"].includes(field));
   const forbidden = requested.filter(field => !allowedFields.includes(field));
   if (forbidden.length) throw new HttpError(403, "Du har inte behörighet att ändra de här uppgifterna.");
   if ("name" in body) {
@@ -39,6 +48,7 @@ function cleanPersonFields(body, allowedFields) {
   }
   if ("company" in body) columns.company = cleanText(body.company, 120);
   if ("phone" in body) columns.phone = cleanText(body.phone, 40);
+  if ("email" in body) columns.email = cleanEmail(body.email);
   if ("availability" in body) {
     if (!AVAILABILITY_VALUES.includes(body.availability)) throw new HttpError(400, "Okänd status.");
     columns.availability = body.availability;
@@ -47,4 +57,4 @@ function cleanPersonFields(body, allowedFields) {
   return columns;
 }
 
-module.exports = { availabilityLabel, cleanText, cleanShiftColor, cleanPersonFields, SHIFT_COLORS };
+module.exports = { availabilityLabel, cleanText, cleanEmail, cleanShiftColor, cleanPersonFields, SHIFT_COLORS };

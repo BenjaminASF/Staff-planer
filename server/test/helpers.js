@@ -4,11 +4,11 @@ const { createApp } = require("../app");
 const TEST_DATABASE_URL = process.env.TEST_DATABASE_URL || "postgres://postgres@localhost:5433/staffplanner_test";
 const SETUP_CODE = "test-setup-code";
 
-async function startTestServer() {
+async function startTestServer(appOptions = {}) {
   const pool = createPool(TEST_DATABASE_URL);
   await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
   await runMigrations(pool);
-  const server = createApp({ pool, setupCode: SETUP_CODE, trustProxy: false }).listen(0);
+  const server = createApp({ pool, setupCode: SETUP_CODE, trustProxy: false, ...appOptions }).listen(0);
   await new Promise(resolve => server.once("listening", resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   return {

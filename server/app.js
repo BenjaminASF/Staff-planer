@@ -7,10 +7,11 @@ const { shiftRoutes } = require("./routes/shifts");
 const { documentRoutes } = require("./routes/documents");
 const { adminRoutes } = require("./routes/admin");
 const { chatRoutes } = require("./routes/chat");
+const { createMailer } = require("./mailer");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
-function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy = true } = {}) {
+function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy = true, mailer = createMailer(), appUrl = process.env.APP_URL || "" } = {}) {
   const app = express();
   // Railway terminates HTTPS in front of the app; this makes req.secure and req.ip correct.
   if (trustProxy) app.set("trust proxy", 1);
@@ -34,7 +35,7 @@ function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy 
   api.use("/shifts", shiftRoutes({ pool }));
   api.use("/admin", adminRoutes({ pool }));
   api.use("/chat", chatRoutes({ pool }));
-  api.use(documentRoutes({ pool }));
+  api.use(documentRoutes({ pool, mailer, appUrl }));
   api.use((req, res) => res.status(404).json({ error: "Okänd adress." }));
   // eslint-disable-next-line no-unused-vars
   api.use((error, req, res, next) => {

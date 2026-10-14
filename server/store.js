@@ -16,6 +16,7 @@ function serializePerson(row) {
     name: row.name,
     company: row.company,
     phone: row.phone,
+    email: row.email || "",
     availability: row.availability,
     shiftId: row.shift_id,
     demo: row.demo,
