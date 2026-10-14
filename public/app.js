@@ -132,6 +132,7 @@ const PAGE_ACCESS = {
   "produktion.html": [ROLES.ADMIN, ROLES.LEADER],
   "rast.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR],
   "personal.html": [ROLES.ADMIN, ROLES.LEADER],
+  "anvandare.html": [ROLES.ADMIN],
   "testresultat.html": [ROLES.ADMIN],
   "maskiner.html": [ROLES.ADMIN],
   "bedomning.html": [ROLES.ADMIN],
@@ -1935,6 +1936,9 @@ function enhanceAppShell() {
   if (nav && !nav.querySelector('[href="installningar.html"]')) {
     nav.insertAdjacentHTML("beforeend", '<a class="nav-link" href="profil.html">Min profil</a><a class="nav-link" href="installningar.html">Inställningar</a><a class="nav-link" href="hjalp.html">Hjälp</a>');
   }
+  if (nav && !nav.querySelector('[href="anvandare.html"]')) {
+    nav.querySelector('[href="personal.html"]')?.insertAdjacentHTML("afterend", '<a class="nav-link" href="anvandare.html">Användare</a>');
+  }
   nav?.querySelectorAll(".nav-link").forEach(link => {
     if (!canOpenPage(link.getAttribute("href"))) link.remove();
   });
@@ -1942,6 +1946,7 @@ function enhanceAppShell() {
   renderShiftNotice();
   const pageTips = {
     "dashboard.html": "Här finns senaste status och dagens ändringar för skiftet.",
+    "anvandare.html": "Klicka på Hantera för att ändra roll, användarnamn eller lösenord. Bara admin ser den här sidan.",
     "personal.html": "Använd status för sjukdom, semester eller annan frånvaro; schemat visar orsaken direkt.",
     "add.html": "Pausa en arbetsplats när den inte används. Då bevaras historiken och den kan aktiveras igen.",
     "maskiner.html": "Registrerad kompetens används för att varna och hjälpa autoschemat.",
@@ -5066,6 +5071,7 @@ async function refreshAppViews() {
   await renderSchedule();
   await renderBreakPlanner();
   await renderPeople();
+  await renderUsersPage();
   await renderAssessments();
   await renderTestResults();
   await renderMachineSkills();
@@ -5074,6 +5080,83 @@ async function refreshAppViews() {
   await renderProduction();
   await renderTodoList();
   renderExtraAssignmentManager();
+}
+
+// "Användare": every login in one place. Admins only.
+const usersPageFilters = { query: "", role: "accounts", shift: "" };
+
+async function renderUsersPage() {
+  const root = document.getElementById("usersPage");
+  if (!root || !isAdmin()) return;
+  if (root.dataset.ready !== "true") {
+    root.dataset.ready = "true";
+    root.innerHTML = `
+      <div id="usersStats" class="dashboard-stats users-stats"></div>
+      <section class="card">
+        <div class="filter-bar users-filter-bar">
+          <input id="usersSearch" type="search" placeholder="Sök namn, användarnamn eller företag" aria-label="Sök användare" />
+          <select id="usersRoleFilter" aria-label="Visa roll">
+            <option value="accounts">Alla med inloggning</option>
+            <option value="${ROLES.ADMIN}">Admin</option>
+            <option value="${ROLES.LEADER}">Skiftledare</option>
+            <option value="${ROLES.OPERATOR}">Operatörer</option>
+            <option value="none">Utan inloggning</option>
+            <option value="">Alla personer</option>
+          </select>
+          <select id="usersShiftFilter" aria-label="Visa skift"><option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}<option value="none">Utan skift</option></select>
+          <a class="btn primary" href="add.html#addPersonSection">+ Ny användare</a>
+        </div>
+        <div id="usersList" class="people-list users-list"></div>
+      </section>`;
+    root.querySelector("#usersSearch").addEventListener("input", event => { usersPageFilters.query = event.target.value; void renderUsersPage(); });
+    root.querySelector("#usersRoleFilter").addEventListener("change", event => { usersPageFilters.role = event.target.value; void renderUsersPage(); });
+    root.querySelector("#usersShiftFilter").addEventListener("change", event => { usersPageFilters.shift = event.target.value; void renderUsersPage(); });
+  }
+
+  const people = await getAllPeople();
+  const withAccount = people.filter(person => person.account);
+  const countRole = role => withAccount.filter(person => person.account.role === role).length;
+  const waiting = withAccount.filter(person => person.account.mustChangePassword).length;
+  root.querySelector("#usersStats").innerHTML = `
+    <article><span>Admin</span><strong>${countRole(ROLES.ADMIN)}</strong><small>full behörighet</small></article>
+    <article><span>Skiftledare</span><strong>${countRole(ROLES.LEADER)}</strong><small>ändrar sitt skift</small></article>
+    <article><span>Operatörer</span><strong>${countRole(ROLES.OPERATOR)}</strong><small>ser schemat</small></article>
+    <article class="${waiting ? "stat-yellow" : ""}"><span>Väntar på nytt lösenord</span><strong>${waiting}</strong><small>har inte loggat in än</small></article>
+    <article><span>Utan inloggning</span><strong>${people.length - withAccount.length}</strong><small>personal</small></article>`;
+
+  const query = usersPageFilters.query.trim().toLocaleLowerCase();
+  const { role, shift } = usersPageFilters;
+  const roleOrder = { [ROLES.ADMIN]: 0, [ROLES.LEADER]: 1, [ROLES.OPERATOR]: 2 };
+  const visible = people
+    .filter(person => {
+      if (role === "accounts" && !person.account) return false;
+      if (role === "none" && person.account) return false;
+      if (role && role !== "accounts" && role !== "none" && person.account?.role !== role) return false;
+      if (shift && (shift === "none" ? person.shiftId : person.shiftId !== shift)) return false;
+      return !query || `${person.name} ${person.account?.username || ""} ${person.company || ""}`.toLocaleLowerCase().includes(query);
+    })
+    .sort((first, second) =>
+      (roleOrder[first.account?.role] ?? 3) - (roleOrder[second.account?.role] ?? 3) || first.name.localeCompare(second.name, "sv"));
+
+  const list = root.querySelector("#usersList");
+  list.innerHTML = visible.map(person => {
+    const account = person.account;
+    const lastLogin = account?.lastLoginAt ? new Date(account.lastLoginAt).toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" }) : "aldrig";
+    const details = [
+      `${shiftColorDot(person.shiftId)}${escapeHtml(getShiftName(person.shiftId) || "Inget skift")}`,
+      account ? `Senast inloggad ${escapeHtml(lastLogin)}` : escapeHtml(person.company || ""),
+      escapeHtml(getAvailabilityLabel(getPersonAvailability(person)))
+    ].filter(Boolean).join(" · ");
+    return `<div class="person-row user-row">
+      <div class="person-meta">
+        <h3>${escapeHtml(person.name)}${person.id === currentPerson?.id ? ' <small class="user-you">(du)</small>' : ""}</h3>
+        <p>${details}</p>
+        <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${account?.mustChangePassword ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
+      </div>
+      <div class="person-actions"><button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button></div>
+    </div>`;
+  }).join("") || `<div class="empty-state">${people.length ? "Ingen användare matchar filtret." : "Ingen personal har lagts till ännu."}</div>`;
+  list.querySelectorAll("[data-manage-user]").forEach(button => button.addEventListener("click", () => void editPerson(button.dataset.manageUser)));
 }
 
 const TEMPORARY_PASSWORD_CHARACTERS = "abcdefghjkmnpqrstuvwxyz23456789";
@@ -5639,6 +5722,7 @@ function initializeAppContent() {
   void renderSchedule();
   void renderBreakPlanner();
   void renderPeople();
+  void renderUsersPage();
   void renderAssessments();
   void renderTestResults();
   void renderMachineSkills();

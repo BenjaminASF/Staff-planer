@@ -5515,3 +5515,14 @@ button {
 .profile-card select { width: 100%; }
 .replacement-modal select { min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 11px; background: white; background: light-dark(white, #141a24); color: var(--text); font-weight: 600; }
 .replacement-modal select:disabled { opacity: .7; }
+
+/* Användare (admins only). */
+.nav-link[href="anvandare.html"]::before { content: "⚿"; }
+.users-page { display: grid; gap: 18px; }
+.users-stats { grid-template-columns: repeat(5, minmax(0, 1fr)); }
+.users-filter-bar { flex-wrap: wrap; }
+.users-filter-bar .btn { white-space: nowrap; text-decoration: none; }
+.person-meta .person-role-badge.user-waiting { background: #fff4d6; background: light-dark(#fff4d6, #3a2f12); color: #8a5a00; color: light-dark(#8a5a00, #f3c96b); }
+.user-you { color: var(--muted); font-size: 12px; font-weight: 600; }
+@media (max-width: 1050px) { .users-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .users-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
