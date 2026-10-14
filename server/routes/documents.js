@@ -10,6 +10,7 @@ const {
   addAuditEvent
 } = require("../store");
 const { cleanText } = require("../validation");
+const { notifyScheduleShared } = require("../notifications");
 
 // Personal scopes are not looked up: only their owner, who is signed in, gets
 // past the permission check, and others must not learn which user ids exist.
@@ -19,7 +20,12 @@ async function assertScopeExists(db, scope) {
   if (!rows.length) throw new HttpError(404, "Skiftet finns inte.");
 }
 
-function documentRoutes({ pool }) {
+// Returns the week of a "scheduleShared:<week>" key, otherwise null.
+function sharedWeekKey(key) {
+  return key.startsWith("scheduleShared:") ? key.slice("scheduleShared:".length) : null;
+}
+
+function documentRoutes({ pool, mailer, appUrl }) {
   const router = express.Router();
   router.use(requireUser);
 
@@ -63,6 +69,8 @@ function documentRoutes({ pool }) {
     await assertScopeExists(pool, scope);
     if (!req.body || !("value" in req.body)) throw new HttpError(400, "Värde saknas.");
     const baseVersion = Number(req.body.baseVersion) || 0;
+    const sharedWeek = sharedWeekKey(key);
+    const wasShared = sharedWeek ? (await readDocuments(pool, scope, [key]))[key]?.value?.shared === true : false;
     let saved;
     try {
       saved = await writeDocument(pool, { scope, key, value: req.body.value, baseVersion, userId: req.user.id });
@@ -73,6 +81,12 @@ function documentRoutes({ pool }) {
     if (!saved) {
       const current = (await readDocuments(pool, scope, [key]))[key] || null;
       throw new HttpError(409, "Någon annan har ändrat samma sak samtidigt. Sidan uppdateras med den senaste versionen.", { current });
+    }
+    // Sharing a week tells the shift's operators by e-mail. Saving it again while shared does not.
+    if (sharedWeek && !wasShared && req.body.value?.shared === true) {
+      saved.notified = await notifyScheduleShared({
+        pool, mailer, shiftId: scope, weekKey: sharedWeek, appUrl: appUrl || `${req.protocol}://${req.get("host")}`
+      });
     }
     res.json(saved);
   });

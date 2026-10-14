@@ -9,7 +9,7 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 | | Admin | Skiftledare | Operatör |
 |---|:---:|:---:|:---:|
 | Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ (när veckan är delad) |
-| Ändra sin egen profil (namn, telefon, status, lösenord) | ✓ | ✓ | ✓ |
+| Ändra sin egen profil (namn, telefon, e-post, status, lösenord) | ✓ | ✓ | ✓ |
 | Sätta statusen Inte tillgänglig | ✓ | ✓ | |
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | |
@@ -27,6 +27,17 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 | Skapa och ta bort skift, backup och import | ✓ | | |
 
 Operatörer ser en veckas schema och rastplan först när admin eller skiftledaren har klickat på **Dela schema** för den veckan. Delningen kan tas tillbaka med **Sluta dela**.
+
+### Mejl när schemat delas
+
+När en vecka delas får skiftets operatörer ett mejl om att schemat finns, med en länk för att logga in. Mejlet går bara till operatörer som har en inloggning och en e-postadress. Adressen fylls i under **Min profil** eller av admin eller skiftledaren under **Redigera** på personalsidan. Om veckan sparas igen medan den är delad skickas inget nytt mejl, men om den slutar delas och delas igen skickas ett nytt. Efter delningen visar appen hur många som fick mejlet.
+
+Mejlen skickas via [Resend](https://resend.com), eftersom Railway blockerar vanlig SMTP på de flesta planer. Så här kommer du igång:
+
+1. Skapa ett konto på resend.com, lägg till och verifiera er domän under **Domains**, och skapa en API-nyckel under **API Keys**.
+2. Lägg till variablerna `RESEND_API_KEY`, `MAIL_FROM` (till exempel `Staff Planner <schema@er-doman.se>`) och `APP_URL` (appens adress) i Railway.
+
+Utan `RESEND_API_KEY` och `MAIL_FROM` skickas inga mejl, och allt annat fungerar som vanligt.
 
 Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas för hela månaden, och den 10:e i nästa månad tas förra månadens dagar bort automatiskt. Fabriksrekordet och det dagliga målet finns kvar.
 
@@ -73,7 +84,7 @@ Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och 
 
 ### Backup
 
-Admin kan exportera och importera all data under **Inställningar** eller **Översikt**. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
+Admin kan exportera och importera all data under **Inställningar** eller **Översikt**. E-postadresserna ingår. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
 
 ## Utveckling lokalt
 
@@ -98,6 +109,9 @@ TEST_DATABASE_URL=postgres://postgres@localhost:5432/staffplanner_test npm test
 | `PORT` | Port för servern (Railway sätter den själv). |
 | `DATABASE_SSL` | `true` om databasen kräver SSL, till exempel vid anslutning via Railways publika adress. |
 | `APP_TIME_ZONE` | Tidszon för veckoberäkningar på servern (standard `Europe/Stockholm`). |
+| `RESEND_API_KEY` | API-nyckel från Resend. Behövs för mejl när schemat delas. |
+| `MAIL_FROM` | Avsändare för mejlen, till exempel `Staff Planner <schema@er-doman.se>`. Domänen måste vara verifierad i Resend. |
+| `APP_URL` | Appens adress, som länkas i mejlen. Utan den används adressen som skiftledaren delade schemat från. |
 
 ## Struktur
 

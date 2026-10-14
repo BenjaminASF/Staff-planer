@@ -100,10 +100,10 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     res.json(await buildMePayload(pool, req.user));
   });
 
-  // Own profile: name, phone and status. Available to every role.
+  // Own profile: name, phone, e-mail and status. Available to every role.
   router.patch("/me", requireUser, async (req, res) => {
     const person = await getPersonById(pool, req.user.personId);
-    const allowed = editablePersonFields(req.user, person).filter(field => ["name", "phone", "availability"].includes(field));
+    const allowed = editablePersonFields(req.user, person).filter(field => ["name", "phone", "email", "availability"].includes(field));
     const changes = cleanPersonFields(req.body || {}, allowed);
     if (changes.availability && changes.availability !== person.availability && !canSetAvailability(req.user, changes.availability)) {
       throw new HttpError(403, "Endast skiftledare och admin kan ange statusen Inte tillgänglig.");

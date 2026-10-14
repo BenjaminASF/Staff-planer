@@ -3,7 +3,7 @@ const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const { isAdmin, AVAILABILITY_VALUES, documentCategory, personalScope, PERSONAL_SCOPE_PREFIX } = require("../permissions");
 const { putDocument, mergeIntoPersonalList, isPlainObject, serializeShift } = require("../store");
-const { cleanText, SHIFT_COLORS } = require("../validation");
+const { cleanText, cleanEmail, SHIFT_COLORS } = require("../validation");
 
 // Version 3 leaves personal lists out. Version 2 backups kept "Att göra" per shift.
 const EXPORT_VERSION = 3;
@@ -16,13 +16,19 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// A backup with a broken address should still import; the address is dropped.
+function validEmailOrEmpty(value) {
+  try { return cleanEmail(value); } catch { return ""; }
+}
+
 async function upsertPerson(db, person, shiftId) {
   const name = cleanText(person?.name, 120);
   if (typeof person?.id !== "string" || !person.id || !name) return false;
   await db.query(
-    `INSERT INTO people (id, name, company, phone, availability, shift_id, demo, created_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, now()))
+    `INSERT INTO people (id, name, company, phone, email, availability, shift_id, demo, created_at)
+     VALUES ($1, $2, $3, $4, $9, $5, $6, $7, COALESCE($8::timestamptz, now()))
      ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, company = EXCLUDED.company, phone = EXCLUDED.phone,
+       email = CASE WHEN $10::boolean THEN EXCLUDED.email ELSE people.email END,
        availability = EXCLUDED.availability, shift_id = EXCLUDED.shift_id, demo = EXCLUDED.demo, updated_at = now()`,
     [
       person.id.slice(0, 100),
@@ -32,7 +38,10 @@ async function upsertPerson(db, person, shiftId) {
       AVAILABILITY_VALUES.includes(person.availability) ? person.availability : "available",
       shiftId,
       person.demo === true,
-      typeof person.createdAt === "string" && !Number.isNaN(Date.parse(person.createdAt)) ? person.createdAt : null
+      typeof person.createdAt === "string" && !Number.isNaN(Date.parse(person.createdAt)) ? person.createdAt : null,
+      validEmailOrEmpty(person.email),
+      // Older backups have no e-mail; importing them keeps the addresses already saved.
+      "email" in person
     ]
   );
   return true;
@@ -47,7 +56,7 @@ function adminRoutes({ pool }) {
   router.get("/export", async (req, res) => {
     const [shifts, people, documents] = await Promise.all([
       pool.query("SELECT id, name, color, sort_order FROM shifts ORDER BY sort_order"),
-      pool.query("SELECT id, name, company, phone, availability, shift_id, demo, created_at FROM people ORDER BY name"),
+      pool.query("SELECT id, name, company, phone, email, availability, shift_id, demo, created_at FROM people ORDER BY name"),
       pool.query(`SELECT scope, key, value FROM documents WHERE ${NOT_PERSONAL_SQL} ORDER BY scope, key`, [PERSONAL_SCOPE_PATTERN])
     ]);
     res.setHeader("Content-Disposition", `attachment; filename="staff-planner-backup-${new Date().toISOString().slice(0, 10)}.json"`);
@@ -57,7 +66,7 @@ function adminRoutes({ pool }) {
       exportedAt: new Date().toISOString(),
       shifts: shifts.rows.map(serializeShift),
       people: people.rows.map(row => ({
-        id: row.id, name: row.name, company: row.company, phone: row.phone, availability: row.availability,
+        id: row.id, name: row.name, company: row.company, phone: row.phone, email: row.email, availability: row.availability,
         shiftId: row.shift_id, demo: row.demo, createdAt: row.created_at
       })),
       documents: documents.rows

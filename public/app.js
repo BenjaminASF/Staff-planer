@@ -515,6 +515,7 @@ function saveDocument(scope, key, value) {
         baseVersion: entry.version || 0
       });
       documentCache.set(cacheKey, { value: snapshot, version: saved.version, updatedAt: saved.updatedAt });
+      return saved;
     } catch (error) {
       const current = error.data?.current;
       if (error.status === 409 && current) {
@@ -1426,8 +1427,9 @@ async function getScheduleShare() {
   return share?.shared === true ? share : null;
 }
 
+// Resolves with the server's reply; `notified` tells how many operators were e-mailed.
 async function saveScheduleShare(shared) {
-  await saveShiftDocument(getWeekDocumentKey("scheduleShared"), shared
+  return saveShiftDocument(getWeekDocumentKey("scheduleShared"), shared
     ? { shared: true, sharedAt: new Date().toISOString(), sharedBy: currentPerson?.name || "" }
     : { shared: false });
 }
@@ -1477,9 +1479,10 @@ function setupShareSchedule() {
         message: `${formatWeekRange()} · ${assignmentCount} placeringar${sharedText}`
       }, people, { mode: "share", shared: Boolean(share) });
       if (choice !== "share" && choice !== "unshare") return;
-      await saveScheduleShare(choice === "share");
+      const saved = await saveScheduleShare(choice === "share");
       await addAuditEvent("schedule", choice === "share" ? "Schemat delat" : "Schemat delas inte längre", formatWeekRange());
-      showAppToast(choice === "share" ? "Schemat är delat med operatörerna." : "Operatörerna ser inte längre veckans schema.");
+      showAppToast(choice === "share" ? `Schemat är delat med operatörerna.${describeShareMail(saved?.notified)}` : "Operatörerna ser inte längre veckans schema.",
+        saved?.notified?.failed ? "error" : undefined);
     } catch (error) {
       showAppToast(error.message || "Det gick inte att dela schemat.", "error");
     } finally {
@@ -1487,6 +1490,13 @@ function setupShareSchedule() {
       await updateShareScheduleButton();
     }
   });
+}
+
+function describeShareMail(notified) {
+  if (!notified?.configured) return "";
+  const failed = notified.failed ? ` ${notified.failed} mejl gick inte att skicka.` : "";
+  if (!notified.sent) return notified.failed ? failed : " Ingen operatör i skiftet har en e-postadress.";
+  return ` ${notified.sent} ${notified.sent === 1 ? "operatör" : "operatörer"} fick ett mejl.${failed}`;
 }
 
 function renderUnsharedScheduleNotice(root) {
@@ -2104,7 +2114,7 @@ function renderShiftNotice() {
   header.querySelector("h2")?.after(notice);
 }
 
-// "Min profil": everyone edits their own name, phone and status, and their password.
+// "Min profil": everyone edits their own name, phone, e-mail and status, and their password.
 async function renderProfilePage() {
   const root = document.getElementById("profilePage");
   if (!root || !currentUser || !currentPerson) return;
@@ -2115,6 +2125,7 @@ async function renderProfilePage() {
       <div><h3>Mina uppgifter</h3><p>Användarnamn <strong>${escapeHtml(currentUser.username)}</strong> · ${escapeHtml(ROLE_LABELS[currentUser.role] || "")} · Skift: ${shiftColorDot(person.shiftId)}${escapeHtml(getShiftName(person.shiftId) || "inget skift")}</p></div>
       <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required autocomplete="name" /></label>
       <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" autocomplete="tel" /></label>
+      <label>E-post<input name="email" type="email" value="${escapeHtml(person.email || "")}" maxlength="200" autocomplete="email" /><small>Du får ett mejl när veckans schema finns.</small></label>
       <label>Status<select name="availability" class="person-availability person-availability-${availability}">${availabilityOptionsFor(availability).map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select><small>Är du sjuk eller borta? Ändra här så ser skiftledaren det direkt.</small></label>
       <div class="settings-actions"><span id="profileMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara</button></div>
     </form>
@@ -2136,6 +2147,7 @@ async function renderProfilePage() {
     const changes = {
       name: profileForm.elements.name.value.trim(),
       phone: profileForm.elements.phone.value.trim(),
+      email: profileForm.elements.email.value.trim(),
       availability: profileForm.elements.availability.value
     };
     try {
@@ -5472,6 +5484,7 @@ async function editPerson(id) {
       <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required /></label>
       <label>Företag<input name="company" value="${escapeHtml(person.company || "")}" maxlength="120" /></label>
       <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" /></label>
+      <label>E-post<input name="email" type="email" value="${escapeHtml(person.email || "")}" maxlength="200" /><small>Får ett mejl när veckans schema delas.</small></label>
       <label>Status<select name="availability">${availabilityOptionsFor(availability).map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select></label>
       <label>Skift<select name="shiftId"${isAdmin() ? "" : " disabled"}>${shiftOptionsHtml(person.shiftId)}</select>${isAdmin() ? "" : "<small>Endast admin kan flytta personal mellan skift.</small>"}</label>
       <div><button class="btn" type="button" data-action="close">Stäng</button><button class="btn primary" type="submit">Spara</button></div>
@@ -5502,11 +5515,17 @@ async function editPerson(id) {
       name: form.elements.name.value.trim(),
       company: form.elements.company.value.trim(),
       phone: form.elements.phone.value.trim(),
+      email: form.elements.email.value.trim(),
       availability: form.elements.availability.value
     };
     if (isAdmin()) changes.shiftId = form.elements.shiftId.value || null;
     if (!changes.name) return showStatus("Namnet får inte vara tomt.", "error");
-    const updated = await updatePerson(person.id, changes);
+    let updated;
+    try {
+      updated = await updatePerson(person.id, changes);
+    } catch (error) {
+      return showStatus(error instanceof ApiError ? error.message : "Det gick inte att spara.", "error");
+    }
     // Someone marked as away is taken out of this week's schedule, as on the staff list.
     if (changes.availability !== "available" && changes.availability !== availability && updated.shiftId) {
       await removePersonFromSelectedWeek(updated.id, updated.shiftId);

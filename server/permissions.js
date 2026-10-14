@@ -126,10 +126,10 @@ function canCreatePerson(user, shiftId) {
 
 // Which fields of `person` the user may change. An empty list means none.
 function editablePersonFields(user, person) {
-  if (isAdmin(user)) return ["name", "company", "phone", "availability", "shiftId"];
+  if (isAdmin(user)) return ["name", "company", "phone", "email", "availability", "shiftId"];
   // Shift leaders manage the staff in their shift, but never an admin's details.
-  if (leadsShift(user, person.shiftId) && person.account?.role !== ROLES.ADMIN) return ["name", "company", "phone", "availability"];
-  if (user?.personId === person.id) return ["name", "phone", "availability"];
+  if (leadsShift(user, person.shiftId) && person.account?.role !== ROLES.ADMIN) return ["name", "company", "phone", "email", "availability"];
+  if (user?.personId === person.id) return ["name", "phone", "email", "availability"];
   return [];
 }
 
