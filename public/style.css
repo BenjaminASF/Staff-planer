@@ -5531,3 +5531,5 @@ button {
 .remove-user-options .btn { display: grid; gap: 3px; width: 100%; padding: 12px 14px; text-align: left; }
 .remove-user-options .btn small { color: var(--muted); font-size: 11px; font-weight: 600; line-height: 1.4; }
 .remove-user-options .btn.danger small { color: inherit; opacity: .8; }
+.users-shift-notice { justify-self: start; margin: 0 !important; }
+.users-stats:has(> article:nth-child(4):last-child) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
