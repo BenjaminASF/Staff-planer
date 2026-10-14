@@ -10,8 +10,10 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 |---|:---:|:---:|:---:|
 | Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ |
 | Ändra sin egen profil (namn, telefon, status, lösenord) | ✓ | ✓ | ✓ |
+| Sätta statusen Inte tillgänglig | ✓ | ✓ | |
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | |
 | Ändra schema, rast, produktion och att göra-lista | Alla skift | Eget skift | |
+| Dela schemat med gruppen | ✓ | ✓ | |
 | Lägga till personal och skapa operatörskonton | Alla skift | Eget skift | |
 | Återställa lösenord | Alla | Operatörer i eget skift | |
 | Ändra maskiner, avdelningar och inställningar (gäller alla skift) | ✓ | ✓ | |

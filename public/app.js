@@ -1412,9 +1412,15 @@ async function saveAppSettings(nextSettings) {
   applyAppSettings(normalized);
 }
 
+// Sharing the schedule is for admins and shift leaders only.
 function setupShareSchedule() {
   const button = document.getElementById("shareScheduleBtn");
-  if (!button || button.dataset.bound === "true") return;
+  if (!button) return;
+  if (isOperator()) {
+    button.remove();
+    return;
+  }
+  if (button.dataset.bound === "true") return;
   button.dataset.bound = "true";
   button.addEventListener("click", async () => {
     button.disabled = true;
@@ -2042,7 +2048,7 @@ async function renderProfilePage() {
       <div><h3>Mina uppgifter</h3><p>Användarnamn <strong>${escapeHtml(currentUser.username)}</strong> · ${escapeHtml(ROLE_LABELS[currentUser.role] || "")} · Skift: ${shiftColorDot(person.shiftId)}${escapeHtml(getShiftName(person.shiftId) || "inget skift")}</p></div>
       <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required autocomplete="name" /></label>
       <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" autocomplete="tel" /></label>
-      <label>Status<select name="availability" class="person-availability person-availability-${availability}">${AVAILABILITY_OPTIONS.map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select><small>Är du sjuk eller borta? Ändra här så ser skiftledaren det direkt.</small></label>
+      <label>Status<select name="availability" class="person-availability person-availability-${availability}">${availabilityOptionsFor(availability).map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select><small>Är du sjuk eller borta? Ändra här så ser skiftledaren det direkt.</small></label>
       <div class="settings-actions"><span id="profileMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara</button></div>
     </form>
     <form id="profilePasswordForm" class="card settings-card">
@@ -3885,6 +3891,12 @@ const AVAILABILITY_OPTIONS = [
   ["unavailable", "Inte tillgänglig"]
 ];
 
+// Operators may not choose "Inte tillgänglig" themselves. If a shift leader already set it,
+// it stays in the list so the current status is still shown.
+function availabilityOptionsFor(current) {
+  return AVAILABILITY_OPTIONS.filter(([value]) => !isOperator() || value !== "unavailable" || value === current);
+}
+
 function canCreateAccountFor(person, role = ROLES.OPERATOR) {
   if (isAdmin()) return true;
   return canEditPerson(person) && role === ROLES.OPERATOR;
@@ -4004,7 +4016,7 @@ async function renderPeople() {
       <span class="person-role-badge${person.account ? ` role-${escapeHtml(person.account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>
     `;
 
-    AVAILABILITY_OPTIONS.forEach(([value, label]) => {
+    availabilityOptionsFor(availability).forEach(([value, label]) => {
       const option = document.createElement("option");
       option.value = value;
       option.textContent = label;
@@ -5215,7 +5227,7 @@ async function editPerson(id) {
       <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required /></label>
       <label>Företag<input name="company" value="${escapeHtml(person.company || "")}" maxlength="120" /></label>
       <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" /></label>
-      <label>Status<select name="availability">${AVAILABILITY_OPTIONS.map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select></label>
+      <label>Status<select name="availability">${availabilityOptionsFor(availability).map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select></label>
       <label>Skift<select name="shiftId"${isAdmin() ? "" : " disabled"}>${shiftOptionsHtml(person.shiftId)}</select>${isAdmin() ? "" : "<small>Endast admin kan flytta personal mellan skift.</small>"}</label>
       <div><button class="btn" type="button" data-action="close">Stäng</button><button class="btn primary" type="submit">Spara</button></div>
     </form>
@@ -5783,6 +5795,7 @@ async function openAppUI() {
     location.replace("index.html");
     return;
   }
+  setupShareSchedule(); // Before the page is shown, so operators never see the share button.
   setAuthenticatedView(true);
   document.getElementById("authScreen")?.classList.add("hidden");
   document.getElementById("appShell")?.classList.remove("hidden");

@@ -198,6 +198,18 @@ describe("roles and permissions", () => {
     assert.equal((await leader.get(`/api/audit?scopes=${eveningShift.id}`)).data.events.length, 0, "leaders only see their own shift's log");
   });
 
+  test("only admins and shift leaders set the status Inte tillgänglig", async () => {
+    assert.equal((await otherOperator.patch("/api/me", { availability: "unavailable" })).status, 403);
+    assert.equal((await otherOperator.patch(`/api/people/${erikPerson.id}`, { availability: "unavailable" })).status, 403);
+    assert.equal((await admin.patch(`/api/people/${erikPerson.id}`, { availability: "unavailable" })).status, 200);
+    assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "unavailable" })).status, 200);
+    // An operator who was set to unavailable can still save their profile unchanged.
+    const unchanged = await otherOperator.patch("/api/me", { availability: "unavailable", name: "Erik E" });
+    assert.equal(unchanged.status, 200);
+    assert.equal((await otherOperator.patch("/api/me", { availability: "sick" })).status, 200);
+    assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "available" })).status, 200);
+  });
+
   test("operator can change their own password", async () => {
     assert.equal((await otherOperator.post("/api/me/password", { currentPassword: "fel", newPassword: "nyttlosen1" })).status, 400);
     assert.equal((await otherOperator.post("/api/me/password", { currentPassword: PASSWORD, newPassword: "nyttlosen1" })).status, 200);
