@@ -285,6 +285,11 @@ async function addAuditEvent(db, { scope, type = "", title = "", detail = "", un
   return id;
 }
 
+// Removes the personal documents ("Att göra") of the login that belongs to a person.
+async function deletePersonalDocuments(db, personId) {
+  await db.query("DELETE FROM documents WHERE scope IN (SELECT 'user:' || id FROM users WHERE person_id = $1)", [personId]);
+}
+
 module.exports = {
   newId,
   serializeShift,
@@ -295,6 +300,7 @@ module.exports = {
   writeDocument,
   putDocument,
   purgePersonFromDocuments,
+  deletePersonalDocuments,
   clearPersonFromShiftSchedules,
   currentWeekKey,
   renameWorkItemReferences,

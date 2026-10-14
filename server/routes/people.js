@@ -6,7 +6,8 @@ const {
   canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canDeleteAccount, canSetAvailability
 } = require("../permissions");
 const {
-  newId, serializePerson, PERSON_SELECT, getPersonById, purgePersonFromDocuments, clearPersonFromShiftSchedules, addAuditEvent
+  newId, serializePerson, PERSON_SELECT, getPersonById, purgePersonFromDocuments, deletePersonalDocuments,
+  clearPersonFromShiftSchedules, addAuditEvent
 } = require("../store");
 const { availabilityLabel, cleanPersonFields, cleanText } = require("../validation");
 
@@ -135,6 +136,7 @@ function peopleRoutes({ pool }) {
         throw new HttpError(400, "Det måste finnas minst en admin.");
       }
       await purgePersonFromDocuments(client, person.id, req.user.id);
+      await deletePersonalDocuments(client, person.id);
       await client.query("DELETE FROM people WHERE id = $1", [person.id]);
       await addAuditEvent(client, {
         scope: person.shiftId || "global",
@@ -207,6 +209,7 @@ function peopleRoutes({ pool }) {
       if (person.account.role === ROLES.ADMIN && await countAdmins(client) <= 1) {
         throw new HttpError(400, "Det måste finnas minst en admin.");
       }
+      await deletePersonalDocuments(client, person.id);
       await client.query("DELETE FROM users WHERE person_id = $1", [person.id]);
     });
     res.json({ person: await getPersonById(pool, person.id) });

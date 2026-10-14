@@ -136,12 +136,12 @@ describe("roles and permissions", () => {
     assert.equal((await leader.put(`/api/documents/${eveningShift.id}/schedule:${WEEK}`, { value: {}, baseVersion: 0 })).status, 403);
     assert.equal((await admin.put(`/api/documents/${eveningShift.id}/schedule:${WEEK}`, { value: { GD1: { Måndag: erikPerson.id } }, baseVersion: 0 })).status, 200);
 
-    const otherShift = await leader.get(`/api/documents?scope=${eveningShift.id}&keys=schedule:${WEEK},breakPlan:${WEEK},todos`);
+    const otherShift = await leader.get(`/api/documents?scope=${eveningShift.id}&keys=schedule:${WEEK},breakPlan:${WEEK},scheduleTemplates`);
     assert.equal(otherShift.status, 200);
     assert.ok(otherShift.data.documents[`schedule:${WEEK}`], "leader reads other shifts' schedules");
-    assert.deepEqual(otherShift.data.forbidden, ["todos"], "but not their to-do list");
+    assert.deepEqual(otherShift.data.forbidden, ["scheduleTemplates"], "but not their templates");
 
-    assert.equal((await leader.put(`/api/documents/${dayShift.id}/todos`, { value: [], baseVersion: 0 })).status, 200);
+    assert.equal((await leader.put(`/api/documents/${dayShift.id}/scheduleTemplates`, { value: [], baseVersion: 0 })).status, 200);
     assert.equal((await leader.put(`/api/documents/${dayShift.id}/breakPlan:${WEEK}`, { value: {}, baseVersion: 0 })).status, 200);
   });
 
@@ -165,9 +165,9 @@ describe("roles and permissions", () => {
     const own = people.data.people.find(person => person.id === erikPerson.id);
     assert.ok(!own.limited && own.account.username === "erik");
 
-    const ownShift = await otherOperator.get(`/api/documents?scope=${eveningShift.id}&keys=schedule:${WEEK},breakPlan:${WEEK},todos,productionRecords`);
+    const ownShift = await otherOperator.get(`/api/documents?scope=${eveningShift.id}&keys=schedule:${WEEK},breakPlan:${WEEK},scheduleTemplates,productionRecords`);
     assert.ok(ownShift.data.documents[`schedule:${WEEK}`]);
-    assert.deepEqual(ownShift.data.forbidden.sort(), ["productionRecords", "todos"]);
+    assert.deepEqual(ownShift.data.forbidden.sort(), ["productionRecords", "scheduleTemplates"]);
     const dayShiftRead = await otherOperator.get(`/api/documents?scope=${dayShift.id}&keys=schedule:${WEEK}`);
     assert.deepEqual(dayShiftRead.data.forbidden, [`schedule:${WEEK}`]);
     const global = await otherOperator.get("/api/documents?scope=global&keys=appSettings,workItems,machineSkills,assessments");

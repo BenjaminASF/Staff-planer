@@ -1,7 +1,9 @@
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
-const { isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope } = require("../permissions");
+const {
+  isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScopeOwner
+} = require("../permissions");
 const {
   readDocuments, writeDocument, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot, addAuditEvent
 } = require("../store");
@@ -9,6 +11,12 @@ const { cleanText } = require("../validation");
 
 async function assertScopeExists(db, scope) {
   if (scope === "global") return;
+  const owner = personalScopeOwner(scope);
+  if (owner) {
+    const { rows } = await db.query("SELECT 1 FROM users WHERE id = $1", [owner]);
+    if (!rows.length) throw new HttpError(404, "Användaren finns inte.");
+    return;
+  }
   const { rows } = await db.query("SELECT 1 FROM shifts WHERE id = $1", [scope]);
   if (!rows.length) throw new HttpError(404, "Skiftet finns inte.");
 }

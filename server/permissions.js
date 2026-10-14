@@ -7,6 +7,9 @@
 //                change roles, or edit competence, test results or assessments.
 // Operatör     – sees their own shift's schedule and break plan, edits their own
 //                profile (name, phone, status) and password.
+//
+// Personal documents ("Att göra") belong to one user and only that user reads
+// and writes them, whatever the role.
 
 const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", OPERATOR: "operator" });
 const ROLE_VALUES = Object.values(ROLES);
@@ -35,8 +38,15 @@ const GLOBAL_DOCUMENTS = Object.freeze({
 const SHIFT_DOCUMENTS = [
   [new RegExp(`^(schedule|trainingLeaders|trainingLocations|extraPersonLocations|breakPlan):${WEEK_KEY}$`), "shiftPlan"],
   [new RegExp(`^schedulePriorityLines:${WEEK_KEY}$`), "shiftWork"],
-  [/^(scheduleTemplates|todos|productionRecords)$/, "shiftWork"]
+  [/^(scheduleTemplates|productionRecords)$/, "shiftWork"]
 ];
+
+// Documents that belong to one user (scope = "user:<user id>").
+const PERSONAL_SCOPE_PREFIX = "user:";
+const PERSONAL_DOCUMENTS = ["todos"];
+
+const personalScope = userId => `${PERSONAL_SCOPE_PREFIX}${userId}`;
+const personalScopeOwner = scope => scope.startsWith(PERSONAL_SCOPE_PREFIX) ? scope.slice(PERSONAL_SCOPE_PREFIX.length) : null;
 
 const WEEKLY_SCHEDULE_PREFIXES = ["schedule", "trainingLeaders", "trainingLocations", "extraPersonLocations"];
 
@@ -49,6 +59,7 @@ const canEditShift = (user, shiftId) => isAdmin(user) || leadsShift(user, shiftI
 function documentCategory(scope, key) {
   if (typeof key !== "string" || typeof scope !== "string") return null;
   if (scope === "global") return Object.hasOwn(GLOBAL_DOCUMENTS, key) ? GLOBAL_DOCUMENTS[key] : null;
+  if (personalScopeOwner(scope)) return PERSONAL_DOCUMENTS.includes(key) ? "personal" : null;
   const match = SHIFT_DOCUMENTS.find(([pattern]) => pattern.test(key));
   return match ? match[1] : null;
 }
@@ -62,6 +73,7 @@ function canReadDocument(user, scope, key) {
     // Shift leaders may look at every shift's schedule; operators only their own.
     case "shiftPlan": return isAdminOrLeader(user) || (Boolean(user?.shiftId) && user.shiftId === scope);
     case "shiftWork": return canEditShift(user, scope);
+    case "personal": return Boolean(user?.id) && personalScopeOwner(scope) === user.id;
     default: return false;
   }
 }
@@ -74,6 +86,7 @@ function canWriteDocument(user, scope, key) {
     case "sensitive": return isAdmin(user);
     case "shiftPlan":
     case "shiftWork": return canEditShift(user, scope);
+    case "personal": return Boolean(user?.id) && personalScopeOwner(scope) === user.id;
     default: return false;
   }
 }
@@ -135,6 +148,8 @@ module.exports = {
   AVAILABILITY_VALUES,
   GLOBAL_DOCUMENTS,
   WEEKLY_SCHEDULE_PREFIXES,
+  personalScope,
+  personalScopeOwner,
   isAdmin,
   isLeader,
   isAdminOrLeader,
