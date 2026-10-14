@@ -1943,7 +1943,7 @@ function enhanceAppShell() {
     nav.insertAdjacentHTML("beforeend", '<a class="nav-link" href="profil.html">Min profil</a><a class="nav-link" href="installningar.html">Inställningar</a><a class="nav-link" href="hjalp.html">Hjälp</a>');
   }
   if (nav && !nav.querySelector('[href="anvandare.html"]')) {
-    nav.querySelector('[href="personal.html"]')?.insertAdjacentHTML("afterend", '<a class="nav-link" href="anvandare.html">Användare</a>');
+    nav.querySelector('[href="installningar.html"]')?.insertAdjacentHTML("beforebegin", '<a class="nav-link" href="anvandare.html">Användare</a>');
   }
   nav?.querySelectorAll(".nav-link").forEach(link => {
     if (!canOpenPage(link.getAttribute("href"))) link.remove();
@@ -1952,7 +1952,7 @@ function enhanceAppShell() {
   renderShiftNotice();
   const pageTips = {
     "dashboard.html": "Här finns senaste status och dagens ändringar för skiftet.",
-    "anvandare.html": "Klicka på Hantera för att ändra roll, användarnamn eller lösenord. Bara admin ser den här sidan.",
+    "anvandare.html": "Klicka på Hantera för att ändra roll, användarnamn eller lösenord, eller Ta bort för att ta bort en inloggning eller person. Bara admin ser den här sidan.",
     "personal.html": "Använd status för sjukdom, semester eller annan frånvaro; schemat visar orsaken direkt.",
     "add.html": "Pausa en arbetsplats när den inte används. Då bevaras historiken och den kan aktiveras igen.",
     "maskiner.html": "Registrerad kompetens används för att varna och hjälpa autoschemat.",
@@ -5165,10 +5165,59 @@ async function renderUsersPage() {
         <p>${details}</p>
         <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${account?.mustChangePassword ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
       </div>
-      <div class="person-actions"><button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button></div>
+      <div class="person-actions"><button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>${person.id === currentPerson?.id ? "" : `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>`}</div>
     </div>`;
   }).join("") || `<div class="empty-state">${people.length ? "Ingen användare matchar filtret." : "Ingen personal har lagts till ännu."}</div>`;
   list.querySelectorAll("[data-manage-user]").forEach(button => button.addEventListener("click", () => void editPerson(button.dataset.manageUser)));
+  list.querySelectorAll("[data-remove-user]").forEach(button => button.addEventListener("click", () => {
+    const person = visible.find(item => item.id === button.dataset.removeUser);
+    if (person) openRemoveUserDialog(person);
+  }));
+}
+
+// Admins remove either just the login (the person stays in the staff list) or the
+// person entirely, which also removes them from schedules, competence and results.
+function openRemoveUserDialog(person) {
+  if (!isAdmin() || person.id === currentPerson?.id) return;
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<section class="replacement-modal remove-user-modal">
+    <h3>Ta bort ${escapeHtml(person.name)}</h3>
+    <p>${person.account ? `Användarnamn <strong>${escapeHtml(person.account.username)}</strong> · ${escapeHtml(ROLE_LABELS[person.account.role] || "")}. Välj vad som ska tas bort.` : "Personen har ingen inloggning."}</p>
+    <div class="remove-user-options">
+      ${person.account ? `<button class="btn" type="button" data-remove="account"><strong>Ta bort inloggningen</strong><small>Personen kan inte längre logga in men finns kvar i personallistan och schemat.</small></button>` : ""}
+      <button class="btn danger" type="button" data-remove="person"><strong>Ta bort personen helt</strong><small>Tar även bort personen från alla scheman, kompetens, testresultat och bedömningar. Kan inte ångras.</small></button>
+    </div>
+    <p class="inline-message" role="status" aria-live="polite"></p>
+    <div><button class="btn" type="button" data-action="cancel">Avbryt</button></div>
+  </section>`;
+  document.body.appendChild(overlay);
+  const status = overlay.querySelector(".inline-message");
+  let cleanupFocus;
+  const close = () => { overlay.remove(); cleanupFocus?.(); };
+  cleanupFocus = manageDialogFocus(overlay.querySelector(".remove-user-modal"), close);
+  overlay.querySelector('[data-action="cancel"]').addEventListener("click", close);
+  overlay.querySelectorAll("[data-remove]").forEach(button => bindOnce(button, "click", async () => {
+    try {
+      if (button.dataset.remove === "account") {
+        await apiRequest("DELETE", `/people/${encodeURIComponent(person.id)}/account`);
+        peopleCache = null;
+        showAppToast(`Inloggningen för ${person.name} har tagits bort.`);
+      } else {
+        if (!confirm(`Ta bort ${person.name} helt? Det går inte att ångra.`)) return;
+        await deletePersonRecord(person.id);
+        invalidateCachedData();
+        if (selectedAssessmentPersonId === person.id) selectedAssessmentPersonId = "";
+        if (selectedTestPersonId === person.id) selectedTestPersonId = "";
+        showAppToast(`${person.name} har tagits bort.`);
+      }
+      close();
+      await refreshAppViews();
+    } catch (error) {
+      status.textContent = error instanceof ApiError ? error.message : "Det gick inte att ta bort.";
+      status.className = "inline-message error";
+    }
+  }));
 }
 
 const TEMPORARY_PASSWORD_CHARACTERS = "abcdefghjkmnpqrstuvwxyz23456789";
