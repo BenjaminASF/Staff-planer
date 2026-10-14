@@ -5452,9 +5452,6 @@ button {
 .shift-color-red { --shift-color: #dc2626; --shift-color: light-dark(#dc2626, #f87171); }
 .shift-color-blue { --shift-color: #2563eb; --shift-color: light-dark(#2563eb, #60a5fa); }
 .shift-color-yellow { --shift-color: #eab308; --shift-color: light-dark(#eab308, #facc15); }
-.shift-color-green { --shift-color: #16a34a; --shift-color: light-dark(#16a34a, #4ade80); }
-.shift-color-purple { --shift-color: #9333ea; --shift-color: light-dark(#9333ea, #c084fc); }
-.shift-color-orange { --shift-color: #ea580c; --shift-color: light-dark(#ea580c, #fb923c); }
 .shift-dot { display: inline-block; flex: 0 0 auto; width: 10px; height: 10px; margin-right: 6px; border: 1px solid var(--border); border-radius: 50%; background: transparent; vertical-align: 0; }
 .shift-dot[class*="shift-color-"] { border-color: transparent; background: var(--shift-color); box-shadow: 0 0 0 2px color-mix(in srgb, var(--shift-color) 22%, transparent); }
 .sidebar-shift strong { display: flex; align-items: center; }
@@ -5880,6 +5877,12 @@ a.btn { text-decoration: none !important; }
 }
 .main input::placeholder, .main textarea::placeholder { color: var(--g-placeholder); }
 .main :is(input[type="checkbox"], input[type="radio"]) { accent-color: var(--g-accent); }
+/* Fields are see-through, but the browser draws a dropdown list with the field's
+   background, so the list's options get solid colors of their own. */
+select option, select optgroup { background-color: var(--g-option-bg); color: var(--g-option-text); }
+select option:disabled { color: var(--g-muted); }
+.sidebar select { color-scheme: dark; }
+.sidebar select :is(option, optgroup) { background-color: #151a30; color: #e6e9f7; }
 
 /* ---------- Page tip ---------- */
 .main .page-tip { border-radius: var(--g-radius-sm); }
@@ -6081,6 +6084,8 @@ footer { color: var(--g-muted) !important; }
   --g-surface: rgba(255, 255, 255, .58);
   --g-surface-inner: rgba(255, 255, 255, .55);
   --g-surface-float: rgba(255, 255, 255, .93);
+  --g-option-bg: #ffffff;
+  --g-option-text: #0f172a;
   --g-border: rgba(255, 255, 255, .75);
   --g-border-inner: rgba(148, 163, 214, .28);
   --g-border-strong: rgba(99, 102, 241, .38);
@@ -6168,6 +6173,8 @@ footer { color: var(--g-muted) !important; }
   --g-surface: rgba(17, 22, 44, .55);
   --g-surface-inner: rgba(255, 255, 255, .04);
   --g-surface-float: rgba(17, 22, 44, .93);
+  --g-option-bg: #151a30;
+  --g-option-text: #e6e9f7;
   --g-border: rgba(255, 255, 255, .10);
   --g-border-inner: rgba(255, 255, 255, .08);
   --g-border-strong: rgba(129, 140, 248, .45);

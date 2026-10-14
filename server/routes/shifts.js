@@ -6,7 +6,7 @@ const { newId, serializeShift } = require("../store");
 const { cleanText, cleanShiftColor } = require("../validation");
 
 // A new shift named after a color gets that color when none is chosen.
-const COLORS_BY_NAME = { "röd": "red", "blå": "blue", "gul": "yellow", "grön": "green", "lila": "purple", "orange": "orange" };
+const COLORS_BY_NAME = { "röd": "red", "blå": "blue", "gul": "yellow" };
 
 function requireAdmin(req) {
   if (!isAdmin(req.user)) throw new HttpError(403, "Endast admin kan hantera skift.");
