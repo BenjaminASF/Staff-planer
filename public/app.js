@@ -132,7 +132,7 @@ const PAGE_ACCESS = {
   "produktion.html": [ROLES.ADMIN, ROLES.LEADER],
   "rast.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR],
   "personal.html": [ROLES.ADMIN, ROLES.LEADER],
-  "anvandare.html": [ROLES.ADMIN],
+  "anvandare.html": [ROLES.ADMIN, ROLES.LEADER],
   "testresultat.html": [ROLES.ADMIN],
   "maskiner.html": [ROLES.ADMIN],
   "bedomning.html": [ROLES.ADMIN],
@@ -1952,7 +1952,7 @@ function enhanceAppShell() {
   renderShiftNotice();
   const pageTips = {
     "dashboard.html": "Här finns senaste status och dagens ändringar för skiftet.",
-    "anvandare.html": "Klicka på Hantera för att ändra roll, användarnamn eller lösenord, eller Ta bort för att ta bort en inloggning eller person. Bara admin ser den här sidan.",
+    "anvandare.html": "Klicka på Hantera för att ändra uppgifter eller lösenord. Skiftledare ser bara sitt eget skift; roller, användarnamn och borttagning hanteras av admin.",
     "personal.html": "Använd status för sjukdom, semester eller annan frånvaro; schemat visar orsaken direkt.",
     "add.html": "Pausa en arbetsplats när den inte används. Då bevaras historiken och den kan aktiveras igen.",
     "maskiner.html": "Registrerad kompetens används för att varna och hjälpa autoschemat.",
@@ -5094,43 +5094,47 @@ async function refreshAppViews() {
   renderExtraAssignmentManager();
 }
 
-// "Användare": every login in one place. Admins only.
+// "Användare": every login in one place. Admins see everyone; shift leaders see
+// their own shift and can do there what they may do elsewhere (create operator
+// logins, reset operator passwords, edit details). Removing users stays with admins.
 const usersPageFilters = { query: "", role: "accounts", shift: "" };
 
 async function renderUsersPage() {
   const root = document.getElementById("usersPage");
-  if (!root || !isAdmin()) return;
+  if (!root || !canManageStaff()) return;
   if (root.dataset.ready !== "true") {
     root.dataset.ready = "true";
     root.innerHTML = `
+      ${isAdmin() ? "" : `<p class="shift-notice users-shift-notice">${shiftColorDot(getOwnShiftId())}<strong>${escapeHtml(getShiftName(getOwnShiftId()) || "Inget skift")}</strong> · Du ser användarna i ditt eget skift</p>`}
       <div id="usersStats" class="dashboard-stats users-stats"></div>
       <section class="card">
         <div class="filter-bar users-filter-bar">
           <input id="usersSearch" type="search" placeholder="Sök namn, användarnamn eller företag" aria-label="Sök användare" />
           <select id="usersRoleFilter" aria-label="Visa roll">
             <option value="accounts">Alla med inloggning</option>
-            <option value="${ROLES.ADMIN}">Admin</option>
+            ${isAdmin() ? `<option value="${ROLES.ADMIN}">Admin</option>` : ""}
             <option value="${ROLES.LEADER}">Skiftledare</option>
             <option value="${ROLES.OPERATOR}">Operatörer</option>
             <option value="none">Utan inloggning</option>
             <option value="">Alla personer</option>
           </select>
-          <select id="usersShiftFilter" aria-label="Visa skift"><option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}<option value="none">Utan skift</option></select>
+          ${isAdmin() ? `<select id="usersShiftFilter" aria-label="Visa skift"><option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}<option value="none">Utan skift</option></select>` : ""}
           <a class="btn primary" href="add.html#addPersonSection">+ Ny användare</a>
         </div>
         <div id="usersList" class="people-list users-list"></div>
       </section>`;
     root.querySelector("#usersSearch").addEventListener("input", event => { usersPageFilters.query = event.target.value; void renderUsersPage(); });
     root.querySelector("#usersRoleFilter").addEventListener("change", event => { usersPageFilters.role = event.target.value; void renderUsersPage(); });
-    root.querySelector("#usersShiftFilter").addEventListener("change", event => { usersPageFilters.shift = event.target.value; void renderUsersPage(); });
+    root.querySelector("#usersShiftFilter")?.addEventListener("change", event => { usersPageFilters.shift = event.target.value; void renderUsersPage(); });
   }
 
-  const people = await getAllPeople();
+  const everyone = await getAllPeople();
+  const people = isAdmin() ? everyone : everyone.filter(person => getOwnShiftId() && person.shiftId === getOwnShiftId());
   const withAccount = people.filter(person => person.account);
   const countRole = role => withAccount.filter(person => person.account.role === role).length;
   const waiting = withAccount.filter(person => person.account.mustChangePassword).length;
   root.querySelector("#usersStats").innerHTML = `
-    <article><span>Admin</span><strong>${countRole(ROLES.ADMIN)}</strong><small>full behörighet</small></article>
+    ${isAdmin() ? `<article><span>Admin</span><strong>${countRole(ROLES.ADMIN)}</strong><small>full behörighet</small></article>` : ""}
     <article><span>Skiftledare</span><strong>${countRole(ROLES.LEADER)}</strong><small>ändrar sitt skift</small></article>
     <article><span>Operatörer</span><strong>${countRole(ROLES.OPERATOR)}</strong><small>ser schemat</small></article>
     <article class="${waiting ? "stat-yellow" : ""}"><span>Väntar på nytt lösenord</span><strong>${waiting}</strong><small>har inte loggat in än</small></article>
@@ -5165,9 +5169,9 @@ async function renderUsersPage() {
         <p>${details}</p>
         <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${account?.mustChangePassword ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
       </div>
-      <div class="person-actions"><button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>${person.id === currentPerson?.id ? "" : `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>`}</div>
+      <div class="person-actions"><button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>${isAdmin() && person.id !== currentPerson?.id ? `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>` : ""}</div>
     </div>`;
-  }).join("") || `<div class="empty-state">${people.length ? "Ingen användare matchar filtret." : "Ingen personal har lagts till ännu."}</div>`;
+  }).join("") || `<div class="empty-state">${people.length ? "Ingen användare matchar filtret." : isAdmin() ? "Ingen personal har lagts till ännu." : getOwnShiftId() ? "Ingen personal i ditt skift ännu." : "Du tillhör inget skift ännu. Be en admin att lägga till dig i ett skift."}</div>`;
   list.querySelectorAll("[data-manage-user]").forEach(button => button.addEventListener("click", () => void editPerson(button.dataset.manageUser)));
   list.querySelectorAll("[data-remove-user]").forEach(button => button.addEventListener("click", () => {
     const person = visible.find(item => item.id === button.dataset.removeUser);
