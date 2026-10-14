@@ -6,18 +6,18 @@ const {
 } = require("../auth");
 const { withTransaction } = require("../db");
 const { ROLES, editablePersonFields } = require("../permissions");
-const { newId, getPersonById, addAuditEvent } = require("../store");
+const { newId, serializeShift, getPersonById, addAuditEvent } = require("../store");
 const { availabilityLabel, cleanPersonFields } = require("../validation");
 
 async function buildMePayload(db, user) {
   const [person, shifts] = await Promise.all([
     getPersonById(db, user.personId),
-    db.query("SELECT id, name, sort_order FROM shifts ORDER BY sort_order, name")
+    db.query("SELECT id, name, color, sort_order FROM shifts ORDER BY sort_order, name")
   ]);
   return {
     user: { id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword },
     person,
-    shifts: shifts.rows.map(row => ({ id: row.id, name: row.name, sortOrder: row.sort_order }))
+    shifts: shifts.rows.map(serializeShift)
   };
 }
 

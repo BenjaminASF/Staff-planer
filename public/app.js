@@ -351,6 +351,27 @@ function getShiftName(shiftId) {
   return shifts.find(shift => shift.id === shiftId)?.name || "";
 }
 
+// Colors a shift can be marked with. The emoji stands in for the color in <option> lists.
+const SHIFT_COLORS = [["red", "Röd", "🔴"], ["blue", "Blå", "🔵"], ["yellow", "Gul", "🟡"], ["green", "Grön", "🟢"], ["purple", "Lila", "🟣"], ["orange", "Orange", "🟠"]];
+
+function getShiftColor(shiftId) {
+  return shifts.find(shift => shift.id === shiftId)?.color || "";
+}
+
+function shiftColorDot(shiftId) {
+  const color = getShiftColor(shiftId);
+  return color ? `<span class="shift-dot shift-color-${color}" aria-hidden="true"></span>` : "";
+}
+
+function shiftOptionLabel(shift) {
+  const emoji = SHIFT_COLORS.find(([value]) => value === shift.color)?.[2];
+  return emoji ? `${emoji} ${shift.name}` : shift.name;
+}
+
+function shiftColorOptions(selected) {
+  return `<option value=""${selected ? "" : " selected"}>Ingen färg</option>${SHIFT_COLORS.map(([value, label, emoji]) => `<option value="${value}"${value === selected ? " selected" : ""}>${emoji} ${label}</option>`).join("")}`;
+}
+
 function canBrowseShifts() {
   return isAdmin() || (isShiftLeader() && SHIFT_BROWSING_PAGES.includes(getCurrentPage()));
 }
@@ -1971,8 +1992,8 @@ function renderSidebarAccount() {
   }
   const scope = getShiftScope();
   const shiftControl = canBrowseShifts() && shifts.length
-    ? `<label class="sidebar-shift"><span>Visar skift</span><select id="shiftSwitcher">${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === scope ? " selected" : ""}>${escapeHtml(shift.name)}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}</select></label>`
-    : `<div class="sidebar-shift"><span>Skift</span><strong>${escapeHtml(getShiftName(scope) || "Inget skift")}</strong></div>`;
+    ? `<label class="sidebar-shift"><span>Visar skift</span><select id="shiftSwitcher">${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === scope ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}</select></label>`
+    : `<div class="sidebar-shift"><span>Skift</span><strong>${shiftColorDot(scope)}${escapeHtml(getShiftName(scope) || "Inget skift")}</strong></div>`;
   box.innerHTML = `<a class="sidebar-user" href="profil.html"><strong>${escapeHtml(currentPerson?.name || currentUser.username)}</strong><small>${escapeHtml(ROLE_LABELS[currentUser.role] || "")}</small></a>${shiftControl}`;
   box.querySelector("#shiftSwitcher")?.addEventListener("change", event => {
     sessionStorage.setItem(ACTIVE_SHIFT_KEY, event.target.value);
@@ -1996,10 +2017,11 @@ function renderShiftNotice() {
       ? "Det finns inga skift ännu. Skapa skift under Inställningar."
       : "Du tillhör inget skift ännu. Be en admin att lägga till dig i ett skift.";
   } else if (canEditShift(scope)) {
-    notice.innerHTML = `<strong>${escapeHtml(getShiftName(scope))}</strong>`;
+    if (getShiftColor(scope)) notice.classList.add(`shift-color-${getShiftColor(scope)}`);
+    notice.innerHTML = `${shiftColorDot(scope)}<strong>${escapeHtml(getShiftName(scope))}</strong>`;
   } else {
     notice.classList.add("is-readonly");
-    notice.innerHTML = `<strong>${escapeHtml(getShiftName(scope))}</strong> · Endast läsning${isShiftLeader() ? " – du kan bara ändra ditt eget skift" : ""}`;
+    notice.innerHTML = `${shiftColorDot(scope)}<strong>${escapeHtml(getShiftName(scope))}</strong> · Endast läsning${isShiftLeader() ? " – du kan bara ändra ditt eget skift" : ""}`;
   }
   header.querySelector("h2")?.after(notice);
 }
@@ -2012,7 +2034,7 @@ async function renderProfilePage() {
   const availability = getPersonAvailability(person);
   root.innerHTML = `
     <form id="profileForm" class="card settings-card profile-card">
-      <div><h3>Mina uppgifter</h3><p>Användarnamn <strong>${escapeHtml(currentUser.username)}</strong> · ${escapeHtml(ROLE_LABELS[currentUser.role] || "")} · Skift: ${escapeHtml(getShiftName(person.shiftId) || "inget skift")}</p></div>
+      <div><h3>Mina uppgifter</h3><p>Användarnamn <strong>${escapeHtml(currentUser.username)}</strong> · ${escapeHtml(ROLE_LABELS[currentUser.role] || "")} · Skift: ${shiftColorDot(person.shiftId)}${escapeHtml(getShiftName(person.shiftId) || "inget skift")}</p></div>
       <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required autocomplete="name" /></label>
       <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" autocomplete="tel" /></label>
       <label>Status<select name="availability" class="person-availability person-availability-${availability}">${AVAILABILITY_OPTIONS.map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select><small>Är du sjuk eller borta? Ändra här så ser skiftledaren det direkt.</small></label>
@@ -2093,8 +2115,8 @@ async function renderSettings() {
     <section class="card settings-card"><div><h3>Maskiner, avdelningar och uppgifter</h3><p>Lägg till, redigera, pausa och ordna arbetsplatser från en samlad vy. De gäller alla skift.</p></div><div class="settings-actions">${isAdmin() ? '<button id="removeDemoDataBtn" class="btn danger" type="button">Ta bort testdata</button>' : ""}<a class="btn primary settings-link" href="add.html#workItemForm">Öppna hanteraren</a></div></section>
     ${isAdmin() ? `
     <section class="card settings-card" id="shiftSettings"><div><h3>Skift</h3><p>Varje skift har ett eget veckoschema. Personal och skiftledare kopplas till ett skift under Personal.</p></div>
-      <div class="shift-settings-list">${shifts.map(shift => `<article><input value="${escapeHtml(shift.name)}" aria-label="Namn på skiftet ${escapeHtml(shift.name)}" data-shift-name="${escapeHtml(shift.id)}" maxlength="60" /><button class="btn" type="button" data-rename-shift="${escapeHtml(shift.id)}">Byt namn</button><button class="btn danger" type="button" data-delete-shift="${escapeHtml(shift.id)}">Ta bort</button></article>`).join("") || '<div class="empty-state">Inga skift ännu. Lägg till det första nedan.</div>'}</div>
-      <form id="addShiftForm" class="shift-settings-add"><input name="name" placeholder="Nytt skift, t.ex. Dag eller Kväll" maxlength="60" required aria-label="Namn på nytt skift" /><button class="btn primary" type="submit">+ Lägg till skift</button></form>
+      <div class="shift-settings-list">${shifts.map(shift => `<article>${shiftColorDot(shift.id) || '<span class="shift-dot" aria-hidden="true"></span>'}<input value="${escapeHtml(shift.name)}" aria-label="Namn på skiftet ${escapeHtml(shift.name)}" data-shift-name="${escapeHtml(shift.id)}" maxlength="60" /><select aria-label="Färg på skiftet ${escapeHtml(shift.name)}" data-shift-color="${escapeHtml(shift.id)}">${shiftColorOptions(shift.color)}</select><button class="btn" type="button" data-rename-shift="${escapeHtml(shift.id)}">Spara</button><button class="btn danger" type="button" data-delete-shift="${escapeHtml(shift.id)}">Ta bort</button></article>`).join("") || '<div class="empty-state">Inga skift ännu. Lägg till det första nedan.</div>'}</div>
+      <form id="addShiftForm" class="shift-settings-add"><input name="name" placeholder="Nytt skift, t.ex. Grön" maxlength="60" required aria-label="Namn på nytt skift" /><select name="color" aria-label="Färg på nytt skift">${shiftColorOptions("")}</select><button class="btn primary" type="submit">+ Lägg till skift</button></form>
     </section>
     <section class="card settings-card"><div><h3>Säkerhet och historik</h3><p>${snapshots.length} säkerhetspunkter för arbetsplatser finns sparade. Exportera en backup av all data på servern innan större förändringar. Lösenord ingår aldrig i backupen.</p></div>
       <div class="settings-actions"><button id="exportDataBtn" class="btn" type="button">Exportera backup</button><button id="importDataBtn" class="btn" type="button">Importera backup</button><input id="importDataInput" type="file" accept="application/json,.json" hidden></div>
@@ -2135,7 +2157,7 @@ async function renderSettings() {
     event.preventDefault();
     const name = event.currentTarget.elements.name.value.trim();
     if (!name) return;
-    const { shift } = await apiRequest("POST", "/shifts", { name });
+    const { shift } = await apiRequest("POST", "/shifts", { name, color: event.currentTarget.elements.color.value });
     shifts = [...shifts, shift];
     if (!getShiftScope()) sessionStorage.setItem(ACTIVE_SHIFT_KEY, shift.id);
     showAppToast(`Skiftet ${shift.name} har lagts till.`);
@@ -2145,10 +2167,12 @@ async function renderSettings() {
   root.querySelectorAll("[data-rename-shift]").forEach(button => bindOnce(button, "click", async () => {
     const id = button.dataset.renameShift;
     const name = root.querySelector(`[data-shift-name="${CSS.escape(id)}"]`).value.trim();
+    const color = root.querySelector(`[data-shift-color="${CSS.escape(id)}"]`).value;
     if (!name) return showAppToast("Skiftet måste ha ett namn.", "error");
-    const { shift } = await apiRequest("PATCH", `/shifts/${encodeURIComponent(id)}`, { name });
+    const { shift } = await apiRequest("PATCH", `/shifts/${encodeURIComponent(id)}`, { name, color });
     shifts = shifts.map(item => item.id === shift.id ? shift : item);
-    showAppToast("Namnet har sparats.");
+    showAppToast("Skiftet har sparats.");
+    await renderSettings();
     renderSidebarAccount();
   }));
   root.querySelectorAll("[data-delete-shift]").forEach(button => bindOnce(button, "click", async () => {
@@ -3914,7 +3938,7 @@ function ensurePeopleShiftFilter() {
   const select = document.createElement("select");
   select.id = "peopleShiftFilter";
   select.setAttribute("aria-label", "Visa skift");
-  select.innerHTML = `<option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shift.name)}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}<option value="none">Utan skift</option>`;
+  select.innerHTML = `<option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}<option value="none">Utan skift</option>`;
   // Shift leaders start in their own shift; admins see everyone.
   select.value = isShiftLeader() && getOwnShiftId() ? getOwnShiftId() : "";
   select.addEventListener("change", () => void renderPeople());
@@ -3971,7 +3995,7 @@ async function renderPeople() {
     const details = [person.company, getShiftName(person.shiftId) || "Inget skift"].filter(Boolean).join(" · ");
     meta.innerHTML = `
       <h3 title="${escapeHtml(availabilitySelect.title)}">${escapeHtml(person.name)}</h3>
-      <p>${escapeHtml(details)}</p>
+      <p>${shiftColorDot(person.shiftId)}${escapeHtml(details)}</p>
       <span class="person-role-badge${person.account ? ` role-${escapeHtml(person.account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>
     `;
 
@@ -4739,7 +4763,7 @@ async function renderDashboard() {
   const latestProduction = Object.values(productionRecords).sort((a, b) => b.date.localeCompare(a.date))[0];
   root.innerHTML = `
     <div class="dashboard-stats">
-      <article><span>Personal</span><strong>${people.length}</strong><small>${escapeHtml(getShiftName(getShiftScope()) || "inget skift")}</small></article>
+      <article><span>Personal</span><strong>${people.length}</strong><small>${shiftColorDot(getShiftScope())}${escapeHtml(getShiftName(getShiftScope()) || "inget skift")}</small></article>
       <article class="stat-green"><span>Tillgängliga i gruppen</span><strong>${available}</strong><small>kan schemaläggas</small></article>
       <article class="stat-red"><span>Sjuka</span><strong>${sick}</strong><small>ej tillgängliga</small></article>
       <article class="stat-yellow"><span>Semester</span><strong>${vacation}</strong><small>frånvarande</small></article>
@@ -4897,7 +4921,7 @@ function openLegacyImportDialog(data, source) {
       <h3>Flytta in data från den gamla versionen</h3>
       <p>Den gamla versionen sparade allt krypterat ${source === "file" ? "i backupfilen" : "på den här enheten"}. Ange lösenordet ni använde där. Personal och scheman läggs i skiftet du väljer. Data med samma namn på servern skrivs över.</p>
       <form>
-        <label>Skift<select name="shiftId" required>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === getShiftScope() ? " selected" : ""}>${escapeHtml(shift.name)}</option>`).join("")}</select></label>
+        <label>Skift<select name="shiftId" required>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === getShiftScope() ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}</select></label>
         <label>Gamla lösenordet<input name="password" type="password" autocomplete="off" required /></label>
         <p class="inline-message" role="status" aria-live="polite"></p>
         <div><button class="btn" type="button" data-action="cancel">Avbryt</button><button class="btn primary" type="submit">Flytta in data</button></div>
@@ -5069,7 +5093,7 @@ function suggestUsername(name) {
 }
 
 function shiftOptionsHtml(selectedId, { allowNone = true } = {}) {
-  return `${allowNone ? `<option value=""${selectedId ? "" : " selected"}>Inget skift</option>` : ""}${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === selectedId ? " selected" : ""}>${escapeHtml(shift.name)}</option>`).join("")}`;
+  return `${allowNone ? `<option value=""${selectedId ? "" : " selected"}>Inget skift</option>` : ""}${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === selectedId ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}`;
 }
 
 function roleOptionsHtml(selectedRole = ROLES.OPERATOR) {

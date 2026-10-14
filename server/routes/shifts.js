@@ -2,10 +2,11 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const { isAdmin } = require("../permissions");
-const { newId } = require("../store");
-const { cleanText } = require("../validation");
+const { newId, serializeShift } = require("../store");
+const { cleanText, cleanShiftColor } = require("../validation");
 
-const serializeShift = row => ({ id: row.id, name: row.name, sortOrder: row.sort_order });
+// A new shift named after a color gets that color when none is chosen.
+const COLORS_BY_NAME = { "röd": "red", "blå": "blue", "gul": "yellow", "grön": "green", "lila": "purple", "orange": "orange" };
 
 function requireAdmin(req) {
   if (!isAdmin(req.user)) throw new HttpError(403, "Endast admin kan hantera skift.");
@@ -24,11 +25,12 @@ function shiftRoutes({ pool }) {
     requireAdmin(req);
     const name = cleanText(req.body?.name, 60);
     if (!name) throw new HttpError(400, "Ange ett namn på skiftet.");
+    const color = cleanShiftColor(req.body?.color) || COLORS_BY_NAME[name.toLowerCase()] || "";
     const { rows } = await pool.query(
-      `INSERT INTO shifts (id, name, sort_order)
-       VALUES ($1, $2, (SELECT COALESCE(max(sort_order), 0) + 1 FROM shifts))
+      `INSERT INTO shifts (id, name, color, sort_order)
+       VALUES ($1, $2, $3, (SELECT COALESCE(max(sort_order), 0) + 1 FROM shifts))
        RETURNING *`,
-      [newId(), name]
+      [newId(), name, color]
     );
     res.status(201).json({ shift: serializeShift(rows[0]) });
   });
@@ -37,10 +39,11 @@ function shiftRoutes({ pool }) {
     requireAdmin(req);
     const name = cleanText(req.body?.name, 60);
     if (!name) throw new HttpError(400, "Ange ett namn på skiftet.");
+    const color = req.body && "color" in req.body ? cleanShiftColor(req.body.color) : null;
     const sortOrder = Number.isInteger(req.body?.sortOrder) ? req.body.sortOrder : null;
     const { rows } = await pool.query(
-      "UPDATE shifts SET name = $2, sort_order = COALESCE($3, sort_order) WHERE id = $1 RETURNING *",
-      [req.params.id, name, sortOrder]
+      "UPDATE shifts SET name = $2, color = COALESCE($3, color), sort_order = COALESCE($4, sort_order) WHERE id = $1 RETURNING *",
+      [req.params.id, name, color, sortOrder]
     );
     if (!rows[0]) throw new HttpError(404, "Skiftet finns inte.");
     res.json({ shift: serializeShift(rows[0]) });
