@@ -353,7 +353,7 @@ function getShiftName(shiftId) {
 }
 
 // Colors a shift can be marked with. The emoji stands in for the color in <option> lists.
-const SHIFT_COLORS = [["red", "Röd", "🔴"], ["blue", "Blå", "🔵"], ["yellow", "Gul", "🟡"], ["green", "Grön", "🟢"], ["purple", "Lila", "🟣"], ["orange", "Orange", "🟠"]];
+const SHIFT_COLORS = [["red", "Röd", "🔴"], ["blue", "Blå", "🔵"], ["yellow", "Gul", "🟡"]];
 
 function getShiftColor(shiftId) {
   return shifts.find(shift => shift.id === shiftId)?.color || "";

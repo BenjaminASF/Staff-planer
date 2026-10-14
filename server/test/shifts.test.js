@@ -29,26 +29,31 @@ describe("shift colors", () => {
   });
 
   test("admin sets and changes a shift's color", async () => {
-    const created = await admin.post("/api/shifts", { name: "Natt", color: "purple" });
+    const created = await admin.post("/api/shifts", { name: "Natt", color: "yellow" });
     assert.equal(created.status, 201);
-    assert.equal(created.data.shift.color, "purple");
+    assert.equal(created.data.shift.color, "yellow");
     const renamed = await admin.patch(`/api/shifts/${created.data.shift.id}`, { name: "Natten" });
-    assert.equal(renamed.data.shift.color, "purple", "color is kept when not sent");
+    assert.equal(renamed.data.shift.color, "yellow", "color is kept when not sent");
     const recolored = await admin.patch(`/api/shifts/${created.data.shift.id}`, { name: "Natten", color: "" });
     assert.equal(recolored.data.shift.color, "");
     assert.equal((await admin.post("/api/shifts", { name: "Rosa", color: "pink" })).status, 400);
+    for (const removed of ["green", "purple", "orange"]) {
+      assert.equal((await admin.post("/api/shifts", { name: "Natt 2", color: removed })).status, 400, `${removed} is no longer a shift color`);
+    }
   });
 
   test("a new shift named after a color gets that color", async () => {
-    const created = await admin.post("/api/shifts", { name: "Grön" });
-    assert.equal(created.data.shift.color, "green");
+    const created = await admin.post("/api/shifts", { name: "Gul" });
+    assert.equal(created.data.shift.color, "yellow");
+    const other = await admin.post("/api/shifts", { name: "Grön" });
+    assert.equal(other.data.shift.color, "", "only Röd, Blå and Gul have colors");
   });
 
   test("backups keep shift colors", async () => {
     const backup = (await admin.get("/api/admin/export")).data;
     const red = backup.shifts.find(shift => shift.name === "Röd");
     assert.equal(red.color, "red");
-    await admin.patch(`/api/shifts/${red.id}`, { name: "Röd", color: "orange" });
+    await admin.patch(`/api/shifts/${red.id}`, { name: "Röd", color: "blue" });
     assert.equal((await admin.post("/api/admin/import", backup)).status, 200);
     const { data } = await admin.get("/api/shifts");
     assert.equal(data.shifts.find(shift => shift.id === red.id).color, "red");
@@ -63,5 +68,19 @@ describe("shift colors", () => {
     await runMigrations(server.pool);
     const { rows } = await server.pool.query("SELECT name, color FROM shifts ORDER BY sort_order");
     assert.deepEqual(rows.map(row => [row.name, row.color]), [["Dag", ""], ["röd", "red"], ["Blå", "blue"], ["Gul", "yellow"]]);
+  });
+
+  test("shifts with a color other than red, blue or yellow lose it", async () => {
+    await server.pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
+    await server.pool.query("CREATE TABLE schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())");
+    for (const name of fs.readdirSync(path.join(__dirname, "../migrations")).filter(file => file < "006").sort()) {
+      await server.pool.query(fs.readFileSync(path.join(__dirname, "../migrations", name), "utf8"));
+      await server.pool.query("INSERT INTO schema_migrations (name) VALUES ($1)", [name]);
+    }
+    await server.pool.query("INSERT INTO shifts (id, name, color, sort_order) VALUES ('natt', 'Natt', 'purple', 9), ('helg', 'Helg', 'green', 10)");
+    await runMigrations(server.pool);
+    const { rows } = await server.pool.query("SELECT name, color FROM shifts ORDER BY sort_order");
+    assert.deepEqual(rows.map(row => [row.name, row.color]), [["Röd", "red"], ["Blå", "blue"], ["Gul", "yellow"], ["Natt", ""], ["Helg", ""]]);
+    await assert.rejects(server.pool.query("UPDATE shifts SET color = 'orange' WHERE id = 'natt'"));
   });
 });

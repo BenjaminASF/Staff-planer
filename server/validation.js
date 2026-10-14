@@ -27,7 +27,7 @@ function cleanEmail(value) {
 }
 
 // Colors a shift can be marked with. An empty string means no color.
-const SHIFT_COLORS = ["red", "blue", "yellow", "green", "purple", "orange"];
+const SHIFT_COLORS = ["red", "blue", "yellow"];
 
 function cleanShiftColor(value) {
   const color = String(value ?? "");
