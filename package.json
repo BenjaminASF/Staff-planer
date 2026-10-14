@@ -1,0 +1,18 @@
+{
+  "name": "staff-planner",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Staff Planner - schemaplanering med roller (Admin, Skiftledare, Operatör).",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test --test-concurrency=1 \"server/test/*.test.js\""
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "pg": "^8.13.0"
+  }
+}
