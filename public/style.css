@@ -6478,6 +6478,8 @@ a.notification-item:hover { background: color-mix(in srgb, var(--primary) 8%, tr
 .production-summary-table th small { color: var(--muted); font-weight: 500; }
 .production-summary-table td { font-variant-numeric: tabular-nums; }
 .production-summary-table tr.is-idle { color: var(--muted); }
+.summary-trainee { display: block; margin-top: 2px; color: var(--text); font-size: 12px; }
+.summary-trainee b { color: var(--warn); font-weight: 700; }
 .production-summary-table tfoot th, .production-summary-table tfoot td { border-bottom: 0; font-weight: 700; }
 .admin-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
 .admin-row strong { display: inline-flex; align-items: center; }
