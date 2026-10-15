@@ -6463,6 +6463,26 @@ a.notification-item:hover { background: color-mix(in srgb, var(--primary) 8%, tr
 .admin-shift-figures div { display: grid; gap: 2px; padding: 10px; border-radius: 10px; background: var(--track); background: color-mix(in srgb, var(--track) 60%, transparent); }
 .admin-shift-figures span, .admin-shift-figures small { color: var(--muted); font-size: 12px; }
 .admin-shift-figures strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.admin-figure-button { display: grid; gap: 2px; padding: 10px; border: 1px solid transparent; border-radius: 10px; background: var(--track); background: color-mix(in srgb, var(--track) 60%, transparent); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.admin-figure-button span, .admin-figure-button small { color: var(--muted); font-size: 12px; }
+.admin-figure-button strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+.admin-figure-button small { color: var(--primary); font-weight: 600; }
+.admin-figure-button:hover, .admin-figure-button:focus-visible { border-color: var(--primary); background: var(--primary-soft); }
+.schedule-viewer.production-summary { width: min(680px, 100%); }
+.summary-operator-inline, .summary-target-inline { display: none; }
+@media (max-width: 560px) {
+  .production-summary-table .summary-operator { display: none; }
+  .summary-operator-inline { display: block; margin-top: 2px; color: var(--muted); font-size: 12px; font-weight: 500; white-space: normal; }
+  .summary-target-inline { display: block; margin: 12px 0 0; font-size: 13px; font-weight: 700; text-align: right; }
+  .production-summary-table th, .production-summary-table td { padding: 9px 6px; }
+}
+.production-summary-table th, .production-summary-table td { text-align: right; }
+.production-summary-table th:first-child, .production-summary-table td:last-child, .production-summary-table thead th:last-child { text-align: left; }
+.production-summary-table tbody th { font-weight: 700; }
+.production-summary-table th small { color: var(--muted); font-weight: 500; }
+.production-summary-table td { font-variant-numeric: tabular-nums; }
+.production-summary-table tr.is-idle { color: var(--muted); }
+.production-summary-table tfoot th, .production-summary-table tfoot td { border-bottom: 0; font-weight: 700; }
 .admin-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 13px; }
 .admin-row strong { display: inline-flex; align-items: center; }
 .admin-bar { height: 8px; overflow: hidden; border-radius: 99px; background: var(--track); }

@@ -5642,6 +5642,7 @@ async function getAdminDashboardData() {
       shift, leaders, operators, available,
       absent: staff.filter(person => getPersonAvailability(person) !== "available"),
       days,
+      todayRecord,
       reportedToday: Boolean(todayRecord),
       today: getProductionDayTotal(todayRecord),
       todayTarget: getProductionTarget(settings, shift.id, today, todayRecord),
@@ -5757,7 +5758,7 @@ function adminShiftCardHtml(data, context) {
       ${lines.length ? `<span class="admin-pill ${lineState}" title="Linjer bemannade enligt schemat">${runnable} av ${lines.length} linjer</span>` : ""}
     </div>
     <div class="admin-shift-figures">
-      <div><span>${isToday ? "Idag" : "Månaden"}</span><strong>${notReported ? "–" : formatNumber(produced)}</strong><small>box</small></div>
+      <button class="admin-figure-button" type="button" data-production-summary="${escapeHtml(shift.id)}" aria-label="${isToday ? "Box idag" : "Box under månaden"}: visa per maskin"><span>${isToday ? "Idag" : "Månaden"}</span><strong>${notReported ? "–" : formatNumber(produced)}</strong><small>box · per maskin ›</small></button>
       <div><span>Svinn månaden</span><strong>${formatNumber(data.waste, data.waste % 1 ? 1 : 0)}</strong><small>kg</small></div>
       <div><span>Operatörer</span><strong>${available.length}/${operators.length}</strong><small>på plats</small></div>
     </div>
@@ -5841,6 +5842,7 @@ function adminAbsenceHtml(shiftData) {
 
 async function renderAdminDashboard(root) {
   const data = await getAdminDashboardData();
+  adminDashboardData = data;
   const { shiftData, events, today } = data;
   const header = document.querySelector(".main > .header");
   if (header) {
@@ -5919,6 +5921,7 @@ async function renderAdminDashboard(root) {
     const next = await getAdminDashboardData();
     if (next.linesDate !== event.target.value) return;
     Object.assign(data, next);
+    adminDashboardData = data;
     root.querySelector(".admin-shifts").innerHTML = next.shiftData.map(item => adminShiftCardHtml(item, next)).join("");
   });
   const more = root.querySelector(".admin-more");
@@ -5939,12 +5942,107 @@ async function renderAdminDashboard(root) {
     root.addEventListener("click", event => {
       const shiftLink = event.target.closest("[data-shift-link]");
       if (shiftLink) sessionStorage.setItem(ACTIVE_SHIFT_KEY, shiftLink.dataset.shiftLink);
+      const summaryButton = event.target.closest("[data-production-summary]");
+      if (summaryButton) void openProductionSummary(summaryButton.dataset.productionSummary);
       const scheduleButton = event.target.closest("[data-view-schedule]");
       if (scheduleButton) void openScheduleViewer(scheduleButton.dataset.viewSchedule, scheduleButton);
     });
   }
   setupDataTools();
   bindAuditUndo(root, events);
+  void renderProductionSummary();
+}
+
+// "Box idag" on a shift card: boxes and waste per machine, with the GD operator who ran it.
+// Today shows the operator registered on the Produktion page, or else the one the schedule placed there.
+let adminDashboardData = null;
+const productionSummary = { shiftId: "", close: null };
+
+async function openProductionSummary(shiftId) {
+  let overlay = document.getElementById("productionSummary");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "productionSummary";
+    overlay.className = "schedule-viewer-backdrop";
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", event => {
+      if (event.target === overlay || event.target.closest("[data-summary-close]")) closeProductionSummary();
+    });
+  }
+  productionSummary.shiftId = shiftId;
+  overlay.hidden = false;
+  await renderProductionSummary();
+  productionSummary.close?.();
+  productionSummary.close = manageDialogFocus(overlay.querySelector(".schedule-viewer"), closeProductionSummary);
+}
+
+function closeProductionSummary() {
+  const overlay = document.getElementById("productionSummary");
+  if (!overlay || overlay.hidden) return;
+  overlay.hidden = true;
+  productionSummary.close?.();
+  productionSummary.close = null;
+}
+
+async function renderProductionSummary() {
+  const overlay = document.getElementById("productionSummary");
+  if (!overlay || overlay.hidden || !adminDashboardData) return;
+  const { shiftId } = productionSummary;
+  const data = adminDashboardData.shiftData.find(item => item.shift.id === shiftId);
+  if (!data) return closeProductionSummary();
+  const { today } = adminDashboardData;
+  const isToday = adminDashboardPeriod === "today";
+  const { day, weekKey } = getScheduleDayForDate(today);
+  const [people, schedule] = await Promise.all([getAllPeople(), isToday ? getDocument(shiftId, `schedule:${weekKey}`, null) : null]);
+  const nameById = new Map(people.map(person => [person.id, person.name]));
+  const records = isToday ? (data.todayRecord ? [data.todayRecord] : []) : data.days;
+  const lineOf = machine => Object.keys(BREAK_LINE_WORKPLACES).find(lineId => BREAK_LINE_WORKPLACES[lineId].includes(machine));
+  const operatorsOn = machine => {
+    const registered = records.map(record => {
+      const entry = record.machines?.[machine];
+      return (entry?.personId && nameById.get(entry.personId)) || entry?.personName || "";
+    }).filter(Boolean);
+    if (registered.length) return { names: [...new Set(registered)], fromSchedule: false };
+    const scheduled = isToday && day ? nameById.get(schedule?.[machine]?.[day] || "") : "";
+    return { names: scheduled ? [scheduled] : [], fromSchedule: Boolean(scheduled) };
+  };
+  const rows = appSettings.productionMachines.map(machine => {
+    const entries = records.map(record => record.machines?.[machine]).filter(Boolean);
+    const lineId = lineOf(machine);
+    return {
+      machine, line: lineId ? BREAK_LINE_LABELS[lineId] || lineId : "",
+      reported: entries.length > 0,
+      boxes: sumBy(entries, entry => entry.result),
+      waste: sumBy(entries, entry => entry.waste),
+      ...operatorsOn(machine)
+    };
+  });
+  const total = sumBy(records, getProductionDayTotal);
+  const waste = sumBy(rows, row => row.waste);
+  const target = isToday ? data.todayTarget : data.monthTarget;
+  const shift = data.shift;
+  const period = isToday
+    ? new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long" })
+    : `${new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { month: "long" })}, ${data.days.length} ${data.days.length === 1 ? "rapporterad dag" : "rapporterade dagar"}`;
+  const operatorHtml = row => row.names.length
+    ? `${escapeHtml(row.names.join(", "))}${row.fromSchedule ? ' <small class="admin-muted">enligt schemat</small>' : ""}`
+    : '<span class="admin-muted">–</span>';
+  const body = !records.length
+    ? `<div class="empty-state">${isToday ? "Ingen produktion är rapporterad idag." : "Ingen produktion är rapporterad den här månaden."}</div>`
+    : `<div class="admin-table-scroll"><table class="admin-table production-summary-table"><thead><tr><th>Linje / maskin</th><th>Box</th><th>Svinn</th><th class="summary-operator">GD-operatör</th></tr></thead><tbody>
+      ${rows.map(row => `<tr class="${row.boxes ? "" : "is-idle"}"><th scope="row">${row.line ? `${escapeHtml(row.line)} <small>· ${escapeHtml(row.machine)}</small>` : escapeHtml(row.machine)}<span class="summary-operator-inline">${operatorHtml(row)}</span></th><td>${row.reported ? formatNumber(row.boxes) : "–"}</td><td>${row.reported ? `${formatNumber(row.waste, row.waste % 1 ? 1 : 0)} kg` : "–"}</td><td class="summary-operator">${operatorHtml(row)}</td></tr>`).join("")}
+      </tbody><tfoot><tr><th scope="row">Totalt</th><td>${formatNumber(total)}</td><td>${formatNumber(waste, waste % 1 ? 1 : 0)} kg</td><td class="summary-operator">${target ? `Mål ${formatNumber(target)} box · <b class="${total >= target ? "admin-good" : "admin-bad"}">${Math.round(total / target * 100)} %</b>` : ""}</td></tr></tfoot></table></div>${target ? `<p class="summary-target-inline">Mål ${formatNumber(target)} box · <b class="${total >= target ? "admin-good" : "admin-bad"}">${Math.round(total / target * 100)} %</b></p>` : ""}`;
+  overlay.innerHTML = `<section class="schedule-viewer production-summary${shift.color ? ` shift-color-${shift.color}` : ""}">
+    <header class="viewer-head">
+      <div><h3>${shiftColorDot(shift.id)}Produktion per maskin · Skift ${escapeHtml(shift.name)}</h3><small>${escapeHtml(period)}</small></div>
+      <button class="viewer-close" type="button" data-summary-close aria-label="Stäng">×</button>
+    </header>
+    <div class="viewer-body">${body}</div>
+  </section>`;
+  if (productionSummary.close) {
+    productionSummary.close();
+    productionSummary.close = manageDialogFocus(overlay.querySelector(".schedule-viewer"), closeProductionSummary);
+  }
 }
 
 // A read-only schedule for one shift, by day or by week. Changes are made on the Schema page.
