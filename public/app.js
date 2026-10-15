@@ -5532,24 +5532,26 @@ function getScheduledLines({ schedule, day, peopleById, skills, restrictions, re
 }
 
 // Whether the shift's available people and their competence are enough for every line at once, and if not, what is missing.
+// places: how many people all lines need at once; departments: need and qualified available people per competence.
 function getLineCapacity(available, skills, restrictions) {
   const lineIds = Object.keys(BREAK_LINE_WORKPLACES);
   const ruleGaps = lineIds.some(lineId => getLineRuleGaps(lineId).length);
-  if (ruleGaps || !lineIds.length) return { canRunAll: null, runnable: 0, reasons: [] };
+  if (ruleGaps || !lineIds.length) return { canRunAll: null, runnable: 0, places: null, departments: [], reasons: [] };
   const personIds = available.map(person => person.id);
   const runnable = getRunnableLines(personIds, skills, restrictions).filter(line => line.runnable).length;
-  if (runnable === lineIds.length) return { canRunAll: true, runnable, reasons: [] };
   const need = getDepartmentNeed(lineIds);
   const places = Object.values(need).reduce((sum, count) => sum + count, 0);
-  const reasons = [`Tillgänglig personal räcker till ${runnable} av ${lineIds.length} linjer samtidigt.`];
-  if (personIds.length < places) reasons.push(`Personal: ${places} behövs, ${personIds.length} tillgängliga.`);
-  Object.entries(need).forEach(([department, count]) => {
-    const qualified = personIds.filter(personId => (skills[personId] || []).includes(department)
-      && !(department === "GD" && (restrictions[personId] || []).includes("GD"))).length;
-    if (qualified < count) reasons.push(`Kompetens ${department}: ${count} behövs, ${qualified} tillgängliga har den.`);
-  });
-  if (reasons.length === 1) reasons.push("Det finns nog med behöriga, men samma personer behövs på flera platser samtidigt.");
-  return { canRunAll: false, runnable, reasons };
+  const departments = Object.entries(need).map(([department, count]) => ({
+    department, need: count,
+    qualified: personIds.filter(personId => (skills[personId] || []).includes(department)
+      && !(department === "GD" && (restrictions[personId] || []).includes("GD"))).length
+  }));
+  const canRunAll = runnable === lineIds.length;
+  const reasons = canRunAll ? [] : [`Tillgänglig personal räcker till ${runnable} av ${lineIds.length} linjer samtidigt.`];
+  if (!canRunAll && personIds.length >= places && departments.every(item => item.qualified >= item.need)) {
+    reasons.push("Det finns nog med behöriga, men samma personer behövs på flera platser samtidigt.");
+  }
+  return { canRunAll, runnable, places, departments, reasons };
 }
 
 // How many people of each department the lines need at the same time.
@@ -5627,31 +5629,48 @@ const competenceState = (available, need) => !need ? "" : available > need ? "go
 const formatLinesDate = (dateKey, today) => dateKey === today ? "idag"
   : new Date(`${dateKey}T12:00:00`).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "numeric" });
 
-// The lines the schedule mans on the chosen date, and whether the shift could man them all.
+// Which shifts have their capacity details open, so a live redraw keeps them open.
+const adminOpenCapacityDetails = new Set();
+const capacityState = (have, need) => have >= need ? "good" : have > 0 ? "warn" : "bad";
+
+// Production capacity at a glance: manned lines, whether all lines could run, and available people.
+// What is missing stays behind "Visa detaljer".
 function adminLinesHtml(data, { today, linesDate, linesDay }) {
-  const { lines, capacity, hasSchedule, available } = data;
+  const { shift, lines, capacity, hasSchedule, available } = data;
   if (!lines.length) return "";
   const staffed = lines.filter(line => line.staffed).length;
   const lineText = line => line.ruleGaps.length ? "Regel saknas" : line.staffed ? "Bemannad" : "Ej bemannad";
   const productionText = line => line.production === null ? "" : line.production ? "I produktion" : "Ingen produktion rapporterad";
   const lineTitle = line => [lineText(line), productionText(line), ...line.ruleGaps, ...line.issues].filter(Boolean).join("\n");
-  const problems = lines.filter(line => !line.staffed && (line.issues.length || line.ruleGaps.length));
-  const answer = capacity.canRunAll === null ? ["warn", "Kan inte avgöras"] : capacity.canRunAll ? ["good", "Ja"] : ["bad", "Nej"];
+  const problems = hasSchedule ? lines.filter(line => !line.staffed && (line.issues.length || line.ruleGaps.length)) : [];
+  const unknown = capacity.canRunAll === null;
+  const stats = [
+    ["Bemannade linjer", `${staffed} av ${lines.length}`, capacityState(staffed, lines.length)],
+    [`Kan köra alla ${lines.length} linjer`, unknown ? "Okänt" : capacity.canRunAll ? "Ja" : "Nej", unknown ? "warn" : capacity.canRunAll ? "good" : "bad"],
+    ["Tillgänglig personal", unknown ? `${available.length}` : `${available.length} av ${capacity.places}`, unknown ? "warn" : capacityState(available.length, capacity.places)]
+  ];
   const notes = [
-    capacity.canRunAll === null ? "Regler för linjerna saknas, se Regler för linjebemanning nedan." : "",
+    !linesDay ? "Ingen arbetsdag enligt inställningarna." : !hasSchedule ? "Inget schema är lagt för dagen." : "",
+    unknown ? "Regler för linjerna saknas, se Regler för linjebemanning nedan." : "",
     linesDay && capacity.canRunAll && staffed < lines.length ? `Personalen räcker till alla ${lines.length} linjer, men schemat bemannar ${staffed}.` : "",
     ...capacity.reasons
   ].filter(Boolean);
-  return `<div class="admin-lines-block">
-      <div class="admin-label">Linjer enligt schemat ${escapeHtml(formatLinesDate(linesDate, today))}</div>
-      ${!linesDay ? '<p class="admin-muted">Ingen arbetsdag enligt inställningarna.</p>' : !hasSchedule ? '<p class="admin-reason">Inget schema är lagt för dagen.</p>' : ""}
+  const competence = data.competence.map(item => ({ ...item, ...capacity.departments.find(entry => entry.department === item.department) }));
+  return `<div class="admin-capacity-block">
+      <div class="admin-capacity-head"><span class="admin-label">Produktionskapacitet</span><span class="admin-muted">${escapeHtml(formatLinesDate(linesDate, today))}</span></div>
       <div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.ruleGaps.length ? "rule" : line.staffed ? "ok" : "no"}" title="${escapeHtml(lineTitle(line))}">${escapeHtml(line.label)}<small>${lineText(line)}</small>${productionText(line) ? `<span class="admin-line-production${line.production ? " on" : ""}">${line.production ? "I produktion" : "Ej i produktion"}</span>` : ""}</div>`).join("")}</div>
-      ${hasSchedule && problems.length ? `<ul class="admin-line-issues">${problems.map(line => `<li><strong>${escapeHtml(line.label)}:</strong> ${escapeHtml([...line.ruleGaps, ...line.issues].join(" · "))}</li>`).join("")}</ul>` : ""}
-      <div class="admin-capacity">
-        <div class="admin-row"><span>Kapacitet</span><strong>${staffed} av ${lines.length} linjer bemannade</strong></div>
-        <div class="admin-row"><span>Kan köra alla ${lines.length} linjer samtidigt</span><span class="admin-pill ${answer[0]}" title="Räknat på skiftets ${available.length} tillgängliga operatörer och deras kompetens">${answer[1]}</span></div>
-        ${notes.length ? `<ul class="admin-capacity-reasons">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}
-      </div>
+      <div class="admin-capacity-stats">${stats.map(([label, value, state]) => `<div class="admin-stat ${state}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>
+      <details class="admin-capacity-details" data-capacity-details="${escapeHtml(shift.id)}"${adminOpenCapacityDetails.has(shift.id) ? " open" : ""}>
+        <summary><span class="show-label">Visa detaljer</span><span class="hide-label">Dölj detaljer</span></summary>
+        <div class="admin-capacity-body">
+          ${notes.length ? `<ul class="admin-capacity-reasons">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}
+          ${problems.length ? `<div><div class="admin-label">Saknas på linjerna</div><ul class="admin-line-issues">${problems.map(line => `<li><strong>${escapeHtml(line.label)}:</strong> ${escapeHtml([...line.ruleGaps, ...line.issues].join(" · "))}</li>`).join("")}</ul></div>` : ""}
+          ${competence.length ? `<div><div class="admin-label">Kompetens, tillgängliga idag</div>
+            <table class="admin-mini-table"><thead><tr><th>Kompetens</th><th>Behövs</th><th>Tillgängliga</th></tr></thead><tbody>
+            ${competence.map(item => `<tr><th scope="row">${escapeHtml(item.department)}</th><td>${item.need || "–"}</td><td><span class="admin-cell ${competenceState(item.qualified ?? item.available, item.need)}">${item.qualified ?? item.available} <small>/ ${item.total}</small></span></td></tr>`).join("")}
+            </tbody></table></div>` : ""}
+        </div>
+      </details>
     </div>`;
 }
 
@@ -5685,7 +5704,6 @@ function adminShiftCardHtml(data, context) {
   const progress = target ? produced / target : 0;
   const notReported = isToday && !data.reportedToday;
   const absentOperators = operators.length - available.length;
-  const maxCompetence = Math.max(1, ...data.competence.map(item => item.total));
   return `<article class="card admin-shift-card${shiftColorClass(shift)}">
     <div class="admin-shift-head">
       <div><h3>${shiftColorDot(shift.id)}Skift ${escapeHtml(shift.name)}</h3><small>${leaders.length ? `Skiftledare: ${leaders.map(person => escapeHtml(person.name)).join(", ")}` : "Ingen skiftledare"}</small></div>
@@ -5701,10 +5719,6 @@ function adminShiftCardHtml(data, context) {
       <div class="admin-bar"><i style="width:${Math.min(100, progress * 100)}%"></i></div>
     </div>
     ${adminLinesHtml(data, context)}
-    <div>
-      <div class="admin-label">Kompetens, tillgängliga idag</div>
-      <div class="admin-competence">${data.competence.map(item => `<span>${escapeHtml(item.department)}</span><div class="admin-bar"><i style="width:${item.available / maxCompetence * 100}%"></i></div><strong>${item.available}<small> / ${item.total}</small></strong>`).join("") || '<span class="admin-muted">Inga avdelningar</span>'}</div>
-    </div>
     <div><span class="admin-pill ${absent.length ? "bad" : "good"}">${absent.length ? `${absent.length} frånvarande` : "Alla på plats"}</span>${absentOperators !== absent.length && absent.length ? ` <span class="admin-muted">varav ${absentOperators} operatörer</span>` : ""}</div>
     <div class="admin-shift-actions">
       <button class="btn primary" type="button" data-view-schedule="${escapeHtml(shift.id)}">Visa schema</button>
@@ -5870,6 +5884,11 @@ async function renderAdminDashboard(root) {
   });
   if (root.dataset.adminBound !== "true") {
     root.dataset.adminBound = "true";
+    // "toggle" does not bubble, so it is caught on the way down.
+    root.addEventListener("toggle", event => {
+      const shiftId = event.target.dataset?.capacityDetails;
+      if (shiftId) event.target.open ? adminOpenCapacityDetails.add(shiftId) : adminOpenCapacityDetails.delete(shiftId);
+    }, true);
     root.addEventListener("click", event => {
       const shiftLink = event.target.closest("[data-shift-link]");
       if (shiftLink) sessionStorage.setItem(ACTIVE_SHIFT_KEY, shiftLink.dataset.shiftLink);
