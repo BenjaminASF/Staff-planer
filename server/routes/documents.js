@@ -11,7 +11,7 @@ const {
   addAuditEvent
 } = require("../store");
 const { cleanText } = require("../validation");
-const { notifyScheduleShared } = require("../notifications");
+const { notifyScheduleShared, notifyAdminChange, notifyTodosShared } = require("../notifications");
 
 // Personal scopes are not looked up: only their owner, who is signed in, gets
 // past the permission check, and others must not learn which user ids exist.
@@ -91,6 +91,9 @@ function documentRoutes({ pool, mailer, appUrl }) {
     }
     const sharedWeek = sharedWeekKey(key);
     const wasShared = sharedWeek ? (await readDocuments(pool, scope, [key]))[key]?.value?.shared === true : false;
+    // Tasks the owner shares now are told to their new recipients once the list is saved.
+    const isOwnTodos = key === "todos" && personalScopeOwner(scope) === req.user.id;
+    const todosBefore = isOwnTodos ? (await readDocuments(pool, scope, [key]))[key]?.value : null;
     let saved;
     try {
       saved = await writeDocument(pool, { scope, key, value, baseVersion, userId: req.user.id });
@@ -110,6 +113,10 @@ function documentRoutes({ pool, mailer, appUrl }) {
       saved.notified = await notifyScheduleShared({
         pool, mailer, shiftId: scope, weekKey: sharedWeek, appUrl: appUrl || `${req.protocol}://${req.get("host")}`
       });
+    }
+    if (isOwnTodos) {
+      await notifyTodosShared(pool, { user: req.user, scope, before: todosBefore, after: value })
+        .catch(error => console.error("To-do share notification failed:", error));
     }
     res.json(saved);
   });
@@ -150,6 +157,8 @@ function documentRoutes({ pool, mailer, appUrl }) {
       undo,
       userId: req.user.id
     });
+    await notifyAdminChange(pool, { user: req.user, scope, type: cleanText(req.body?.type, 40), title: cleanText(req.body?.title, 300), detail: cleanText(req.body?.detail, 500) })
+      .catch(error => console.error("Admin change notification failed:", error));
     res.status(201).json({ id });
   });
 

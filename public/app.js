@@ -6362,6 +6362,7 @@ function initializeAppContent() {
   setupShareSchedule();
   setupAutoLock();
   setupChat();
+  setupNotifications();
   setupLiveUpdates();
   void setupOnboarding();
   setupMobileNavigation();
@@ -6455,6 +6456,149 @@ function setupChat() {
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) void pollChat(); });
   void pollChat();
+}
+
+// Notes ("Notiser"): a bell in the page header. Shift leaders and right hands get a
+// short note when an admin changes something in their shift or in shared settings;
+// everyone with a to-do list gets one when someone shares a task with them.
+const BELL_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
+const notificationState = { items: [], unread: 0, open: false, seen: null, loading: null };
+
+function getNotificationElements() {
+  const bell = document.getElementById("notificationBell");
+  if (!bell) return null;
+  return {
+    bell,
+    toggle: bell.querySelector(".notification-toggle"),
+    badge: bell.querySelector(".notification-badge"),
+    panel: bell.querySelector(".notification-panel"),
+    list: bell.querySelector(".notification-list"),
+    clear: bell.querySelector(".notification-clear")
+  };
+}
+
+function setupNotifications() {
+  const header = document.querySelector(".main .header");
+  if (!canManageStaff() || !header || document.getElementById("notificationBell")) return;
+  const bell = document.createElement("div");
+  bell.id = "notificationBell";
+  bell.className = "notification-bell";
+  bell.innerHTML = `
+    <button type="button" class="notification-toggle" aria-label="Notiser" aria-expanded="false" title="Notiser">${BELL_ICON}<span class="notification-badge hidden" aria-hidden="true"></span></button>
+    <section class="notification-panel hidden" aria-label="Notiser">
+      <header class="notification-header"><strong>Notiser</strong><button type="button" class="notification-clear">Rensa alla</button></header>
+      <div class="notification-list"></div>
+    </section>`;
+  header.prepend(bell);
+  header.classList.add("has-notifications");
+  const elements = getNotificationElements();
+  elements.toggle.addEventListener("click", () => void setNotificationsOpen(!notificationState.open));
+  elements.clear.addEventListener("click", () => void clearNotifications());
+  elements.panel.addEventListener("keydown", event => {
+    if (event.key === "Escape") { event.preventDefault(); void setNotificationsOpen(false); elements.toggle.focus(); }
+  });
+  document.addEventListener("click", event => {
+    if (notificationState.open && !event.target.closest("#notificationBell")) void setNotificationsOpen(false);
+  });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) void loadNotifications({ announce: true }); });
+  void loadNotifications();
+}
+
+// Fetches the notes. With `announce`, notes that arrived since the last fetch are
+// shown as a toast with a chime.
+async function loadNotifications({ announce = false } = {}) {
+  if (!getNotificationElements() || notificationState.loading) return notificationState.loading;
+  notificationState.loading = (async () => {
+    try {
+      const data = await apiRequest("GET", "/notifications");
+      const fresh = notificationState.seen ? data.notifications.filter(note => !note.read && !notificationState.seen.has(note.id)) : [];
+      notificationState.seen = new Set(data.notifications.map(note => note.id));
+      notificationState.items = data.notifications;
+      notificationState.unread = data.unread;
+      renderNotifications();
+      if (announce && fresh.length) {
+        showAppToast(fresh.length === 1 ? notificationText(fresh[0]) : `${fresh.length} nya notiser`, "info");
+        playNotificationSound("message");
+      }
+      if (notificationState.open && data.unread) await markNotificationsRead();
+    } catch (error) {
+      console.warn("Notifications could not be loaded:", error);
+    } finally {
+      notificationState.loading = null;
+    }
+  })();
+  return notificationState.loading;
+}
+
+function notificationText(note) {
+  return note.kind === "todoShared"
+    ? `${note.actorName || "Någon"} har delat en uppgift med dig: ${note.title}`
+    : `${note.actorName || "Admin"} (admin) ändrade: ${note.title}`;
+}
+
+function renderNotifications() {
+  const elements = getNotificationElements();
+  if (!elements) return;
+  const { unread, items } = notificationState;
+  elements.badge.textContent = unread > 99 ? "99+" : String(unread);
+  elements.badge.classList.toggle("hidden", !unread);
+  elements.toggle.setAttribute("aria-label", unread ? `Notiser, ${unread} olästa` : "Notiser");
+  elements.clear.classList.toggle("hidden", !items.length);
+  if (!items.length) {
+    elements.list.innerHTML = '<p class="notification-empty">Inga notiser.</p>';
+    return;
+  }
+  elements.list.innerHTML = items.map(note => {
+    const shared = note.kind === "todoShared";
+    const heading = shared
+      ? `<strong>${escapeHtml(note.actorName || "Någon")}</strong> har delat en uppgift med dig`
+      : `<strong>${escapeHtml(note.actorName || "Admin")}</strong> (admin) ändrade`;
+    const body = `<span class="notification-heading">${heading}</span>
+      <span class="notification-title">${escapeHtml(note.title)}</span>
+      ${note.detail ? `<span class="notification-detail">${escapeHtml(note.detail)}</span>` : ""}
+      <time datetime="${escapeHtml(note.createdAt)}">${escapeHtml(formatChatTime(note.createdAt))}</time>`;
+    const className = `notification-item${note.read ? "" : " unread"}`;
+    return shared ? `<a class="${className}" href="todo.html">${body}</a>` : `<div class="${className}">${body}</div>`;
+  }).join("");
+}
+
+async function setNotificationsOpen(open) {
+  const elements = getNotificationElements();
+  if (!elements) return;
+  notificationState.open = open;
+  elements.panel.classList.toggle("hidden", !open);
+  elements.toggle.setAttribute("aria-expanded", String(open));
+  if (!open) {
+    // Notes seen while the panel was open no longer stand out next time.
+    notificationState.items.forEach(note => { note.read = true; });
+    renderNotifications();
+    return;
+  }
+  renderNotifications();
+  if (notificationState.unread) await markNotificationsRead();
+}
+
+async function markNotificationsRead() {
+  try {
+    await apiRequest("POST", "/notifications/read", {});
+    notificationState.unread = 0;
+    const { badge, toggle } = getNotificationElements() || {};
+    badge?.classList.add("hidden");
+    toggle?.setAttribute("aria-label", "Notiser");
+  } catch (error) {
+    console.warn("Notifications could not be marked as read:", error);
+  }
+}
+
+async function clearNotifications() {
+  try {
+    await apiRequest("DELETE", "/notifications");
+    notificationState.items = [];
+    notificationState.unread = 0;
+    renderNotifications();
+  } catch (error) {
+    showAppToast(error.message || "Notiserna kunde inte rensas.", "error");
+  }
 }
 
 function resizeChatInput(input) {
@@ -6889,6 +7033,10 @@ function handleLiveChange(change, { fromSave = false } = {}) {
   }
   if (change.type === "sharedTodos") {
     void renderSharedTodos();
+    return;
+  }
+  if (change.type === "notification") {
+    void loadNotifications({ announce: true });
     return;
   }
   if (change.type === "people") return queueLiveRefresh({ peopleChanged: true });

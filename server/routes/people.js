@@ -10,6 +10,7 @@ const {
   clearPersonFromShiftSchedules, addAuditEvent
 } = require("../store");
 const { availabilityLabel, cleanPersonFields, cleanText, cleanEmail } = require("../validation");
+const { notifyAdminChange } = require("../notifications");
 
 async function requirePerson(db, id) {
   const person = await getPersonById(db, id);
@@ -113,14 +114,14 @@ function peopleRoutes({ pool }) {
         await clearPersonFromShiftSchedules(client, person.id, person.shiftId, req.user.id);
       }
       if (changes.availability && changes.availability !== person.availability && person.shiftId) {
-        await addAuditEvent(client, {
+        const event = {
           scope: person.shiftId,
           type: "availability",
           title: `${changes.name || person.name}: ${availabilityLabel(changes.availability)}`,
-          detail: "Tillgänglighet uppdaterad",
-          undo: { action: "availability", personId: person.id, value: person.availability },
-          userId: req.user.id
-        });
+          detail: "Tillgänglighet uppdaterad"
+        };
+        await addAuditEvent(client, { ...event, undo: { action: "availability", personId: person.id, value: person.availability }, userId: req.user.id });
+        await notifyAdminChange(client, { user: req.user, ...event });
       }
     });
     res.json({ person: await getPersonById(pool, person.id) });
@@ -138,13 +139,14 @@ function peopleRoutes({ pool }) {
       await purgePersonFromDocuments(client, person.id, req.user.id);
       await deletePersonalDocuments(client, person.id);
       await client.query("DELETE FROM people WHERE id = $1", [person.id]);
-      await addAuditEvent(client, {
+      const event = {
         scope: person.shiftId || "global",
         type: "person",
         title: `${person.name} borttagen`,
-        detail: "Personal och kopplade uppgifter raderades",
-        userId: req.user.id
-      });
+        detail: "Personal och kopplade uppgifter raderades"
+      };
+      await addAuditEvent(client, { ...event, userId: req.user.id });
+      await notifyAdminChange(client, { user: req.user, ...event });
     });
     res.json({ ok: true });
   });

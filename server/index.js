@@ -3,10 +3,12 @@ const { createApp } = require("./app");
 const { purgeExpiredProductionRecords } = require("./store");
 
 const AUDIT_RETENTION_DAYS = 30;
+const NOTIFICATION_RETENTION_DAYS = 30;
 
 async function cleanup(pool) {
   await pool.query("DELETE FROM sessions WHERE expires_at < now()");
   await pool.query("DELETE FROM audit_events WHERE created_at < now() - make_interval(days => $1)", [AUDIT_RETENTION_DAYS]);
+  await pool.query("DELETE FROM notifications WHERE created_at < now() - make_interval(days => $1)", [NOTIFICATION_RETENTION_DAYS]);
   await purgeExpiredProductionRecords(pool);
 }
 
