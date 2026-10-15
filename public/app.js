@@ -2323,14 +2323,19 @@ async function renderProfilePage() {
   if (!root || !currentUser || !currentPerson) return;
   const person = currentPerson;
   const availability = getPersonAvailability(person);
+  // Operators only see their name and e-mail; there is no field to type in.
   const lockedDetails = isOperator();
-  const lockedAttr = lockedDetails ? " readonly" : "";
+  const readOnlyDetail = (label, value, hint) => `<div class="profile-readonly"><span>${label}</span><strong>${value ? escapeHtml(value) : "Ej angiven"}</strong><small>${hint}</small></div>`;
   root.innerHTML = `
     <form id="profileForm" class="card settings-card profile-card">
       <div><h3>Mina uppgifter</h3><p>Användarnamn <strong>${escapeHtml(currentUser.username)}</strong> · ${escapeHtml(ROLE_LABELS[currentUser.role] || "")} · Skift: ${shiftColorDot(person.shiftId)}${escapeHtml(getShiftName(person.shiftId) || "inget skift")}</p></div>
-      <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required autocomplete="name"${lockedAttr} />${lockedDetails ? "<small>Be din skiftledare om du vill ändra namnet.</small>" : ""}</label>
+      ${lockedDetails
+        ? readOnlyDetail("Namn", person.name, "Be din skiftledare om du vill ändra namnet.")
+        : `<label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required autocomplete="name" /></label>`}
       <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" autocomplete="tel" /></label>
-      <label>E-post<input name="email" type="email" value="${escapeHtml(person.email || "")}" maxlength="200" autocomplete="email"${lockedAttr} /><small>Du får ett mejl när veckans schema finns.${lockedDetails ? " Be din skiftledare om du vill ändra adressen." : ""}</small></label>
+      ${lockedDetails
+        ? readOnlyDetail("E-post", person.email, "Du får ett mejl när veckans schema finns. Be din skiftledare om du vill ändra adressen.")
+        : `<label>E-post<input name="email" type="email" value="${escapeHtml(person.email || "")}" maxlength="200" autocomplete="email" /><small>Du får ett mejl när veckans schema finns.</small></label>`}
       <label>Status<select name="availability" class="person-availability person-availability-${availability}">${availabilityOptionsFor(availability).map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select><small>Är du sjuk eller borta? Ändra här så ser skiftledaren det direkt.</small></label>
       <div class="settings-actions"><span id="profileMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara</button></div>
     </form>

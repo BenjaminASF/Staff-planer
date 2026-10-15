@@ -5591,6 +5591,9 @@ button {
 .my-week-days strong { font-size: 13px; }
 
 .profile-card select { width: 100%; }
+.profile-readonly { display: grid; gap: 6px; color: #52627a; color: light-dark(#52627a, #abb4c4); font-size: 12px; font-weight: 800; }
+.profile-readonly strong { padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--text); font-size: 14px; font-weight: 600; overflow-wrap: anywhere; cursor: default; }
+.profile-readonly small { font-weight: 400; }
 .replacement-modal select { min-height: 42px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 11px; background: white; background: light-dark(white, #141a24); color: var(--text); font-weight: 600; }
 .replacement-modal select:disabled { opacity: .7; }
 
