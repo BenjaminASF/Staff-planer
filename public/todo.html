@@ -41,7 +41,7 @@
       <main class="main">
         <div class="header">
           <h2>Att göra</h2>
-          <p>Din egen lista – ingen annan ser den. Avklarade uppgifter försvinner vid dagens slut.</p>
+          <p>Din egen lista – ingen annan ser den, utom de uppgifter du själv väljer att dela. Avklarade uppgifter försvinner vid dagens slut.</p>
         </div>
         <section class="card todo-card">
           <form id="todoForm" class="todo-form">
@@ -54,6 +54,13 @@
           </div>
           <div id="todoNotice" class="todo-notice hidden" role="status"></div>
           <div id="todoList" class="todo-list"></div>
+        </section>
+        <section class="card todo-card">
+          <div class="todo-heading">
+            <h3>Delade med mig</h3>
+            <span id="sharedTodoCount">0 uppgifter</span>
+          </div>
+          <div id="sharedTodoList" class="todo-list"></div>
         </section>
       </main>
     </div>

@@ -14,7 +14,7 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | |
 | Ändra det dagliga produktionsmålet | ✓ | ✓ | | |
-| Egen att göra-lista (bara man själv ser den) | ✓ | ✓ | ✓ | |
+| Egen privat att göra-lista, med delning av enskilda uppgifter | ✓ | ✓ | ✓ | |
 | Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | Eget skift | |
 | Lägga till personal och skapa operatörskonton | Alla skift | Eget skift | Eget skift | |
 | Återställa lösenord | Alla | Operatörer i eget skift | Operatörer i eget skift | |
@@ -45,6 +45,8 @@ Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas
 Skiftledare kan aldrig ändra en admins uppgifter (namn, företag, telefon, status eller inloggning), inte ens om admin hör till samma skift.
 
 **Höger hand** är skiftledarens assistent och tar över ansvaret när skiftledaren inte är på plats. Höger hand arbetar bara i sitt eget skift: ändrar schemat, lägger till operatörer, läser och skriver i chatten och registrerar dagens produktion, men kan inte ändra det dagliga målet eller maskiner och inställningar som gäller alla skift. Höger hand kan ändra operatörernas uppgifter i skiftet, men inte skiftledarens eller adminens.
+
+**Att göra** är privat. Alla roller utom operatörer har en egen lista, även roller som läggs till senare, och ingen annan kan se den, inte ens admin. Med **Dela** på en uppgift väljer man exakt vilka personer som ska se just den uppgiften. De ser den under **Delade med mig**, med namnet på den som delade den, men kan inte ändra den. Resten av listan förblir privat, och delningen kan tas bort när som helst.
 
 Skiftledare och höger hand kan läsa kompetens eftersom autoschemat och schemats varningar bygger på den.
 

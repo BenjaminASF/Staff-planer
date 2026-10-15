@@ -16,8 +16,10 @@
 //                shift leader has shared that week, edits their own profile
 //                (name, phone, status) and password.
 //
-// Personal documents ("Att göra") belong to one admin or shift leader, and only
-// that user reads and writes them. Backups leave them out.
+// Personal documents ("Att göra") belong to one user, and only that user reads
+// and writes them. Every role except operators has a list, so roles added later
+// get one too. The owner can share single tasks with chosen users, who then
+// see those tasks read-only. Backups leave the lists out.
 
 const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" });
 const ROLE_VALUES = Object.values(ROLES);
@@ -73,7 +75,8 @@ const isShiftManager = user => isAdminOrLeader(user) || isRightHand(user);
 const roleNeedsShift = role => role === ROLES.LEADER || role === ROLES.RIGHT_HAND;
 const leadsShift = (user, shiftId) => (isLeader(user) || isRightHand(user)) && Boolean(user.shiftId) && user.shiftId === shiftId;
 const canEditShift = (user, shiftId) => isAdmin(user) || leadsShift(user, shiftId);
-const ownsPersonalScope = (user, scope) => isShiftManager(user) && Boolean(user.id) && personalScopeOwner(scope) === user.id;
+const hasPersonalList = user => Boolean(user?.role) && user.role !== ROLES.OPERATOR;
+const ownsPersonalScope = (user, scope) => hasPersonalList(user) && Boolean(user.id) && personalScopeOwner(scope) === user.id;
 
 function documentCategory(scope, key) {
   if (typeof key !== "string" || typeof scope !== "string") return null;
@@ -229,6 +232,7 @@ module.exports = {
   isRightHand,
   isAdminOrLeader,
   isShiftManager,
+  hasPersonalList,
   roleNeedsShift,
   canEditShift,
   canChangeProductionTarget,
