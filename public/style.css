@@ -6480,9 +6480,16 @@ a.notification-item:hover { background: color-mix(in srgb, var(--primary) 8%, tr
 .admin-line-issues, .admin-capacity-reasons, .admin-rules ul { margin: 8px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
 .admin-line-issues { color: var(--bad); }
 .admin-capacity-reasons { margin: 0; color: var(--muted); }
-.admin-capacity-block { display: grid; gap: 10px; }
-.admin-capacity-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
-.admin-capacity-head .admin-label { margin: 0; }
+.admin-section-toggle { display: flex; align-items: center; gap: 8px; min-height: 36px; margin: -4px -6px; padding: 4px 6px; border-radius: 8px; list-style: none; cursor: pointer; }
+.admin-section-toggle::-webkit-details-marker { display: none; }
+.admin-section-toggle::after { content: "▾"; margin-left: auto; color: var(--muted); font-size: 12px; transition: transform .15s; }
+.admin-section[open] > .admin-section-toggle::after { transform: rotate(180deg); }
+.admin-section-toggle:hover, .admin-section-toggle:focus-visible { background: var(--primary-soft); }
+.admin-section-toggle .admin-label, .admin-section-toggle h3 { margin: 0 !important; }
+.admin-capacity-block .admin-section-toggle .admin-muted { margin-left: auto; }
+.admin-capacity-block > .admin-section-toggle::after { margin-left: 0; }
+.admin-capacity-content { display: grid; gap: 10px; margin-top: 10px; }
+.admin-section-card[open] > .admin-section-toggle { margin-bottom: 6px; }
 .admin-capacity-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
 .admin-stat { display: grid; gap: 2px; padding: 8px 10px; border-left: 3px solid var(--muted); border-radius: 8px; background: var(--track); background: color-mix(in srgb, var(--track) 60%, transparent); }
 .admin-stat span { color: var(--muted); font-size: 11px; line-height: 1.3; }

@@ -5629,8 +5629,9 @@ const competenceState = (available, need) => !need ? "" : available > need ? "go
 const formatLinesDate = (dateKey, today) => dateKey === today ? "idag"
   : new Date(`${dateKey}T12:00:00`).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "numeric" });
 
-// Which shifts have their capacity details open, so a live redraw keeps them open.
-const adminOpenCapacityDetails = new Set();
+// The overview's sections are closed until opened. Open ones are remembered so a live redraw keeps them open.
+const adminOpenSections = new Set();
+const adminSectionOpen = key => adminOpenSections.has(key) ? " open" : "";
 const capacityState = (have, need) => have >= need ? "good" : have > 0 ? "warn" : "bad";
 
 // Production capacity at a glance: manned lines, whether all lines could run, and available people.
@@ -5656,11 +5657,12 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
     ...capacity.reasons
   ].filter(Boolean);
   const competence = data.competence.map(item => ({ ...item, ...capacity.departments.find(entry => entry.department === item.department) }));
-  return `<div class="admin-capacity-block">
-      <div class="admin-capacity-head"><span class="admin-label">Produktionskapacitet</span><span class="admin-muted">${escapeHtml(formatLinesDate(linesDate, today))}</span></div>
+  return `<details class="admin-section admin-capacity-block" data-admin-section="capacity:${escapeHtml(shift.id)}"${adminSectionOpen(`capacity:${shift.id}`)}>
+      <summary class="admin-section-toggle"><span class="admin-label">Produktionskapacitet</span><span class="admin-muted">${escapeHtml(formatLinesDate(linesDate, today))}</span></summary>
+      <div class="admin-capacity-content">
       <div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.ruleGaps.length ? "rule" : line.staffed ? "ok" : "no"}" title="${escapeHtml(lineTitle(line))}">${escapeHtml(line.label)}<small>${lineText(line)}</small>${productionText(line) ? `<span class="admin-line-production${line.production ? " on" : ""}">${line.production ? "I produktion" : "Ej i produktion"}</span>` : ""}</div>`).join("")}</div>
       <div class="admin-capacity-stats">${stats.map(([label, value, state]) => `<div class="admin-stat ${state}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>
-      <details class="admin-capacity-details" data-capacity-details="${escapeHtml(shift.id)}"${adminOpenCapacityDetails.has(shift.id) ? " open" : ""}>
+      <details class="admin-capacity-details" data-admin-section="details:${escapeHtml(shift.id)}"${adminSectionOpen(`details:${shift.id}`)}>
         <summary><span class="show-label">Visa detaljer</span><span class="hide-label">Dölj detaljer</span></summary>
         <div class="admin-capacity-body">
           ${notes.length ? `<ul class="admin-capacity-reasons">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}
@@ -5671,7 +5673,8 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
             </tbody></table></div>` : ""}
         </div>
       </details>
-    </div>`;
+      </div>
+    </details>`;
 }
 
 // The rules the line overview counts with, and the ones that are missing.
@@ -5856,7 +5859,7 @@ async function renderAdminDashboard(root) {
       <div class="card"><h3>Svinn hittills i månaden</h3><p class="admin-sub">Kilo svinn per skift.</p><div class="admin-waste">${adminWasteHtml(shiftData)}</div></div>
     </section>
     <section class="admin-columns">
-      <div class="card"><h3>Kompetens per skift</h3><p class="admin-sub">Tillgängliga idag / alla operatörer med kompetensen. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</div>
+      <details class="card admin-section admin-section-card" data-admin-section="competence"${adminSectionOpen("competence")}><summary class="admin-section-toggle"><h3>Kompetens per skift</h3></summary><p class="admin-sub">Tillgängliga idag / alla operatörer med kompetensen. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</details>
       <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Ej tillgängliga och lediga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
     </section>
     <section id="adminAuditSection"${adminAuditOpen ? "" : " hidden"}>${auditCardHtml(events)}</section>
@@ -5886,8 +5889,8 @@ async function renderAdminDashboard(root) {
     root.dataset.adminBound = "true";
     // "toggle" does not bubble, so it is caught on the way down.
     root.addEventListener("toggle", event => {
-      const shiftId = event.target.dataset?.capacityDetails;
-      if (shiftId) event.target.open ? adminOpenCapacityDetails.add(shiftId) : adminOpenCapacityDetails.delete(shiftId);
+      const key = event.target.dataset?.adminSection;
+      if (key) event.target.open ? adminOpenSections.add(key) : adminOpenSections.delete(key);
     }, true);
     root.addEventListener("click", event => {
       const shiftLink = event.target.closest("[data-shift-link]");
