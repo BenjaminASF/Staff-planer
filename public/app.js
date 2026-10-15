@@ -6508,8 +6508,8 @@ function setupNotifications() {
   const elements = getNotificationElements();
   elements.toggle.addEventListener("click", () => void setNotificationsOpen(!notificationState.open));
   elements.clear.addEventListener("click", () => void clearNotifications());
-  elements.panel.addEventListener("keydown", event => {
-    if (event.key === "Escape") { event.preventDefault(); void setNotificationsOpen(false); elements.toggle.focus(); }
+  elements.bell.addEventListener("keydown", event => {
+    if (event.key === "Escape" && notificationState.open) { event.preventDefault(); void setNotificationsOpen(false); elements.toggle.focus(); }
   });
   document.addEventListener("click", event => {
     if (notificationState.open && !event.target.closest("#notificationBell")) void setNotificationsOpen(false);
