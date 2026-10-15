@@ -12,7 +12,6 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 |---|:---:|:---:|:---:|:---:|
 | Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ | ✓ (när veckan är delad) |
 | Ändra sin egen profil (namn, telefon, e-post, status, lösenord) | ✓ | ✓ | ✓ | ✓ |
-| Sätta statusen Ej tillgänglig | ✓ | ✓ | ✓ | |
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | |
 | Ändra skiftets dagliga produktionsmål | ✓ | ✓ | | |

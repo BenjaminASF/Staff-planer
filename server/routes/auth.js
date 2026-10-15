@@ -5,7 +5,7 @@ const {
   validatePassword, createSession, destroySession, requireUser, allowWithoutPasswordChange
 } = require("../auth");
 const { withTransaction } = require("../db");
-const { ROLES, editablePersonFields, canSetAvailability } = require("../permissions");
+const { ROLES, editablePersonFields } = require("../permissions");
 const { newId, serializeShift, getPersonById, addAuditEvent } = require("../store");
 const { availabilityLabel, cleanPersonFields } = require("../validation");
 
@@ -105,9 +105,6 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     const person = await getPersonById(pool, req.user.personId);
     const allowed = editablePersonFields(req.user, person).filter(field => ["name", "phone", "email", "availability"].includes(field));
     const changes = cleanPersonFields(req.body || {}, allowed);
-    if (changes.availability && changes.availability !== person.availability && !canSetAvailability(req.user, changes.availability)) {
-      throw new HttpError(403, "Endast admin, skiftledare och höger hand kan ange statusen Ej tillgänglig.");
-    }
     if (!Object.keys(changes).length) return res.json(await buildMePayload(pool, req.user));
     await withTransaction(pool, async client => {
       const sets = Object.keys(changes).map((column, index) => `${column} = $${index + 2}`);

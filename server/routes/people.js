@@ -3,7 +3,7 @@ const { HttpError, hashPassword, normalizeUsername, validateUsername, validatePa
 const { withTransaction } = require("../db");
 const {
   ROLES, ROLE_VALUES, normalizeAvailability, isAdmin, roleNeedsShift, canSeeAllPeople, canCreatePerson, editablePersonFields,
-  canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canChangeUsername, canDeleteAccount, canSetAvailability
+  canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canChangeUsername, canDeleteAccount
 } = require("../permissions");
 const {
   newId, serializePerson, PERSON_SELECT, getPersonById, purgePersonFromDocuments, deletePersonalDocuments,
@@ -97,9 +97,6 @@ function peopleRoutes({ pool }) {
     const allowed = editablePersonFields(req.user, person);
     if (!allowed.length) throw new HttpError(403, "Du har inte behörighet att ändra den här personen.");
     const changes = cleanPersonFields(req.body || {}, allowed);
-    if (changes.availability && changes.availability !== person.availability && !canSetAvailability(req.user, changes.availability)) {
-      throw new HttpError(403, "Endast admin, skiftledare och höger hand kan ange statusen Ej tillgänglig.");
-    }
     if (!Object.keys(changes).length) return res.json({ person });
     await withTransaction(pool, async client => {
       if ("shift_id" in changes) {
