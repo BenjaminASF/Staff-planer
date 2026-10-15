@@ -29,6 +29,7 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Chatt med text och bilder | ✓ | ✓ | ✓ | |
 | Ta bort personal och användare, ändra roller | ✓ | | | |
 | Skapa och ta bort skift, backup och import | ✓ | | | |
+| Exportera backup av sitt eget skift (**Översikt → Backup av skiftet**) | | ✓ | | |
 
 ### Produktionsöversikt för admin
 
@@ -139,6 +140,8 @@ Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och 
 ### Backup
 
 Admin kan exportera och importera all data under **Inställningar** eller **Översikt → Meny → Data**. E-postadresserna ingår. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
+
+Skiftledare kan exportera en backup av sitt eget skift under **Översikt → Backup av skiftet**. Den innehåller skiftet, dess personal, scheman, produktion och gemensamma inställningar, kompetens för skiftets personal samt testresultat och bedömningar för dem skiftledaren bedömer. Andra skift, lösenord och att göra-listor ingår inte. En skiftbackup är en kopia att spara: den kan inte importeras, eftersom den bara innehåller en del av datan. Exporten syns under skiftets ändringar. Höger hand och operatörer kan inte exportera.
 
 ## Utveckling lokalt
 

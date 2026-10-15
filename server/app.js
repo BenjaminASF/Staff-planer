@@ -5,7 +5,7 @@ const { authRoutes } = require("./routes/auth");
 const { peopleRoutes } = require("./routes/people");
 const { shiftRoutes } = require("./routes/shifts");
 const { documentRoutes } = require("./routes/documents");
-const { adminRoutes } = require("./routes/admin");
+const { adminRoutes, shiftBackupRoutes } = require("./routes/admin");
 const { chatRoutes } = require("./routes/chat");
 const { todoRoutes } = require("./routes/todos");
 const { notificationRoutes } = require("./routes/notifications");
@@ -41,6 +41,7 @@ function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy 
   api.use("/people", peopleRoutes({ pool }));
   api.use("/shifts", shiftRoutes({ pool }));
   api.use("/admin", adminRoutes({ pool }));
+  api.use("/backup", shiftBackupRoutes({ pool }));
   api.use("/chat", chatRoutes({ pool }));
   api.use("/todos", todoRoutes({ pool }));
   api.use("/notifications", notificationRoutes({ pool }));

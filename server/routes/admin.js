@@ -1,8 +1,11 @@
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
-const { isAdmin, normalizeAvailability, documentCategory, personalScope, PERSONAL_SCOPE_PREFIX } = require("../permissions");
-const { putDocument, mergeIntoPersonalList, isPlainObject, serializeShift } = require("../store");
+const {
+  isAdmin, normalizeAvailability, documentCategory, personalScope, PERSONAL_SCOPE_PREFIX, canReadDocument, canExportShiftBackup
+} = require("../permissions");
+const { putDocument, mergeIntoPersonalList, isPlainObject, serializeShift, addAuditEvent } = require("../store");
+const { evaluatedPersonIds, onlyFor } = require("../evaluations");
 const { cleanText, cleanEmail, SHIFT_COLORS } = require("../validation");
 
 // Version 3 leaves personal lists out. Version 2 backups kept "Att göra" per shift.
@@ -10,6 +13,8 @@ const EXPORT_VERSION = 3;
 const IMPORT_VERSIONS = [2, 3];
 const NOT_PERSONAL_SQL = "scope NOT LIKE $1";
 const PERSONAL_SCOPE_PATTERN = `${PERSONAL_SCOPE_PREFIX}%`;
+// A backup of one shift holds only part of the shared documents, so it cannot be imported.
+const SHIFT_BACKUP_KIND = "shift";
 
 function requireAdmin(req, res, next) {
   if (!isAdmin(req.user)) throw new HttpError(403, "Endast admin.");
@@ -65,10 +70,7 @@ function adminRoutes({ pool }) {
       version: EXPORT_VERSION,
       exportedAt: new Date().toISOString(),
       shifts: shifts.rows.map(serializeShift),
-      people: people.rows.map(row => ({
-        id: row.id, name: row.name, company: row.company, phone: row.phone, email: row.email, availability: row.availability,
-        shiftId: row.shift_id, demo: row.demo, createdAt: row.created_at
-      })),
+      people: people.rows.map(serializePerson),
       documents: documents.rows
     });
   });
@@ -78,6 +80,9 @@ function adminRoutes({ pool }) {
   // Personal lists are not in backups and are left as they are.
   router.post("/import", async (req, res) => {
     const payload = req.body;
+    if (payload?.kind === SHIFT_BACKUP_KIND) {
+      throw new HttpError(400, "Det här är en backup av ett enda skift. Den kan inte läsas in, eftersom den bara innehåller en del av datan.");
+    }
     if (payload?.app !== "Staff Planner" || !IMPORT_VERSIONS.includes(payload.version)
       || !Array.isArray(payload.shifts) || !Array.isArray(payload.people) || !Array.isArray(payload.documents)) {
       throw new HttpError(400, "Filen är inte en giltig backup från den här versionen av Staff Planner.");
@@ -158,4 +163,54 @@ function adminRoutes({ pool }) {
   return router;
 }
 
-module.exports = { adminRoutes };
+const serializePerson = row => ({
+  id: row.id, name: row.name, company: row.company, phone: row.phone, email: row.email, availability: row.availability,
+  shiftId: row.shift_id, demo: row.demo, createdAt: row.created_at
+});
+
+// A shift leader's backup of their own shift: the shift, its people and its documents.
+// Shared settings are included; competence only for the shift's people, and test results
+// and assessments only for the people the leader evaluates. Passwords, personal lists and
+// other shifts are never in it.
+function shiftBackupRoutes({ pool }) {
+  const router = express.Router();
+  router.use(requireUser);
+
+  router.get("/shift", async (req, res) => {
+    if (!canExportShiftBackup(req.user)) throw new HttpError(403, "Endast skiftledare kan exportera en backup av sitt skift.");
+    const shiftId = req.user.shiftId;
+    const [shift, people, documents, evaluated] = await Promise.all([
+      pool.query("SELECT id, name, color, sort_order FROM shifts WHERE id = $1", [shiftId]),
+      pool.query("SELECT id, name, company, phone, email, availability, shift_id, demo, created_at FROM people WHERE shift_id = $1 ORDER BY name", [shiftId]),
+      pool.query("SELECT scope, key, value FROM documents WHERE scope = $1 OR scope = 'global' ORDER BY scope, key", [shiftId]),
+      evaluatedPersonIds(pool, req.user)
+    ]);
+    if (!shift.rows[0]) throw new HttpError(404, "Skiftet finns inte.");
+    const shiftPeople = new Set(people.rows.map(row => row.id));
+    const readable = documents.rows.filter(doc => canReadDocument(req.user, doc.scope, doc.key)
+      && documentCategory(doc.scope, doc.key) !== "configPrivate");
+    const backup = readable.map(doc => {
+      const category = documentCategory(doc.scope, doc.key);
+      if (category === "competence") return { ...doc, value: onlyFor(doc.key, doc.value, shiftPeople) };
+      if (category === "evaluation") return { ...doc, value: onlyFor(doc.key, doc.value, evaluated) };
+      return doc;
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    await addAuditEvent(pool, { scope: shiftId, type: "backup", title: "Backup av skiftet exporterad", detail: today, userId: req.user.id });
+    res.setHeader("Content-Disposition", `attachment; filename="staff-planner-skift-backup-${today}.json"`);
+    res.json({
+      app: "Staff Planner",
+      version: EXPORT_VERSION,
+      kind: SHIFT_BACKUP_KIND,
+      shiftId,
+      exportedAt: new Date().toISOString(),
+      shifts: shift.rows.map(serializeShift),
+      people: people.rows.map(serializePerson),
+      documents: backup
+    });
+  });
+
+  return router;
+}
+
+module.exports = { adminRoutes, shiftBackupRoutes };
