@@ -58,9 +58,13 @@ function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy 
 
   app.use(express.static(PUBLIC_DIR, {
     extensions: ["html"],
-    setHeaders(res) {
-      // The pages are small and versioned by query string; always revalidate.
-      res.setHeader("Cache-Control", "no-cache");
+    setHeaders(res, filePath) {
+      // The pages load app.js, style.css and theme.js with ?v=<version>, bumped on every
+      // change, so those URLs never change content and need no revalidation between
+      // page changes. The pages themselves, and anything requested without ?v, are
+      // always revalidated.
+      const versioned = res.req.query?.v && /\.(?:js|css)$/.test(filePath) && !filePath.endsWith("service-worker.js");
+      res.setHeader("Cache-Control", versioned ? "public, max-age=31536000, immutable" : "no-cache");
     }
   }));
 

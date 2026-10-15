@@ -1474,10 +1474,6 @@ function applyAppSettings(settings) {
   BREAK_WORKPLACE_DISPLAY_ORDER = [...new Set(appSettings.breakLines.flatMap(line => line.workplaces))];
 }
 
-async function loadAppSettings() {
-  applyAppSettings(await getGlobalDocument("appSettings", {}));
-}
-
 async function saveAppSettings(nextSettings) {
   const normalized = normalizeAppSettings(nextSettings);
   await saveGlobalDocument("appSettings", normalized);
@@ -1615,8 +1611,11 @@ function applyCustomWorkItems(items) {
   });
 }
 
-async function loadCustomWorkItems() {
-  const items = await getGlobalDocument("workItems", []);
+// Both reads start in the same tick, so they go out in one /documents request.
+// Settings are applied first, as before.
+async function loadSharedSettings() {
+  const [settings, items] = await Promise.all([getGlobalDocument("appSettings", {}), getGlobalDocument("workItems", [])]);
+  applyAppSettings(settings);
   applyCustomWorkItems(Array.isArray(items) ? items : []);
 }
 
@@ -2208,20 +2207,7 @@ function enhanceAppShell() {
   if (!document.querySelector('link[rel="manifest"]')) {
     const manifest = document.createElement("link"); manifest.rel = "manifest"; manifest.href = "manifest.webmanifest"; document.head.appendChild(manifest);
   }
-  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("./service-worker.js").catch(error => console.warn("Offline cache could not start", error));
-  const nav = document.querySelector(".nav");
-  if (nav && !nav.querySelector('[href="installningar.html"]')) {
-    nav.insertAdjacentHTML("beforeend", '<a class="nav-link" href="profil.html">Min profil</a><a class="nav-link" href="installningar.html">Inställningar</a><a class="nav-link" href="hjalp.html">Hjälp</a>');
-  }
-  if (nav && !nav.querySelector('[href="anvandare.html"]')) {
-    nav.querySelector('[href="installningar.html"]')?.insertAdjacentHTML("beforebegin", '<a class="nav-link" href="anvandare.html">Användare</a>');
-  }
-  nav?.querySelectorAll(".nav-link").forEach(link => {
-    if (!canOpenPage(link.getAttribute("href"))) link.remove();
-  });
-  renderSidebarAccount();
-  setupAdminTopbar();
-  renderShiftNotice();
+  setupRoleNavigation();
   const pageTips = {
     "dashboard.html": "Här finns senaste status och dagens ändringar för skiftet.",
     "anvandare.html": "Klicka på Hantera för att ändra uppgifter eller lösenord. Skiftledare ser bara sitt eget skift; roller, användarnamn och borttagning hanteras av admin.",
@@ -2242,13 +2228,6 @@ function enhanceAppShell() {
     header.insertAdjacentHTML("afterend", `<aside class="page-tip"><span>Tips</span><p>${escapeHtml(pageTips[currentPage])}</p><button type="button" aria-label="Dölj tips">×</button></aside>`);
     main.querySelector(".page-tip button").addEventListener("click", event => event.currentTarget.parentElement.remove());
   }
-  document.querySelectorAll(".nav-link").forEach(link => {
-    const isCurrent = link.getAttribute("href") === currentPage;
-    link.classList.toggle("active", isCurrent);
-    if (isCurrent) link.setAttribute("aria-current", "page");
-    else link.removeAttribute("aria-current");
-  });
-
   if (appShell) {
     let footer = appShell.querySelector(":scope > footer");
     if (!footer) {
@@ -2259,6 +2238,34 @@ function enhanceAppShell() {
     footer.removeAttribute("style");
     footer.textContent = `© ${new Date().getFullYear()} Mizzar — Staff Planner`;
   }
+}
+
+// The menu, account box and shift notice for the signed-in user's role. Runs before
+// the app shell is shown, so the full menu in the page's HTML is never visible to a
+// role that should not see it, and admins never see the sidebar before the top bar.
+// Needs only what GET /me returns.
+function setupRoleNavigation() {
+  const currentPage = getCurrentPage();
+  const nav = document.querySelector(".nav");
+  if (nav && !nav.querySelector('[href="installningar.html"]')) {
+    nav.insertAdjacentHTML("beforeend", '<a class="nav-link" href="profil.html">Min profil</a><a class="nav-link" href="installningar.html">Inställningar</a><a class="nav-link" href="hjalp.html">Hjälp</a>');
+  }
+  if (nav && !nav.querySelector('[href="anvandare.html"]')) {
+    nav.querySelector('[href="installningar.html"]')?.insertAdjacentHTML("beforebegin", '<a class="nav-link" href="anvandare.html">Användare</a>');
+  }
+  nav?.querySelectorAll(".nav-link").forEach(link => {
+    if (!canOpenPage(link.getAttribute("href"))) link.remove();
+  });
+  renderSidebarAccount();
+  setupAdminTopbar();
+  renderShiftNotice();
+  document.querySelectorAll(".nav-link").forEach(link => {
+    const isCurrent = link.getAttribute("href") === currentPage;
+    link.classList.toggle("active", isCurrent);
+    if (isCurrent) link.setAttribute("aria-current", "page");
+    else link.removeAttribute("aria-current");
+  });
+  setupMobileNavigation();
 }
 
 function renderSidebarAccount() {
@@ -7123,7 +7130,6 @@ function initializeAppContent() {
   setupNotifications();
   setupLiveUpdates();
   void setupOnboarding();
-  setupMobileNavigation();
   setupFilterControls();
   setupTodoPage();
 }
@@ -7624,8 +7630,7 @@ async function signOut(notice = "") {
 // Reloads shared data, for example after someone else changed it.
 async function reloadSharedData() {
   invalidateCachedData();
-  await loadAppSettings();
-  await loadCustomWorkItems();
+  await loadSharedSettings();
   await refreshAppViews();
 }
 
@@ -7861,8 +7866,7 @@ async function runLiveRefresh() {
       changedDocuments.forEach(cacheKey => documentCache.delete(cacheKey));
       if (peopleChanged || shiftsChanged) peopleCache = null;
     }
-    await loadAppSettings();
-    await loadCustomWorkItems();
+    await loadSharedSettings();
     await refreshAppViews();
   } catch (error) {
     console.warn("Live update failed:", error);
@@ -7896,14 +7900,15 @@ async function openAppUI() {
     return;
   }
   setupShareSchedule(); // Before the page is shown, so operators never see the share button.
+  setupRoleNavigation(); // Likewise: only the menu for this role is ever drawn.
   setAuthenticatedView(true);
   document.getElementById("authScreen")?.classList.add("hidden");
   document.getElementById("appShell")?.classList.remove("hidden");
   finishInitialViewSetup();
   bindOnce(document.getElementById("logoutBtn"), "click", () => signOut());
+  if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("./service-worker.js").catch(error => console.warn("Offline cache could not start", error));
 
-  await loadAppSettings();
-  await loadCustomWorkItems();
+  await loadSharedSettings();
   initializeAppContent();
 }
 
