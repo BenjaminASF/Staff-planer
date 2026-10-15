@@ -94,12 +94,26 @@ function adminRoutes({ pool }) {
         .sort((a, b) => shiftOrder.indexOf(a.scope) - shiftOrder.indexOf(b.scope))
         .flatMap(doc => doc.value)
       : [];
+    // Each color belongs to one shift: if a backup gives several shifts the same color, the first keeps it.
+    const importedColors = new Set();
+    const importColor = shift => {
+      // Backups from before shift colors keep the shift's current color.
+      if (shift.color === "") return "";
+      if (!SHIFT_COLORS.includes(shift.color)) return null;
+      if (importedColors.has(shift.color)) return "";
+      importedColors.add(shift.color);
+      return shift.color;
+    };
     await withTransaction(pool, async client => {
+      const shiftColors = new Map(payload.shifts
+        .filter(shift => shiftIds.has(shift?.id) && cleanText(shift?.name, 60))
+        .map(shift => [shift, importColor(shift)]));
+      // Colors the backup hands out are taken from the shifts that have them now, so they can move freely.
+      await client.query("UPDATE shifts SET color = '' WHERE color = ANY($1::text[])", [[...importedColors]]);
       for (const shift of payload.shifts) {
         const name = cleanText(shift?.name, 60);
         if (!shiftIds.has(shift?.id) || !name) continue;
-        // Backups from before shift colors keep the shift's current color.
-        const color = SHIFT_COLORS.includes(shift.color) || shift.color === "" ? shift.color : null;
+        const color = shiftColors.get(shift);
         await client.query(
           `INSERT INTO shifts (id, name, sort_order, color) VALUES ($1, $2, $3, COALESCE($4, ''))
            ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, sort_order = EXCLUDED.sort_order,

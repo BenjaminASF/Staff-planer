@@ -60,7 +60,7 @@ Alla regler finns samlade i [`server/permissions.js`](server/permissions.js) och
    - Valfritt: `APP_TIME_ZONE` (standard `Europe/Stockholm`).
 4. Skapa en adress under **Settings → Networking → Generate Domain**.
 5. Öppna adressen. Första gången visas **Skapa admin-konto**. Ange installationskoden (`SETUP_CODE`) och välj användarnamn och lösenord.
-6. Följ introduktionen: arbetsplatsens namn, arbetsdagar och personal. Skiften Röd, Blå och Gul finns redan, var och en med sin färg. Skift och färger ändras under **Inställningar → Skift**.
+6. Följ introduktionen: arbetsplatsens namn, arbetsdagar och personal. Skiften Röd, Blå och Gul finns redan, var och en med sin färg. Skift och färger ändras under **Inställningar → Skift**. Varje färg kan bara höra till ett skift. När man lägger till ett skift visas de färger som ingen annan använder (Röd, Blå, Gul, Grön, Lila, Orange och Brun), och den första lediga är förvald.
 
 Databastabellerna skapas automatiskt när servern startar. När det första kontot finns går det inte att köra installationen igen, så `SETUP_CODE` kan tas bort.
 

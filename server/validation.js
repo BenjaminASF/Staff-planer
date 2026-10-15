@@ -26,8 +26,12 @@ function cleanEmail(value) {
   return email;
 }
 
-// Colors a shift can be marked with. An empty string means no color.
-const SHIFT_COLORS = ["red", "blue", "yellow"];
+// Colors a shift can be marked with, and their names. An empty string means no color.
+// Each color belongs to at most one shift.
+const SHIFT_COLOR_LABELS = Object.freeze({
+  red: "Röd", blue: "Blå", yellow: "Gul", green: "Grön", purple: "Lila", orange: "Orange", brown: "Brun"
+});
+const SHIFT_COLORS = Object.keys(SHIFT_COLOR_LABELS);
 
 function cleanShiftColor(value) {
   const color = String(value ?? "");
@@ -57,4 +61,5 @@ function cleanPersonFields(body, allowedFields) {
   return columns;
 }
 
-module.exports = { availabilityLabel, cleanText, cleanEmail, cleanShiftColor, cleanPersonFields, SHIFT_COLORS };
+module.exports = {
+  SHIFT_COLOR_LABELS, availabilityLabel, cleanText, cleanEmail, cleanShiftColor, cleanPersonFields, SHIFT_COLORS };
