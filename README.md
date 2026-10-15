@@ -37,7 +37,7 @@ Admin hamnar på **Översikt** efter inloggningen. Sidan visar alla skift sida v
 - Produktion idag och under månaden, jämfört med det dagliga målet.
 - Svinn under månaden i kg per skift.
 - Antal operatörer på plats och vem som är sjuk, på VAB, har semester eller inte är tillgänglig.
-- Hur många linjer varje skift kan köra samtidigt. Det räknas fram från de tillgängliga operatörerna och deras kompetens, med samma regler som autoschemat (avdelningens kompetens, krav på maskinen och GD-begränsning). För en linje som inte går att bemanna står det vad som saknas.
+- Hur många linjer varje skift kan köra samtidigt. Det räknas fram från de tillgängliga operatörerna och deras kompetens, med samma regler som autoschemat (avdelningens kompetens, krav på maskinen och GD-begränsning). Om någon linje inte går att bemanna står det kort vilken kompetens som saknas.
 - Kompetensen per skift jämfört med hur många som behövs för att köra alla linjer.
 
 Backup, dagens ändringar och länkar till inställningar, användare och personal ligger under **Fler inställningar**. Skiftledare och höger hand ser samma översikt som tidigare, för sitt eget skift.

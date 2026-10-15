@@ -5386,18 +5386,12 @@ function getRunnableLines(personIds, skills, restrictions) {
   }
   return lines.map(lineId => {
     const runnable = best.includes(lineId);
-    let reason = "";
-    if (!runnable) {
-      // Departments with fewer qualified people than this line and the runnable ones need together.
-      const short = Object.entries(getDepartmentNeed([...best, lineId])).map(([department, count]) => [department, count,
-        personIds.filter(personId => (skills[personId] || []).includes(department)
-          && !(department === "GD" && (restrictions[personId] || []).includes("GD"))).length])
-        .filter(([, count, qualified]) => qualified < count);
-      reason = short.length
-        ? short.map(([department, count, qualified]) => `${department}: ${qualified} tillgängliga, behöver ${count}`).join(", ")
-        : "personer med rätt kompetens behövs på flera platser samtidigt";
-    }
-    return { id: lineId, label: BREAK_LINE_LABELS[lineId] || lineId, runnable, reason };
+    // Departments with fewer qualified people than this line and the runnable ones need together.
+    const missing = runnable ? [] : Object.entries(getDepartmentNeed([...best, lineId]))
+      .filter(([department, count]) => personIds.filter(personId => (skills[personId] || []).includes(department)
+        && !(department === "GD" && (restrictions[personId] || []).includes("GD"))).length < count)
+      .map(([department]) => department);
+    return { id: lineId, label: BREAK_LINE_LABELS[lineId] || lineId, runnable, missing };
   });
 }
 
@@ -5464,6 +5458,13 @@ async function getAdminDashboardData() {
 const shiftColorClass = shift => shift.color ? ` shift-color-${shift.color}` : "";
 const competenceState = (available, need) => !need ? "" : available > need ? "good" : available === need ? "warn" : "bad";
 
+// One short line on why some lines cannot run.
+function lineShortageText(availableCount, missingLines) {
+  if (!availableCount) return "Ingen operatör på plats.";
+  const departments = [...new Set(missingLines.flatMap(line => line.missing))];
+  return departments.length ? `Saknar personal för ${departments.join(", ")}.` : "För få behöriga för att köra alla linjer samtidigt.";
+}
+
 function adminShiftCardHtml(data) {
   const { shift, leaders, operators, available, absent, lines } = data;
   const runnable = lines.filter(line => line.runnable).length;
@@ -5492,8 +5493,8 @@ function adminShiftCardHtml(data) {
     </div>
     ${lines.length ? `<div>
       <div class="admin-label">Linjer som kan köras idag</div>
-      <div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.runnable ? "ok" : "no"}" title="${escapeHtml(line.runnable ? "Kan bemannas" : line.reason)}">${escapeHtml(line.label)}<small>${line.runnable ? "Bemannad" : "Saknas"}</small></div>`).join("")}</div>
-      ${missing.length ? `<p class="admin-reason">${missing.map(line => `${escapeHtml(line.label)}: ${escapeHtml(line.reason)}`).join("<br>")}</p>` : ""}
+      <div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.runnable ? "ok" : "no"}" title="${escapeHtml(line.runnable ? "Kan bemannas" : line.missing.length ? `Saknar personal för ${line.missing.join(", ")}` : "För få behöriga samtidigt")}">${escapeHtml(line.label)}<small>${line.runnable ? "Bemannad" : "Saknas"}</small></div>`).join("")}</div>
+      ${missing.length ? `<p class="admin-reason">${escapeHtml(lineShortageText(available.length, missing))}</p>` : ""}
     </div>` : ""}
     <div>
       <div class="admin-label">Kompetens, tillgängliga idag</div>
