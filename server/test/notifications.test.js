@@ -97,13 +97,12 @@ describe("notifications", () => {
   test("sharing a to-do task tells the person it was shared with, once", async () => {
     await clearAll();
     const scope = `user:${leaderUser.id}`;
-    let saved = await leader.put(`/api/documents/${scope}/todos`, { value: [todo("Beställ handskar", [adminUser.id, operatorUser.id])], baseVersion: 0 });
+    let saved = await leader.put(`/api/documents/${scope}/todos`, { value: [todo("Beställ handskar", [adminUser.id])], baseVersion: 0 });
     assert.equal(saved.status, 200);
     const { notifications } = await notes(admin);
     assert.deepEqual(notifications.map(({ kind, actorName, title }) => ({ kind, actorName, title })), [
       { kind: "todoShared", actorName: "Lisa Ledare", title: "Beställ handskar" }
     ]);
-    assert.equal((await notes(operator)).unread, 0, "operators cannot see shared tasks");
 
     saved = await leader.put(`/api/documents/${scope}/todos`, {
       value: [todo("Beställ handskar", [adminUser.id, rightHandUser.id]), todo("Ny uppgift")], baseVersion: saved.data.version
@@ -111,5 +110,8 @@ describe("notifications", () => {
     assert.equal(saved.status, 200);
     assert.equal((await notes(admin)).notifications.length, 1, "saving again does not repeat the note");
     assert.equal((await notes(rightHand)).notifications[0]?.title, "Beställ handskar");
+
+    await leader.put(`/api/documents/${scope}/todos`, { value: [todo("Städa GD", [operatorUser.id])], baseVersion: saved.data.version });
+    assert.equal((await notes(operator)).notifications[0]?.title, "Städa GD", "operators have lists and are told too");
   });
 });

@@ -103,7 +103,7 @@ Ljudnotiserna är på från början och stängs av eller slås på under **Min p
 Klockan uppe till höger visar korta notiser, med en röd siffra för olästa:
 
 - **Skiftledare och höger hand** får en notis när en admin ändrar något i deras skift (till exempel schemat, personal eller någons status) eller i gemensamma inställningar och maskiner. Notisen säger vem som ändrade och vad.
-- **Den som får en uppgift delad** från någons att göra-lista får en notis med uppgiften och vem som delade den. Ett klick på notisen öppnar **Att göra**.
+- **Alla som får en uppgift delad** från någons att göra-lista får en notis med uppgiften och vem som delade den. Ett klick på notisen öppnar **Att göra**.
 
 Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan räknas notiserna som lästa, och **Rensa alla** tar bort dem. Notiser äldre än 30 dagar tas bort automatiskt.
 

@@ -73,8 +73,7 @@ async function notifyAdminChange(db, { user, scope, type = "", title = "", detai
 
 const sharedWithOf = item => Array.isArray(item?.sharedWith) ? item.sharedWith.filter(id => typeof id === "string") : [];
 
-// Tells each user a to-do task was just shared with. Only users who have a list
-// of their own can see shared tasks, so only they are told.
+// Tells each user a to-do task was just shared with.
 async function notifyTodosShared(db, { user, scope, before, after }) {
   if (personalScopeOwner(scope) !== user.id || !Array.isArray(after)) return 0;
   const earlier = new Map((Array.isArray(before) ? before : []).map(item => [item?.id, sharedWithOf(item)]));
@@ -83,7 +82,7 @@ async function notifyTodosShared(db, { user, scope, before, after }) {
     return sharedWithOf(item).filter(id => id !== user.id && !previous.includes(id)).map(id => ({ id, text: String(item.text || "") }));
   });
   if (!shares.length) return 0;
-  const { rows } = await db.query("SELECT id FROM users WHERE id = ANY($1::text[]) AND role <> $2", [shares.map(share => share.id), ROLES.OPERATOR]);
+  const { rows } = await db.query("SELECT id FROM users WHERE id = ANY($1::text[])", [shares.map(share => share.id)]);
   const valid = new Set(rows.map(row => row.id));
   let sent = 0;
   for (const share of shares.filter(share => valid.has(share.id))) {
