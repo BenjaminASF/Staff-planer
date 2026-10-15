@@ -1,46 +1,8 @@
 const { describe, test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
-const { startTestServer, SETUP_CODE } = require("./helpers");
+const { startTestServer, openStream, SETUP_CODE } = require("./helpers");
 
 const PASSWORD = "losenord123";
-
-// Opens /api/events for a client and collects the events it receives.
-async function openStream(server, client) {
-  const controller = new AbortController();
-  const response = await fetch(`${server.baseUrl}/api/events`, { headers: { cookie: client.cookie }, signal: controller.signal });
-  const events = [];
-  const waiters = [];
-  if (response.ok) {
-    void (async () => {
-      const decoder = new TextDecoder();
-      let buffer = "";
-      try {
-        for await (const chunk of response.body) {
-          buffer += decoder.decode(chunk, { stream: true });
-          let end;
-          while ((end = buffer.indexOf("\n\n")) >= 0) {
-            const block = buffer.slice(0, end);
-            buffer = buffer.slice(end + 2);
-            const type = block.match(/^event: (.*)$/m)?.[1];
-            const data = block.match(/^data: (.*)$/m)?.[1];
-            if (!type) continue;
-            events.push({ type, data: JSON.parse(data) });
-            waiters.splice(0).forEach(wake => wake());
-          }
-        }
-      } catch { /* aborted */ }
-    })();
-  }
-  const waitFor = async (predicate, timeoutMs = 3000) => {
-    const deadline = Date.now() + timeoutMs;
-    while (!events.some(predicate)) {
-      if (Date.now() > deadline) throw new Error(`Event not received; got ${JSON.stringify(events)}`);
-      await new Promise(resolve => { waiters.push(resolve); setTimeout(resolve, 50); });
-    }
-    return events.find(predicate);
-  };
-  return { status: response.status, events, waitFor, close: () => controller.abort() };
-}
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 300));
 

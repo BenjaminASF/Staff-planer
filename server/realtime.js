@@ -13,6 +13,7 @@ const RECONNECT_DELAY_MS = 2000;
 function canReceive(user, change) {
   if (change.type === "document") return canReadDocument(user, change.scope, change.key);
   if (change.type === "chat") return canUseChat(user);
+  if (change.type === "notification") return Boolean(user?.id) && change.userId === user.id;
   return change.type === "people" || change.type === "shifts";
 }
 
