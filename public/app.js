@@ -5083,6 +5083,21 @@ async function getScheduleForDate(dateKey) {
   return schedule ? normalizeSchedule(schedule) : createEmptySchedule();
 }
 
+async function getTrainingLocationsForDate(dateKey) {
+  const { weekKey } = getScheduleDayForDate(dateKey);
+  const locations = await getShiftDocument(`trainingLocations:${weekKey}`, null);
+  return locations ? normalizeTrainingLocations(locations) : createEmptyTrainingLocations();
+}
+
+// The person scheduled for training at a work place on a day, or "". Training staffs the
+// place, but the person keeps their registered competence; training adds none.
+function getTraineeAtWorkplace(schedule, trainingLocations, workplace, day) {
+  if (!day) return "";
+  const task = TASKS.filter(isTrainingTaskName)
+    .find(item => schedule?.[item]?.[day] && trainingLocations?.[item]?.[day] === workplace);
+  return task ? schedule[task][day] : "";
+}
+
 function showProductionCelebration(total, previousRecord) {
   const notice = document.createElement("div");
   notice.className = "record-celebration";
@@ -5193,8 +5208,9 @@ async function renderProduction() {
   const scope = getShiftScope();
   const retentionStart = getProductionRetentionStart();
   if (selectedProductionDate < retentionStart) selectedProductionDate = formatDateKey(new Date());
-  const [people, records, settings, schedule] = await Promise.all([
-    getPeople(), getProductionRecords(scope), getProductionSettings(), getScheduleForDate(selectedProductionDate)
+  const [people, records, settings, schedule, trainingLocations] = await Promise.all([
+    getPeople(), getProductionRecords(scope), getProductionSettings(), getScheduleForDate(selectedProductionDate),
+    getTrainingLocationsForDate(selectedProductionDate)
   ]);
   const configuredMachines = appSettings.productionMachines;
   const machines = [...new Set([...configuredMachines, ...Object.keys(records[selectedProductionDate]?.machines || {})])];
@@ -5205,10 +5221,18 @@ async function renderProduction() {
     return value >= 1 && value <= 5 ? value - 1 : -1;
   })();
   const scheduleDay = dayIndex >= 0 ? ALL_DAYS[dayIndex] : "";
+  // A person in training at a machine staffs it when nobody else is scheduled there.
+  const scheduledOperator = (currentSchedule, currentLocations, machine) => scheduleDay
+    ? currentSchedule[machine]?.[scheduleDay] || getTraineeAtWorkplace(currentSchedule, currentLocations, machine, scheduleDay)
+    : "";
+  const traineeName = machine => {
+    const personId = getTraineeAtWorkplace(schedule, trainingLocations, machine, scheduleDay);
+    return personId ? people.find(person => person.id === personId)?.name || "Borttagen person" : "";
+  };
   const record = stored || {
     date: selectedProductionDate,
     machines: Object.fromEntries(machines.map(machine => [machine, {
-      personId: scheduleDay ? schedule[machine]?.[scheduleDay] || "" : "", result: "", waste: "", comment: ""
+      personId: scheduledOperator(schedule, trainingLocations, machine), result: "", waste: "", comment: ""
     }]))
   };
   const total = machines.reduce((sum, machine) => sum + (Number(record.machines?.[machine]?.result) || 0), 0);
@@ -5224,7 +5248,7 @@ async function renderProduction() {
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
     <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
     <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small><button id="editFactoryRecordBtn" type="button">Ändra manuellt</button></article></div>
-    <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select></label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
+    <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
   `;
   renderProductionHistory(root, records, settings, scope);
@@ -5336,8 +5360,10 @@ async function renderProduction() {
     void renderProduction();
   });
   root.querySelector("#syncScheduleBtn").addEventListener("click", async () => {
-    const currentSchedule = await getScheduleForDate(selectedProductionDate);
-    machines.forEach(machine => { field(machine, "personId").value = scheduleDay ? currentSchedule[machine]?.[scheduleDay] || "" : ""; });
+    const [currentSchedule, currentLocations] = await Promise.all([
+      getScheduleForDate(selectedProductionDate), getTrainingLocationsForDate(selectedProductionDate)
+    ]);
+    machines.forEach(machine => { field(machine, "personId").value = scheduledOperator(currentSchedule, currentLocations, machine); });
     queueSave("day");
   });
   root.querySelector("#editFactoryRecordBtn").addEventListener("click", async () => {
@@ -5478,12 +5504,15 @@ function getScheduleDayForDate(dateKey) {
 // Which lines the schedule mans on one day. A line is manned when every place on it has a scheduled
 // person who is available and has the competence. A person counts on one line only; a place that
 // belongs to several lines (Logimark on line 2 and 3) is shared by them, as set in the settings.
-function getScheduledLines({ schedule, day, peopleById, skills, restrictions, record }) {
-  const placed = workplace => (day && schedule?.[workplace]?.[day]) || "";
+function getScheduledLines({ schedule, trainingLocations, day, peopleById, skills, restrictions, record }) {
+  // A person in training at a place staffs it when nobody else is scheduled there.
+  const traineeAt = workplace => schedule?.[workplace]?.[day] ? "" : getTraineeAtWorkplace(schedule, trainingLocations, workplace, day);
+  const placed = workplace => (day && (schedule?.[workplace]?.[day] || traineeAt(workplace))) || "";
   const nameOf = personId => peopleById.get(personId)?.name || "Borttagen person";
   const lines = Object.keys(BREAK_LINE_WORKPLACES).map(lineId => {
     const workplaces = getLineWorkplaces(lineId);
     const ruleGaps = getLineRuleGaps(lineId);
+    const training = [];
     const issues = ruleGaps.length ? [] : workplaces.flatMap(workplace => {
       const personId = placed(workplace);
       const person = peopleById.get(personId);
@@ -5492,6 +5521,11 @@ function getScheduledLines({ schedule, day, peopleById, skills, restrictions, re
       const status = getPersonAvailability(person);
       if (status !== "available") return [`${workplace}: ${person.name} är ${getAvailabilityLabel(status).toLocaleLowerCase("sv-SE")}`];
       const gaps = workplaceSkillGaps(personId, workplace, skills, restrictions);
+      // Training staffs the place but adds no competence: missing skills are shown, not counted against the line.
+      if (traineeAt(workplace)) {
+        training.push(`${workplace}: ${person.name} (Utbildning)${gaps.length ? `, ${gaps.join(" och ")}` : ""}`);
+        return [];
+      }
       return gaps.length ? [`${workplace}: ${person.name} ${gaps.join(" och ")}`] : [];
     });
     const seen = new Map();
@@ -5503,7 +5537,7 @@ function getScheduledLines({ schedule, day, peopleById, skills, restrictions, re
     });
     const machine = workplaces.find(workplace => appSettings.productionMachines.includes(workplace));
     return {
-      id: lineId, label: BREAK_LINE_LABELS[lineId] || lineId, workplaces, ruleGaps, issues,
+      id: lineId, label: BREAK_LINE_LABELS[lineId] || lineId, workplaces, ruleGaps, issues, training,
       production: machine && record ? Number(record.machines?.[machine]?.result) > 0 : null
     };
   });
@@ -5580,10 +5614,11 @@ async function getAdminDashboardData() {
   const monthStart = `${today.slice(0, 8)}01`;
   const linesDate = adminLinesDate || today;
   const { day: linesDay, weekKey } = getScheduleDayForDate(linesDate);
-  const [allPeople, departments, skills, restrictions, settings, events, recordsByShift, schedules] = await Promise.all([
+  const [allPeople, departments, skills, restrictions, settings, events, recordsByShift, schedules, trainingLocationsByShift] = await Promise.all([
     getAllPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getMachineRestrictions(),
     getProductionSettings(), getAuditLog(), Promise.all(shifts.map(shift => getProductionRecords(shift.id))),
-    Promise.all(shifts.map(shift => getDocument(shift.id, `schedule:${weekKey}`, null)))
+    Promise.all(shifts.map(shift => getDocument(shift.id, `schedule:${weekKey}`, null))),
+    Promise.all(shifts.map(shift => getDocument(shift.id, `trainingLocations:${weekKey}`, null)))
   ]);
   const peopleById = new Map(allPeople.map(person => [person.id, person]));
   const need = getDepartmentNeed(Object.keys(BREAK_LINE_WORKPLACES));
@@ -5614,7 +5649,7 @@ async function getAdminDashboardData() {
       })),
       hasSchedule: Boolean(linesDay) && TASKS.some(task => schedules[index]?.[task]?.[linesDay]),
       lines: getScheduledLines({
-        schedule: schedules[index], day: linesDay, peopleById, skills, restrictions,
+        schedule: schedules[index], trainingLocations: trainingLocationsByShift[index], day: linesDay, peopleById, skills, restrictions,
         record: recordsByShift[index][linesDate] || null
       }),
       capacity: getLineCapacity(available, skills, restrictions)
@@ -5641,7 +5676,8 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
   const staffed = lines.filter(line => line.staffed).length;
   const lineText = line => line.ruleGaps.length ? "Regel saknas" : line.staffed ? "Bemannad" : "Ej bemannad";
   const productionText = line => line.production === null ? "" : line.production ? "I produktion" : "Ingen produktion rapporterad";
-  const lineTitle = line => [lineText(line), productionText(line), ...line.ruleGaps, ...line.issues].filter(Boolean).join("\n");
+  const lineTitle = line => [lineText(line), productionText(line), ...line.ruleGaps, ...line.issues, ...line.training].filter(Boolean).join("\n");
+  const inTraining = hasSchedule ? lines.filter(line => line.training.length) : [];
   const problems = hasSchedule ? lines.filter(line => !line.staffed && (line.issues.length || line.ruleGaps.length)) : [];
   const unknown = capacity.canRunAll === null;
   const stats = [
@@ -5664,6 +5700,7 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
         <summary><span class="show-label">Visa detaljer</span><span class="hide-label">Dölj detaljer</span></summary>
         <div class="admin-capacity-body">
           ${notes.length ? `<ul class="admin-capacity-reasons">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}
+          ${inTraining.length ? `<div><div class="admin-label">Under utbildning</div><ul class="admin-line-issues">${inTraining.map(line => `<li><strong>${escapeHtml(line.label)}:</strong> ${escapeHtml(line.training.join(" · "))}</li>`).join("")}</ul></div>` : ""}
           ${problems.length ? `<div><div class="admin-label">Saknas på linjerna</div><ul class="admin-line-issues">${problems.map(line => `<li><strong>${escapeHtml(line.label)}:</strong> ${escapeHtml([...line.ruleGaps, ...line.issues].join(" · "))}</li>`).join("")}</ul></div>` : ""}
           ${competence.length ? `<div><div class="admin-label">Kompetens, tillgängliga idag</div>
             <table class="admin-mini-table"><thead><tr><th>Kompetens</th><th>Behövs</th><th>Tillgängliga</th></tr></thead><tbody>
@@ -5689,7 +5726,7 @@ function adminLineRulesHtml() {
   return `<details class="card admin-rules"${gaps.length ? " open" : ""}>
     <summary><h3>Regler för linjebemanning</h3>${gaps.length ? `<span class="admin-pill warn">${gaps.length} ${gaps.length === 1 ? "regel behöver" : "regler behöver"} definieras</span>` : '<span class="admin-muted">Från inställningar och kompetens</span>'}</summary>
     ${gaps.length ? `<div class="admin-rules-gaps"><strong>Behöver definieras innan linjerna kan räknas:</strong><ul>${gaps.map(gap => `<li>${escapeHtml(gap)}</li>`).join("")}</ul></div>` : ""}
-    <p class="admin-sub">En linje är bemannad när varje plats på linjen har en schemalagd operatör som är Tillgänglig och har platsens kompetens, utan GD-begränsning på GD. En operatör räknas bara på en linje. I produktion betyder att produktion är rapporterad för linjens maskin den dagen. Om skiftet kan köra alla linjer räknas fram från alla tillgängliga operatörer och deras kompetens.${shared.length ? ` ${shared.join(", ")} hör till flera linjer och delas av dem.` : ""} Platserna per linje ändras under Inställningar → Rastlinjer, och kompetenskraven under Kompetens.</p>
+    <p class="admin-sub">En linje är bemannad när varje plats på linjen har en schemalagd operatör som är Tillgänglig och har platsens kompetens, utan GD-begränsning på GD. En operatör med Utbildning på platsen i schemat bemannar den också, men får ingen kompetens av utbildningen; saknad kompetens visas under Under utbildning. En operatör räknas bara på en linje. I produktion betyder att produktion är rapporterad för linjens maskin den dagen. Om skiftet kan köra alla linjer räknas fram från alla tillgängliga operatörer och deras kompetens.${shared.length ? ` ${shared.join(", ")} hör till flera linjer och delas av dem.` : ""} Platserna per linje ändras under Inställningar → Rastlinjer, och kompetenskraven under Kompetens.</p>
     <div class="admin-rules-lines">${lineIds.map(lineId => `<div><h4>${escapeHtml(BREAK_LINE_LABELS[lineId] || lineId)}</h4><ul>${getLineWorkplaces(lineId).map(placeHtml).join("") || "<li>Inga platser</li>"}</ul></div>`).join("")}</div>
   </details>`;
 }
@@ -5954,8 +5991,9 @@ async function renderScheduleViewer() {
   const focusSelector = focused ? ["viewerView", "viewerWeek", "viewerDay"].filter(key => key in focused.dataset)
     .map(key => `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${focused.dataset[key]}"]`)[0] : "";
   const weekKey = formatDateKey(weekStart);
-  const [schedule, leaders, extraLocations, shared, people] = await Promise.all([
+  const [schedule, leaders, trainingLocations, extraLocations, shared, people] = await Promise.all([
     getDocument(shiftId, `schedule:${weekKey}`, null), getDocument(shiftId, `trainingLeaders:${weekKey}`, null),
+    getDocument(shiftId, `trainingLocations:${weekKey}`, null),
     getDocument(shiftId, `extraPersonLocations:${weekKey}`, null), getDocument(shiftId, `scheduleShared:${weekKey}`, null), getAllPeople()
   ]);
   // A newer render may have started while this one waited.
@@ -5967,8 +6005,14 @@ async function renderScheduleViewer() {
   const production = getProductionWorkplaces();
   const others = TASKS.filter(task => !production.includes(task));
   const placed = (task, day) => schedule?.[task]?.[day] || "";
+  // A production place is staffed by training there when nobody else is scheduled.
+  const traineeAt = (task, day) => production.includes(task) && !placed(task, day)
+    ? getTraineeAtWorkplace(schedule, trainingLocations, task, day) : "";
+  const staffedBy = (task, day) => placed(task, day) || traineeAt(task, day);
   const usedOthers = others.filter(task => DAYS.some(day => placed(task, day)));
   const personHtml = (task, day) => {
+    const trainee = traineeAt(task, day);
+    if (trainee) return `<span class="viewer-person">${escapeHtml(peopleById.get(trainee)?.name || "Borttagen person")} (Utbildning)</span>`;
     const person = peopleById.get(placed(task, day));
     if (!placed(task, day)) return '<span class="viewer-empty">Obemannad</span>';
     const status = person && isToday(day) ? getPersonAvailability(person) : "available";
@@ -5985,7 +6029,7 @@ async function renderScheduleViewer() {
     body = '<div class="empty-state">Inget schema är skapat för den här veckan.</div>';
   } else if (view === "day") {
     const day = DAYS.includes(scheduleViewer.day) ? scheduleViewer.day : DAYS[0];
-    const staffed = production.filter(task => placed(task, day)).length;
+    const staffed = production.filter(task => staffedBy(task, day)).length;
     const row = task => `<div class="viewer-row"><span class="viewer-task">${escapeHtml(task)}</span><span class="viewer-cell">${personHtml(task, day)}</span></div>`;
     const othersToday = usedOthers.filter(task => placed(task, day));
     body = `<div class="viewer-days" role="tablist" aria-label="Dag">${DAYS.map(item => `<button type="button" role="tab" data-viewer-day="${item}" aria-selected="${item === day}">${dayLabel(item)}${isToday(item) ? " · idag" : ""}</button>`).join("")}</div>
