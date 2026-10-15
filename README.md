@@ -76,9 +76,15 @@ Den tidigare versionen sparade allt krypterat i en enda webbläsare. Så här fl
 
 Ange det gamla lösenordet och välj vilket skift personalen och schemana ska höra till. Datan dekrypteras i webbläsaren och skickas sedan till servern.
 
+### Uppdateringar i realtid
+
+När någon sparar en ändring syns den direkt hos alla andra som har appen öppen, utan att de behöver ladda om sidan. Servern skickar ett meddelande till öppna sidor (Server-Sent Events på `/api/events`) som sedan hämtar det som ändrats och ritar om vyn. Den som håller på att skriva i ett fält eller har en dialogruta öppen får uppdateringen när fältet lämnas eller dialogen stängs, så inget man skriver försvinner. Varje sida får bara veta om ändringar i data den själv får läsa. Om anslutningen bryts kopplar sidan upp sig igen och hämtar allt på nytt.
+
+Ändringarna meddelas via Postgres (`LISTEN`/`NOTIFY`), så det fungerar även om appen körs på flera instanser.
+
 ### Chatt
 
-Admin och skiftledare har en gemensam chatt bakom knappen i nedre högra hörnet. Där kan man skicka text och bilder, och man kan också klistra in en bild direkt. Nya meddelanden visas med en röd siffra på knappen och en kort förhandsvisning. Appen kollar efter nya meddelanden var 15:e sekund, och var 4:e sekund när chatten är öppen.
+Admin och skiftledare har en gemensam chatt bakom knappen i nedre högra hörnet. Där kan man skicka text och bilder, och man kan också klistra in en bild direkt. Nya meddelanden visas med en röd siffra på knappen och en kort förhandsvisning. Nya meddelanden syns direkt; som reserv kollar appen också var 15:e sekund, och var 4:e sekund när chatten är öppen.
 
 Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och sparas sedan i databasen. Man kan ta bort sina egna meddelanden, och admin kan ta bort alla. Meddelanden tas aldrig bort automatiskt, och chatten ingår inte i appens backupfil.
 
@@ -118,6 +124,7 @@ TEST_DATABASE_URL=postgres://postgres@localhost:5432/staffplanner_test npm test
 - `public/` innehåller webbappen: HTML-sidorna, `app.js`, `style.css` och service worker.
 - `server/` innehåller Express-servern:
   - `permissions.js` samlar alla rollregler.
+  - `realtime.js` skickar ändringar till öppna sidor i realtid.
   - `routes/` innehåller API:t.
   - `migrations/` innehåller databasschemat.
   - `test/` innehåller testerna.

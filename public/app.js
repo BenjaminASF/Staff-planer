@@ -449,6 +449,7 @@ async function apiRequest(method, path, body) {
 const documentCache = new Map();
 const documentBatches = new Map();
 const documentSaveQueues = new Map();
+const documentsBeingSaved = new Set();
 const documentCacheKey = (scope, key) => `${scope}|${key}`;
 
 function loadDocument(scope, key) {
@@ -509,6 +510,7 @@ function saveDocument(scope, key, value) {
   const save = previous.catch(() => {}).then(async () => {
     const entry = await loadDocument(scope, key);
     documentCache.set(cacheKey, { ...entry, value: snapshot });
+    documentsBeingSaved.add(cacheKey);
     try {
       const saved = await apiRequest("PUT", `/documents/${encodeURIComponent(scope)}/${encodeURIComponent(key)}`, {
         value: snapshot,
@@ -528,6 +530,9 @@ function saveDocument(scope, key, value) {
         conflictRefreshTimeoutId = setTimeout(() => void reloadSharedData(), 400);
       }
       throw error;
+    } finally {
+      documentsBeingSaved.delete(cacheKey);
+      recheckDeferredLiveChange(scope, key);
     }
   });
   documentSaveQueues.set(cacheKey, save);
@@ -6183,6 +6188,7 @@ function initializeAppContent() {
   setupShareSchedule();
   setupAutoLock();
   setupChat();
+  setupLiveUpdates();
   void setupOnboarding();
   setupMobileNavigation();
   setupFilterControls();
@@ -6544,6 +6550,135 @@ async function reloadSharedData() {
   await refreshAppViews();
 }
 
+// Live updates: the server tells the page when someone saves something, and the
+// views that show it are drawn again. A redraw waits while the user is typing or
+// has a dialog open, so nothing they are in the middle of is lost.
+const LIVE_REFRESH_DELAY_MS = 250;
+const LIVE_BUSY_RECHECK_MS = 1500;
+const LIVE_RECONNECT_MS = 15000;
+const LIVE_TEXT_INPUT_TYPES = new Set(["text", "search", "number", "email", "tel", "password", "url", "date", "time", "datetime-local", "month", "week"]);
+const liveUpdates = {
+  source: null, reconnectTimer: null, refreshTimer: null, connected: false, renewing: false,
+  changedDocuments: new Set(), peopleChanged: false, shiftsChanged: false, reloadAll: false,
+  deferredVersions: new Map()
+};
+
+function setupLiveUpdates() {
+  if (liveUpdates.source || !currentUser || typeof EventSource === "undefined") return;
+  clearTimeout(liveUpdates.reconnectTimer);
+  const source = new EventSource("/api/events");
+  liveUpdates.source = source;
+  source.addEventListener("ready", () => {
+    // Changes saved while the connection was down were missed; fetch everything again.
+    if (liveUpdates.connected && !liveUpdates.renewing) queueLiveRefresh({ reloadAll: true });
+    liveUpdates.connected = true;
+    liveUpdates.renewing = false;
+  });
+  source.addEventListener("renew", () => { liveUpdates.renewing = true; });
+  source.addEventListener("resync", () => queueLiveRefresh({ reloadAll: true }));
+  source.addEventListener("change", event => {
+    try {
+      handleLiveChange(JSON.parse(event.data));
+    } catch (error) {
+      console.warn("Live update could not be read:", error);
+    }
+  });
+  source.addEventListener("error", () => {
+    if (source.readyState !== EventSource.CLOSED) return;
+    // The browser gives up after an error response; try again a little later.
+    liveUpdates.source = null;
+    if (currentUser) liveUpdates.reconnectTimer = setTimeout(setupLiveUpdates, LIVE_RECONNECT_MS);
+  });
+}
+
+function handleLiveChange(change) {
+  if (change.type === "chat") {
+    if (getChatElements()) void pollChat();
+    return;
+  }
+  if (change.type === "people") return queueLiveRefresh({ peopleChanged: true });
+  if (change.type === "shifts") return queueLiveRefresh({ shiftsChanged: true });
+  if (change.type !== "document") return;
+  const cacheKey = documentCacheKey(change.scope, change.key);
+  const cached = documentCache.get(cacheKey);
+  // Not shown on this page, or already the version this page saved itself.
+  if (!cached || (change.version && cached.version >= change.version)) return;
+  if (documentsBeingSaved.has(cacheKey)) {
+    // Probably this page's own save; compared when the save has finished.
+    const deferred = liveUpdates.deferredVersions.get(cacheKey) ?? -1;
+    liveUpdates.deferredVersions.set(cacheKey, Math.max(deferred, change.version || Infinity));
+    return;
+  }
+  queueLiveRefresh({ document: cacheKey });
+}
+
+function recheckDeferredLiveChange(scope, key) {
+  const cacheKey = documentCacheKey(scope, key);
+  if (!liveUpdates.deferredVersions.has(cacheKey)) return;
+  const version = liveUpdates.deferredVersions.get(cacheKey);
+  liveUpdates.deferredVersions.delete(cacheKey);
+  handleLiveChange({ type: "document", scope, key, version: Number.isFinite(version) ? version : 0 });
+}
+
+function queueLiveRefresh({ document: cacheKey, peopleChanged, shiftsChanged, reloadAll } = {}) {
+  if (cacheKey) liveUpdates.changedDocuments.add(cacheKey);
+  if (peopleChanged) liveUpdates.peopleChanged = true;
+  if (shiftsChanged) liveUpdates.shiftsChanged = true;
+  if (reloadAll) liveUpdates.reloadAll = true;
+  clearTimeout(liveUpdates.refreshTimer);
+  liveUpdates.refreshTimer = setTimeout(() => void runLiveRefresh(), LIVE_REFRESH_DELAY_MS);
+}
+
+function isUserBusyEditing() {
+  if (productionAutosave.run) return true;
+  if ([...document.querySelectorAll('[aria-modal="true"]')].some(modal => modal.getClientRects().length)) return true;
+  const active = document.activeElement;
+  if (!active || active.closest("#chatWidget")) return false;
+  if (active.isContentEditable || active.tagName === "TEXTAREA") return true;
+  return active.tagName === "INPUT" && LIVE_TEXT_INPUT_TYPES.has(active.type);
+}
+
+let liveRefreshRunning = false;
+async function runLiveRefresh() {
+  if (!currentUser || liveRefreshRunning) return;
+  if (isUserBusyEditing()) {
+    liveUpdates.refreshTimer = setTimeout(() => void runLiveRefresh(), LIVE_BUSY_RECHECK_MS);
+    return;
+  }
+  const { changedDocuments, peopleChanged, shiftsChanged, reloadAll } = liveUpdates;
+  if (!changedDocuments.size && !peopleChanged && !shiftsChanged && !reloadAll) return;
+  liveUpdates.changedDocuments = new Set();
+  liveUpdates.peopleChanged = liveUpdates.shiftsChanged = liveUpdates.reloadAll = false;
+  liveRefreshRunning = true;
+  try {
+    if (shiftsChanged || reloadAll) shifts = (await apiRequest("GET", "/shifts")).shifts;
+    if (reloadAll) {
+      invalidateCachedData();
+    } else {
+      changedDocuments.forEach(cacheKey => documentCache.delete(cacheKey));
+      if (peopleChanged || shiftsChanged) peopleCache = null;
+    }
+    await loadAppSettings();
+    await loadCustomWorkItems();
+    await refreshAppViews();
+  } catch (error) {
+    console.warn("Live update failed:", error);
+  } finally {
+    liveRefreshRunning = false;
+    // Changes that arrived during the redraw get one of their own.
+    const { changedDocuments: queued, peopleChanged: people, shiftsChanged: shiftList, reloadAll: all } = liveUpdates;
+    if (queued.size || people || shiftList || all) queueLiveRefresh();
+  }
+}
+
+// A redraw that waited for typing to finish runs when the field is left.
+document.addEventListener("focusout", () => {
+  if (liveUpdates.refreshTimer) {
+    clearTimeout(liveUpdates.refreshTimer);
+    liveUpdates.refreshTimer = setTimeout(() => void runLiveRefresh(), LIVE_REFRESH_DELAY_MS);
+  }
+});
+
 async function openAppUI() {
   if (!canOpenPage(getCurrentPage())) {
     location.replace("index.html");
@@ -6727,6 +6862,12 @@ document.addEventListener("DOMContentLoaded", () => {
 
 window.addEventListener("pageshow", event => {
   pageIsUnloading = false;
+  // A page restored from the back/forward cache has a closed event stream.
+  if (event.persisted && currentUser && liveUpdates.source?.readyState === EventSource.CLOSED) {
+    liveUpdates.source = null;
+    setupLiveUpdates();
+    queueLiveRefresh({ reloadAll: true });
+  }
   if (!event.persisted || !document.getElementById("breakPlanner")) return;
   resetBreakPlannerToToday();
   renderWeekNavigation();

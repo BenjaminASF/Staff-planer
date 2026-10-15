@@ -8,7 +8,8 @@ async function startTestServer(appOptions = {}) {
   const pool = createPool(TEST_DATABASE_URL);
   await pool.query("DROP SCHEMA public CASCADE; CREATE SCHEMA public;");
   await runMigrations(pool);
-  const server = createApp({ pool, setupCode: SETUP_CODE, trustProxy: false, ...appOptions }).listen(0);
+  const app = createApp({ pool, setupCode: SETUP_CODE, trustProxy: false, ...appOptions });
+  const server = app.listen(0);
   await new Promise(resolve => server.once("listening", resolve));
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   return {
@@ -16,7 +17,9 @@ async function startTestServer(appOptions = {}) {
     baseUrl,
     client: () => new ApiClient(baseUrl),
     async close() {
-      await new Promise(resolve => server.close(resolve));
+      const closing = new Promise(resolve => server.close(resolve));
+      await app.locals.realtime.close();
+      await closing;
       await pool.end();
     }
   };

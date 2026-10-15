@@ -1,6 +1,6 @@
 const path = require("node:path");
 const express = require("express");
-const { HttpError, loadUser, requireAppHeader, createLoginLimiter } = require("./auth");
+const { HttpError, loadUser, requireAppHeader, requireUser, createLoginLimiter } = require("./auth");
 const { authRoutes } = require("./routes/auth");
 const { peopleRoutes } = require("./routes/people");
 const { shiftRoutes } = require("./routes/shifts");
@@ -8,11 +8,15 @@ const { documentRoutes } = require("./routes/documents");
 const { adminRoutes } = require("./routes/admin");
 const { chatRoutes } = require("./routes/chat");
 const { createMailer } = require("./mailer");
+const { createRealtimeHub } = require("./realtime");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy = true, mailer = createMailer(), appUrl = process.env.APP_URL || "" } = {}) {
   const app = express();
+  const realtime = createRealtimeHub(pool);
+  // Lets the server end open event streams when it shuts down.
+  app.locals.realtime = realtime;
   // Railway terminates HTTPS in front of the app; this makes req.secure and req.ip correct.
   if (trustProxy) app.set("trust proxy", 1);
   app.disable("x-powered-by");
@@ -30,6 +34,7 @@ function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy 
   api.use(express.json({ limit: "5mb" }));
   api.use(requireAppHeader);
   api.use(loadUser(pool));
+  api.get("/events", requireUser, realtime.handler);
   api.use(authRoutes({ pool, setupCode, loginLimiter: createLoginLimiter() }));
   api.use("/people", peopleRoutes({ pool }));
   api.use("/shifts", shiftRoutes({ pool }));
