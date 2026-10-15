@@ -106,7 +106,7 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     const allowed = editablePersonFields(req.user, person).filter(field => ["name", "phone", "email", "availability"].includes(field));
     const changes = cleanPersonFields(req.body || {}, allowed);
     if (changes.availability && changes.availability !== person.availability && !canSetAvailability(req.user, changes.availability)) {
-      throw new HttpError(403, "Endast skiftledare och admin kan ange statusen Inte tillgänglig.");
+      throw new HttpError(403, "Endast admin, skiftledare och höger hand kan ange statusen Inte tillgänglig.");
     }
     if (!Object.keys(changes).length) return res.json(await buildMePayload(pool, req.user));
     await withTransaction(pool, async client => {

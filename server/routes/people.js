@@ -2,7 +2,7 @@ const express = require("express");
 const { HttpError, hashPassword, normalizeUsername, validateUsername, validatePassword, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  ROLES, ROLE_VALUES, AVAILABILITY_VALUES, isAdmin, canSeeAllPeople, canCreatePerson, editablePersonFields,
+  ROLES, ROLE_VALUES, AVAILABILITY_VALUES, isAdmin, roleNeedsShift, canSeeAllPeople, canCreatePerson, editablePersonFields,
   canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canDeleteAccount, canSetAvailability
 } = require("../permissions");
 const {
@@ -37,7 +37,7 @@ async function insertAccount(db, person, { username: rawUsername, password, role
   validateUsername(username);
   validatePassword(password);
   validateRole(role);
-  if (role === ROLES.LEADER && !person.shiftId) throw new HttpError(400, "En skiftledare måste tillhöra ett skift.");
+  if (roleNeedsShift(role) && !person.shiftId) throw new HttpError(400, "En skiftledare eller höger hand måste tillhöra ett skift.");
   const { rows } = await db.query("SELECT 1 FROM users WHERE username = $1", [username]);
   if (rows.length) throw new HttpError(409, "Användarnamnet är redan upptaget.");
   await db.query(
@@ -50,8 +50,8 @@ function peopleRoutes({ pool }) {
   const router = express.Router();
   router.use(requireUser);
 
-  // Admins and shift leaders get everyone. Operators get their own record plus
-  // the names in their own shift, which is what the read-only schedule needs.
+  // Admins, shift leaders and right hands get everyone. Operators get their own
+  // record plus the names in their own shift, which is what the read-only schedule needs.
   router.get("/", async (req, res) => {
     if (canSeeAllPeople(req.user)) {
       const { rows } = await pool.query(`${PERSON_SELECT} ORDER BY lower(p.name)`);
@@ -97,14 +97,14 @@ function peopleRoutes({ pool }) {
     if (!allowed.length) throw new HttpError(403, "Du har inte behörighet att ändra den här personen.");
     const changes = cleanPersonFields(req.body || {}, allowed);
     if (changes.availability && changes.availability !== person.availability && !canSetAvailability(req.user, changes.availability)) {
-      throw new HttpError(403, "Endast skiftledare och admin kan ange statusen Inte tillgänglig.");
+      throw new HttpError(403, "Endast admin, skiftledare och höger hand kan ange statusen Inte tillgänglig.");
     }
     if (!Object.keys(changes).length) return res.json({ person });
     await withTransaction(pool, async client => {
       if ("shift_id" in changes) {
         await assertShiftExists(client, changes.shift_id);
-        if (!changes.shift_id && person.account?.role === ROLES.LEADER) {
-          throw new HttpError(400, "En skiftledare måste tillhöra ett skift. Byt roll först.");
+        if (!changes.shift_id && roleNeedsShift(person.account?.role)) {
+          throw new HttpError(400, "En skiftledare eller höger hand måste tillhöra ett skift. Byt roll först.");
         }
       }
       const sets = Object.keys(changes).map((column, index) => `${column} = $${index + 2}`);
@@ -172,7 +172,7 @@ function peopleRoutes({ pool }) {
         if (person.account.role === ROLES.ADMIN && await countAdmins(client) <= 1) {
           throw new HttpError(400, "Det måste finnas minst en admin.");
         }
-        if (body.role === ROLES.LEADER && !person.shiftId) throw new HttpError(400, "En skiftledare måste tillhöra ett skift.");
+        if (roleNeedsShift(body.role) && !person.shiftId) throw new HttpError(400, "En skiftledare eller höger hand måste tillhöra ett skift.");
         await client.query("UPDATE users SET role = $2, updated_at = now() WHERE person_id = $1", [person.id, body.role]);
       }
       if ("username" in body && normalizeUsername(body.username) !== person.account.username) {

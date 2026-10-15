@@ -122,25 +122,25 @@ const DEFAULT_APP_SETTINGS = {
 };
 let appSettings = { ...DEFAULT_APP_SETTINGS };
 
-const ROLES = { ADMIN: "admin", LEADER: "shift_leader", OPERATOR: "operator" };
-const ROLE_LABELS = { admin: "Admin", shift_leader: "Skiftledare", operator: "Operatör" };
+const ROLES = { ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" };
+const ROLE_LABELS = { admin: "Admin", shift_leader: "Skiftledare", right_hand: "Höger hand", operator: "Operatör" };
 // Pages each role may open. The server enforces the same rules (server/permissions.js);
 // this only decides what is shown.
 const PAGE_ACCESS = {
-  "dashboard.html": [ROLES.ADMIN, ROLES.LEADER],
-  "index.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR],
-  "produktion.html": [ROLES.ADMIN, ROLES.LEADER],
-  "rast.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR],
-  "personal.html": [ROLES.ADMIN, ROLES.LEADER],
-  "anvandare.html": [ROLES.ADMIN, ROLES.LEADER],
+  "dashboard.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
+  "index.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
+  "produktion.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
+  "rast.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
+  "personal.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
+  "anvandare.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "testresultat.html": [ROLES.ADMIN],
   "maskiner.html": [ROLES.ADMIN],
   "bedomning.html": [ROLES.ADMIN],
-  "todo.html": [ROLES.ADMIN, ROLES.LEADER],
-  "add.html": [ROLES.ADMIN, ROLES.LEADER],
+  "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
+  "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
-  "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR],
-  "hjalp.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.OPERATOR]
+  "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
+  "hjalp.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR]
 };
 // Shift leaders may look at other shifts here, read-only. Everywhere else they work in their own shift.
 const SHIFT_BROWSING_PAGES = ["index.html", "rast.html"];
@@ -333,8 +333,13 @@ function makeId() {
 const hasRole = (...roles) => Boolean(currentUser) && roles.includes(currentUser.role);
 const isAdmin = () => hasRole(ROLES.ADMIN);
 const isShiftLeader = () => hasRole(ROLES.LEADER);
+const isRightHand = () => hasRole(ROLES.RIGHT_HAND);
 const isOperator = () => hasRole(ROLES.OPERATOR);
-const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+// Everyone who plans a shift. A right hand plans only their own shift.
+const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND);
+// Machines, departments and settings are shared by all shifts.
+const canChangeSharedSettings = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+const canChangeProductionTarget = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
 
 function getCurrentPage() {
   return location.pathname.split("/").pop() || "index.html";
@@ -388,7 +393,7 @@ function getShiftScope() {
 }
 
 function canEditShift(shiftId) {
-  return Boolean(shiftId) && (isAdmin() || (isShiftLeader() && shiftId === getOwnShiftId()));
+  return Boolean(shiftId) && (isAdmin() || ((isShiftLeader() || isRightHand()) && shiftId === getOwnShiftId()));
 }
 
 function canEditActiveShift() {
@@ -398,8 +403,11 @@ function canEditActiveShift() {
 function canEditPerson(person) {
   if (!person || !currentUser) return false;
   if (isAdmin()) return true;
+  if (!person.shiftId || person.shiftId !== getOwnShiftId()) return false;
   // Shift leaders manage the staff in their shift, but never an admin's details.
-  return isShiftLeader() && Boolean(person.shiftId) && person.shiftId === getOwnShiftId() && person.account?.role !== ROLES.ADMIN;
+  if (isShiftLeader()) return person.account?.role !== ROLES.ADMIN;
+  // Right hands manage the operators and the staff without a login.
+  return isRightHand() && (!person.account || person.account.role === ROLES.OPERATOR);
 }
 
 // Server API.
@@ -1567,7 +1575,7 @@ async function saveCustomWorkItems(items) {
 }
 
 async function getWorkItemTrash() {
-  if (!canManageStaff()) return [];
+  if (!canChangeSharedSettings()) return [];
   const items = await getGlobalDocument("workItemTrash", []);
   return Array.isArray(items) ? items : [];
 }
@@ -1647,7 +1655,7 @@ async function saveAssessments(assessments) {
 async function getDepartments() {
   const departments = await getGlobalDocument("departments", null);
   if (!Array.isArray(departments)) {
-    if (canManageStaff()) await saveDepartments(DEFAULT_DEPARTMENTS);
+    if (canChangeSharedSettings()) await saveDepartments(DEFAULT_DEPARTMENTS);
     return [...DEFAULT_DEPARTMENTS];
   }
   return departments;
@@ -1676,7 +1684,7 @@ async function saveTestResults(results) {
   await saveGlobalDocument("testResults", results);
 }
 
-// Competence is read by shift leaders too, since scheduling depends on it.
+// Competence is read by shift leaders and right hands too, since scheduling depends on it.
 async function getCompetenceDocument(key) {
   if (!canManageStaff()) return {};
   const value = await getGlobalDocument(key, {});
@@ -2218,7 +2226,7 @@ async function renderSettings() {
       <div><h3>Allmänt</h3><p>Grundinställningar som gäller alla skift.</p></div>
       <label>Arbetsplatsens namn<input id="organizationNameSetting" value="${escapeHtml(appSettings.organizationName || "")}" placeholder="Företag eller avdelning" /></label>
       <fieldset><legend>Arbetsdagar</legend><div class="settings-day-grid">${ALL_DAYS.map(day => `<label><input type="checkbox" name="workDay" value="${day}"${DAYS.includes(day) ? " checked" : ""} /> ${day}</label>`).join("")}</div></fieldset>
-      <label>Automatisk utloggning för admin och skiftledare<select id="autoLockSetting"><option value="5">Efter 5 minuter</option><option value="15">Efter 15 minuter</option><option value="30">Efter 30 minuter</option><option value="60">Efter 1 timme</option><option value="0">Aldrig</option></select></label>
+      <label>Automatisk utloggning för admin, skiftledare och höger hand<select id="autoLockSetting"><option value="5">Efter 5 minuter</option><option value="15">Efter 15 minuter</option><option value="30">Efter 30 minuter</option><option value="60">Efter 1 timme</option><option value="0">Aldrig</option></select></label>
       <label>E-post för feedback<input id="feedbackEmailSetting" type="email" value="${escapeHtml(appSettings.feedbackEmail || "")}" placeholder="namn@foretag.se" /></label>
       <label>Maskiner i produktion<input id="productionMachinesSetting" value="${escapeHtml(appSettings.productionMachines.join(", "))}" /><small>Separera med kommatecken.</small></label>
       <label>Uppgifter för extra person<textarea id="extraAssignmentsSetting" rows="3">${escapeHtml(appSettings.extraAssignments.join("\n"))}</textarea><small>En uppgift per rad.</small></label>
@@ -2332,10 +2340,10 @@ function renderHelpPage() {
       ["Bygg arbetsplatser", "Lägg till maskiner, avdelningar, utbildningar och extraplatser. De gäller alla skift och kan pausas och ordnas."],
       ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
       ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
-      ["Roller", "Admin kan allt. Skiftledare ändrar sitt eget skift och ser andra skift. Operatörer ser sitt schema och ändrar sin profil."],
+      ["Roller", "Admin kan allt. Skiftledare ändrar sitt eget skift och ser andra skift. Höger hand hjälper skiftledaren och sköter sitt eget skift, men ändrar inte det dagliga målet. Operatörer ser sitt schema och ändrar sin profil."],
       ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen."]
     ];
-  root.innerHTML = `<section class="card help-intro"><div><h3>Kom igång</h3><p>All data sparas på servern, så alla ser samma schema från sina egna enheter.</p></div><a class="btn primary" href="${isOperator() ? "profil.html" : "installningar.html"}">${isOperator() ? "Öppna min profil" : "Öppna inställningar"}</a></section><div class="help-grid">${steps.map(([title, text], index) => `<article class="card"><span>${index + 1}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></article>`).join("")}</div><section class="card help-feedback"><div><h3>Förslag eller problem?</h3><p>Skicka feedback till den adress som angetts i Inställningar.</p></div>${appSettings.feedbackEmail ? `<a class="btn" href="mailto:${escapeHtml(appSettings.feedbackEmail)}?subject=Staff%20Planner%20feedback">Skicka feedback</a>` : isOperator() ? "" : '<a class="btn" href="installningar.html">Ange feedbackadress</a>'}</section>`;
+  root.innerHTML = `<section class="card help-intro"><div><h3>Kom igång</h3><p>All data sparas på servern, så alla ser samma schema från sina egna enheter.</p></div><a class="btn primary" href="${canChangeSharedSettings() ? "installningar.html" : "profil.html"}">${canChangeSharedSettings() ? "Öppna inställningar" : "Öppna min profil"}</a></section><div class="help-grid">${steps.map(([title, text], index) => `<article class="card"><span>${index + 1}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></article>`).join("")}</div><section class="card help-feedback"><div><h3>Förslag eller problem?</h3><p>Skicka feedback till den adress som angetts i Inställningar.</p></div>${appSettings.feedbackEmail ? `<a class="btn" href="mailto:${escapeHtml(appSettings.feedbackEmail)}?subject=Staff%20Planner%20feedback">Skicka feedback</a>` : isOperator() ? "" : '<a class="btn" href="installningar.html">Ange feedbackadress</a>'}</section>`;
 }
 
 // First sign-in of the first admin: name the workplace, create shifts and add staff.
@@ -4198,8 +4206,8 @@ function ensurePeopleShiftFilter() {
   select.id = "peopleShiftFilter";
   select.setAttribute("aria-label", "Visa skift");
   select.innerHTML = `<option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}<option value="none">Utan skift</option>`;
-  // Shift leaders start in their own shift; admins see everyone.
-  select.value = isShiftLeader() && getOwnShiftId() ? getOwnShiftId() : "";
+  // Shift leaders and right hands start in their own shift; admins see everyone.
+  select.value = !isAdmin() && getOwnShiftId() ? getOwnShiftId() : "";
   select.addEventListener("change", () => void renderPeople());
   bar.prepend(select);
 }
@@ -4998,7 +5006,7 @@ async function renderProduction() {
   const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
   root.innerHTML = `
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
-    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Dagligt mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="Gäller från valt datum och framåt. Tidigare dagar behåller sitt mål." /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
+    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Dagligt mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller från valt datum och framåt. Tidigare dagar behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
     <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small><button id="editFactoryRecordBtn" type="button">Ändra manuellt</button></article></div>
     <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select></label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
@@ -5490,6 +5498,7 @@ async function renderUsersPage() {
             <option value="accounts">Alla med inloggning</option>
             ${isAdmin() ? `<option value="${ROLES.ADMIN}">Admin</option>` : ""}
             <option value="${ROLES.LEADER}">Skiftledare</option>
+            <option value="${ROLES.RIGHT_HAND}">Höger hand</option>
             <option value="${ROLES.OPERATOR}">Operatörer</option>
             <option value="none">Utan inloggning</option>
             <option value="">Alla personer</option>
@@ -5512,13 +5521,14 @@ async function renderUsersPage() {
   root.querySelector("#usersStats").innerHTML = `
     ${isAdmin() ? `<article><span>Admin</span><strong>${countRole(ROLES.ADMIN)}</strong><small>full behörighet</small></article>` : ""}
     <article><span>Skiftledare</span><strong>${countRole(ROLES.LEADER)}</strong><small>ändrar sitt skift</small></article>
+    <article><span>Höger hand</span><strong>${countRole(ROLES.RIGHT_HAND)}</strong><small>skiftledarens stöd</small></article>
     <article><span>Operatörer</span><strong>${countRole(ROLES.OPERATOR)}</strong><small>ser schemat</small></article>
     <article class="${waiting ? "stat-yellow" : ""}"><span>Väntar på nytt lösenord</span><strong>${waiting}</strong><small>har inte loggat in än</small></article>
     <article><span>Utan inloggning</span><strong>${people.length - withAccount.length}</strong><small>personal</small></article>`;
 
   const query = usersPageFilters.query.trim().toLocaleLowerCase();
   const { role, shift } = usersPageFilters;
-  const roleOrder = { [ROLES.ADMIN]: 0, [ROLES.LEADER]: 1, [ROLES.OPERATOR]: 2 };
+  const roleOrder = { [ROLES.ADMIN]: 0, [ROLES.LEADER]: 1, [ROLES.RIGHT_HAND]: 2, [ROLES.OPERATOR]: 3 };
   const visible = people
     .filter(person => {
       if (role === "accounts" && !person.account) return false;
@@ -5528,7 +5538,7 @@ async function renderUsersPage() {
       return !query || `${person.name} ${person.account?.username || ""} ${person.company || ""}`.toLocaleLowerCase().includes(query);
     })
     .sort((first, second) =>
-      (roleOrder[first.account?.role] ?? 3) - (roleOrder[second.account?.role] ?? 3) || first.name.localeCompare(second.name, "sv"));
+      (roleOrder[first.account?.role] ?? 4) - (roleOrder[second.account?.role] ?? 4) || first.name.localeCompare(second.name, "sv"));
 
   const list = root.querySelector("#usersList");
   list.innerHTML = visible.map(person => {
@@ -5621,7 +5631,7 @@ function shiftOptionsHtml(selectedId, { allowNone = true } = {}) {
 }
 
 function roleOptionsHtml(selectedRole = ROLES.OPERATOR) {
-  const roles = isAdmin() ? [ROLES.OPERATOR, ROLES.LEADER, ROLES.ADMIN] : [ROLES.OPERATOR];
+  const roles = isAdmin() ? [ROLES.OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER, ROLES.ADMIN] : [ROLES.OPERATOR];
   return roles.map(role => `<option value="${role}"${role === selectedRole ? " selected" : ""}>${ROLE_LABELS[role]}</option>`).join("");
 }
 
@@ -5940,6 +5950,10 @@ async function syncWorkItemCompetency(item, previousItem = null) {
 function renderExtraAssignmentManager(statusText = "") {
   const panel = document.getElementById("extraAssignmentManager");
   if (!panel) return;
+  if (!canChangeSharedSettings()) {
+    panel.remove();
+    return;
+  }
   panel.innerHTML = `<div class="extra-assignment-manager-heading"><h3>Uppgifter för extra personer</h3><span class="extra-assignment-count">${EXTRA_PERSON_ASSIGNMENTS.length} uppgifter</span></div>
     <p>Lägg till uppgifter som kan väljas för alla extra personer i schemat. Borttagna uppgifter ligger kvar i sparade placeringar.</p>
     <form class="extra-assignment-form"><label>Ny uppgift<input name="assignment" required maxlength="120" placeholder="Exempel: Hjälp på lagret" /></label><button class="btn primary" type="submit">+ Lägg till uppgift</button></form>
@@ -5988,6 +6002,10 @@ function renderExtraAssignmentManager(statusText = "") {
 
 async function setupWorkItemManager() {
   const form = document.getElementById("workItemForm");
+  if (form && !canChangeSharedSettings()) {
+    form.closest(".work-item-manager")?.remove();
+    return;
+  }
   const nameInput = document.getElementById("workItemName");
   const afterSelect = document.getElementById("workItemAfter");
   const schemaCheckbox = document.getElementById("workItemSchema");
@@ -6235,7 +6253,7 @@ function setupChat() {
   widget.innerHTML = `
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
-      <header class="chat-header"><div><strong>Chatt</strong><small>Admin och skiftledare</small></div><button type="button" class="chat-close" aria-label="Stäng chatten">×</button></header>
+      <header class="chat-header"><div><strong>Chatt</strong><small>Admin, skiftledare och höger hand</small></div><button type="button" class="chat-close" aria-label="Stäng chatten">×</button></header>
       <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
       <form class="chat-form">
         <div class="chat-attachment hidden"><img alt="Vald bild" /><button type="button" class="chat-attachment-remove" aria-label="Ta bort bilden">×</button></div>
