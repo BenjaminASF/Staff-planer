@@ -1,4 +1,4 @@
-const CACHE_NAME = "staff-planner-v20261015-20";
+const CACHE_NAME = "staff-planner-v20261015-21";
 const APP_FILES = ["./", "./index.html", "./dashboard.html", "./produktion.html", "./rast.html", "./personal.html", "./anvandare.html", "./testresultat.html", "./maskiner.html", "./bedomning.html", "./todo.html", "./add.html", "./installningar.html", "./hjalp.html", "./profil.html", "./style.css", "./theme.js", "./app.js", "./manifest.webmanifest", "./app-icon.svg"];
 const APP_URLS = new Set(APP_FILES.map(path => new URL(path, self.registration.scope).pathname));
 
@@ -20,6 +20,9 @@ self.addEventListener("fetch", event => {
     if (!response.ok || response.type === "opaque") return;
     const copy = response.clone();
     const cache = await caches.open(CACHE_NAME);
+    // A versioned asset (?v=) never changes, so it is written to the cache only once
+    // instead of on every page change.
+    if (url.searchParams.has("v") && await cache.match(event.request)) return;
     await cache.put(event.request, copy);
   }).catch(error => console.debug("Offline cache update skipped:", error)));
   event.respondWith(network.catch(async () => {
