@@ -6447,6 +6447,8 @@ footer { color: var(--g-muted) !important; }
 .notification-toggle svg { display: block; }
 .notification-badge { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px; border: 2px solid light-dark(#fff, #0b1220); border-radius: 999px; background: #dc2626; color: #fff; font-size: 10px; font-weight: 850; line-height: 16px; text-align: center; }
 .notification-panel { position: absolute; top: 46px; right: 0; width: min(360px, calc(100vw - 32px)); max-height: min(70vh, 520px); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--card-bg); box-shadow: var(--shadow); }
+/* The panel sets its own display, so the shared .hidden class needs the extra weight. */
+.notification-panel.hidden { display: none; }
 .notification-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .notification-clear { border: 0; background: none; color: var(--primary); font: inherit; font-size: 13px; cursor: pointer; }
 .notification-clear:hover { text-decoration: underline; }
