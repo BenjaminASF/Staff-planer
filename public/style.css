@@ -6433,13 +6433,9 @@ a.notification-item:hover { background: color-mix(in srgb, var(--primary) 8%, tr
 .admin-period { display: inline-flex; overflow: hidden; border: 1px solid var(--border); border-radius: 11px; background: var(--card-bg); }
 .admin-period button { min-height: 40px; padding: 0 14px; border: 0; background: none; color: var(--muted); font: inherit; font-weight: 650; cursor: pointer; }
 .admin-period button[aria-pressed="true"] { background: var(--primary-soft); color: var(--primary); }
-.admin-more { position: relative; }
-.admin-more > summary { display: inline-flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
-.admin-more > summary::-webkit-details-marker { display: none; }
-.admin-more > summary::after { content: "▾"; font-size: 12px; }
 .admin-menu-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; display: grid; width: min(300px, calc(100vw - 32px)); padding: 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--card-bg); box-shadow: 0 18px 40px rgba(10, 20, 40, .18); }
 .admin-menu-panel h4 { margin: 10px 10px 4px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
-.admin-menu-panel h4:first-child { margin-top: 4px; }
+.admin-menu-panel h4:first-child, .admin-nav-account:empty + .admin-nav-tools h4:first-child { margin-top: 4px; }
 .admin-menu-panel a, .admin-menu-panel button { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
 .admin-menu-panel a:hover, .admin-menu-panel button:hover, .admin-menu-panel a:focus-visible, .admin-menu-panel button:focus-visible { background: var(--primary-soft); }
 .admin-menu-panel small { color: var(--muted); font-size: 12px; }

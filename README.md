@@ -51,7 +51,7 @@ Varje skiftkort har två knappar:
 - **Visa schema** öppnar skiftets schema för läsning, utan redigeringsknappar. Man växlar mellan dagsvy och veckovy och bläddrar mellan veckor. I dagens kolumn syns det om någon som är schemalagd är sjuk eller borta.
 - **Fler inställningar** leder till sidorna där man ändrar schema och rast, registrerar produktion och hanterar personal, användare, kompetens, testresultat och bedömning. Sidan öppnas med just det skiftet valt.
 
-Backup, dagens ändringar och länkar till inställningar, användare och personal ligger under **Inställningar** högst upp på översikten. Skiftledare och höger hand ser samma översikt som tidigare, för sitt eget skift.
+På översikten finns även **Data** under **Meny**: dagens ändringar och export och import av backup. Skiftledare och höger hand ser samma översikt som tidigare, för sitt eget skift.
 
 Operatörer ser en veckas schema och rastplan först när admin eller skiftledaren har klickat på **Dela schema** för den veckan. Delningen kan tas tillbaka med **Sluta dela**.
 
@@ -138,7 +138,7 @@ Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och 
 
 ### Backup
 
-Admin kan exportera och importera all data under **Inställningar** eller **Översikt → Inställningar**. E-postadresserna ingår. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
+Admin kan exportera och importera all data under **Inställningar** eller **Översikt → Meny → Data**. E-postadresserna ingår. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
 
 ## Utveckling lokalt
 

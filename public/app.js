@@ -5863,7 +5863,6 @@ async function renderAdminDashboard(root) {
     .filter(([, count]) => count)
     .map(([status, count]) => `${count} ${getAvailabilityLabel(status).toLocaleLowerCase("sv-SE")}`);
   const currentTargets = [...new Set(shiftData.map(item => item.todayTarget))];
-  const moreLink = (href, label, detail = "") => `<a href="${href}">${label}${detail ? `<small>${detail}</small>` : ""}</a>`;
   root.innerHTML = `
     <div class="admin-toolbar">
       <label class="admin-date">Linjer för <input type="date" id="adminLinesDate" value="${escapeHtml(data.linesDate)}" required></label>
@@ -5871,24 +5870,6 @@ async function renderAdminDashboard(root) {
         <button type="button" data-period="today" aria-pressed="${adminDashboardPeriod === "today"}">Idag</button>
         <button type="button" data-period="month" aria-pressed="${adminDashboardPeriod === "month"}">Månaden</button>
       </div>
-      <details class="admin-more" data-popover>
-        <summary class="btn">Inställningar</summary>
-        <div class="admin-menu-panel">
-          <h4>Data</h4>
-          <button type="button" id="adminAuditToggle">Dagens ändringar<small>${events.length} st</small></button>
-          <button type="button" id="exportDataBtn">Exportera backup</button>
-          <button type="button" id="importDataBtn">Importera backup</button>
-          <input id="importDataInput" type="file" accept="application/json,.json" hidden>
-          <h4>Inställningar</h4>
-          ${moreLink("installningar.html", "Inställningar")}
-          ${moreLink("anvandare.html", "Användare och roller")}
-          ${moreLink("personal.html", "Personal")}
-          ${moreLink("add.html", "Lägg till personal")}
-          <h4>Övrigt</h4>
-          ${moreLink("testresultat.html", "Testresultat")}
-          ${moreLink("hjalp.html", "Hjälp")}
-        </div>
-      </details>
     </div>
     <section class="admin-kpis" aria-label="Alla skift">
       <article class="card"><span>Producerat idag</span><strong>${formatNumber(todayTotal)} <small>box</small></strong><p>${reported.length} av ${shiftData.length} skift har rapporterat</p></article>
@@ -5924,12 +5905,21 @@ async function renderAdminDashboard(root) {
     adminDashboardData = data;
     root.querySelector(".admin-shifts").innerHTML = next.shiftData.map(item => adminShiftCardHtml(item, next)).join("");
   });
-  const more = root.querySelector(".admin-more");
-  root.querySelector("#adminAuditToggle").addEventListener("click", () => {
+  // The overview's own tools sit in the top bar's Meny, next to the links to every page.
+  const menu = document.querySelector("#adminTopbar .admin-nav-menu");
+  const tools = menu?.querySelector(".admin-nav-tools");
+  if (tools) {
+    tools.innerHTML = `<h4>Data</h4>
+      <button type="button" id="adminAuditToggle">Dagens ändringar<small>${events.length} st</small></button>
+      <button type="button" id="exportDataBtn">Exportera backup</button>
+      <button type="button" id="importDataBtn">Importera backup</button>
+      <input id="importDataInput" type="file" accept="application/json,.json" hidden>`;
+  }
+  document.getElementById("adminAuditToggle")?.addEventListener("click", () => {
     adminAuditOpen = !adminAuditOpen;
     const section = root.querySelector("#adminAuditSection");
     section.hidden = !adminAuditOpen;
-    more.open = false;
+    if (menu) menu.open = false;
     if (adminAuditOpen) section.scrollIntoView({ behavior: "smooth", block: "start" });
   });
   if (root.dataset.adminBound !== "true") {
@@ -6209,6 +6199,7 @@ function setupAdminTopbar() {
       <summary class="btn">Meny</summary>
       <div class="admin-menu-panel admin-nav-panel">
         <div class="admin-nav-account"></div>
+        <div class="admin-nav-tools"></div>
         ${groups.map(([title, pages]) => `<h4>${title}</h4>${pages.map(page => link(page, "admin-nav-item")).join("")}`).join("")}
         <div class="admin-nav-footer"></div>
       </div>
