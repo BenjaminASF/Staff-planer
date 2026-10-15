@@ -49,7 +49,7 @@ Admin har ingen sidomeny. Överst finns en kompakt menyrad med genvägar till Ö
 
 Varje skiftkort har två knappar:
 - **Visa schema** öppnar skiftets schema för läsning, utan redigeringsknappar. Man växlar mellan dagsvy och veckovy och bläddrar mellan veckor. I dagens kolumn syns det om någon som är schemalagd är sjuk eller borta.
-- **Fler inställningar** leder till sidorna där man ändrar schema och rast, registrerar produktion och hanterar personal, användare, kompetens, testresultat och bedömning. Sidan öppnas med just det skiftet valt.
+- **Fler inställningar** leder till sidorna där man ändrar schema och rast, registrerar produktion och hanterar personal, användare, kompetens, testresultat och bedömning. Sidan öppnas med just det skiftet valt, även i en ny flik: skiftet följer med i länken och väljs som aktivt skift och i skiftfiltren på Personal, Kompetens och Användare.
 
 På översikten finns även **Data** under **Meny**: dagens ändringar och export och import av backup. Skiftledare och höger hand ser samma översikt som tidigare, för sitt eget skift.
 
