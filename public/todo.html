@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Att göra</title>
-  <script src="theme.js?v=20261015-6"></script>
-  <link rel="stylesheet" href="style.css?v=20261015-6" />
+  <script src="theme.js?v=20261015-7"></script>
+  <link rel="stylesheet" href="style.css?v=20261015-7" />
 </head>
 <body class="app-booting">
   <div id="authScreen" class="auth-screen">
@@ -41,7 +41,7 @@
       <main class="main">
         <div class="header">
           <h2>Att göra</h2>
-          <p>Din egen lista – ingen annan ser den. Avklarade uppgifter försvinner vid dagens slut.</p>
+          <p>Din egen lista – ingen annan ser den, utom de uppgifter du själv väljer att dela. Avklarade uppgifter försvinner vid dagens slut.</p>
         </div>
         <section class="card todo-card">
           <form id="todoForm" class="todo-form">
@@ -55,10 +55,17 @@
           <div id="todoNotice" class="todo-notice hidden" role="status"></div>
           <div id="todoList" class="todo-list"></div>
         </section>
+        <section class="card todo-card">
+          <div class="todo-heading">
+            <h3>Delade med mig</h3>
+            <span id="sharedTodoCount">0 uppgifter</span>
+          </div>
+          <div id="sharedTodoList" class="todo-list"></div>
+        </section>
       </main>
     </div>
     <footer style="margin-top:30px; text-align:center; color:#94a3b8;">© 2026 Mizzar — Staff Planner</footer>
   </div>
-<script src="app.js?v=20261015-6"></script>
+<script src="app.js?v=20261015-7"></script>
 </body>
 </html>

@@ -1896,6 +1896,7 @@ async function saveScheduleTemplates(templates) {
 }
 
 // "Att göra" is personal: every user has their own list, which nobody else sees.
+// A task's `sharedWith` lists the user ids it is shared with; they see it read-only.
 const getPersonalScope = () => currentUser ? `user:${currentUser.id}` : "";
 
 async function getTodos() {
@@ -1926,6 +1927,7 @@ async function renderTodoList() {
   const count = document.getElementById("todoCount");
   const notice = document.getElementById("todoNotice");
   if (!list) return;
+  void renderSharedTodos();
 
   const currentWeek = getTodoWeekKey();
   const currentDay = getTodoDayKey();
@@ -1962,23 +1964,41 @@ async function renderTodoList() {
     return;
   }
 
+  const recipients = await getTodoRecipients();
   todos.forEach(todo => {
-    const item = document.createElement("label");
+    const item = document.createElement("div");
+    const label = document.createElement("label");
     const checkbox = document.createElement("input");
     const text = document.createElement("span");
     const isComplete = Boolean(todo.completedAt);
     const isOverdue = !isComplete && todo.createdWeek < currentWeek;
     item.className = `todo-item${isComplete ? " is-complete" : ""}${isOverdue ? " is-overdue" : ""}`;
+    label.className = "todo-item-main";
     checkbox.type = "checkbox";
     checkbox.checked = isComplete;
     checkbox.setAttribute("aria-label", `Markera ${todo.text} som klar`);
     text.textContent = todo.text;
+    label.append(checkbox, text);
+    item.append(label);
     if (isOverdue) {
       const overdueLabel = document.createElement("small");
       overdueLabel.textContent = "Inte klar från förra veckan";
-      item.append(checkbox, text, overdueLabel);
-    } else {
-      item.append(checkbox, text);
+      item.append(overdueLabel);
+    }
+    const shareButton = document.createElement("button");
+    shareButton.type = "button";
+    shareButton.className = "btn todo-share-button";
+    shareButton.textContent = "Dela";
+    shareButton.setAttribute("aria-label", `Dela ${todo.text}`);
+    shareButton.setAttribute("aria-expanded", "false");
+    shareButton.addEventListener("click", () => toggleTodoSharePanel(item, shareButton, todo, recipients));
+    item.append(shareButton);
+    const sharedNames = getTodoSharedWith(todo).map(id => recipients.find(recipient => recipient.id === id)?.name).filter(Boolean);
+    if (sharedNames.length) {
+      const sharedLabel = document.createElement("p");
+      sharedLabel.className = "todo-shared-with";
+      sharedLabel.textContent = `Delad med ${sharedNames.join(", ")}`;
+      item.append(sharedLabel);
     }
     checkbox.addEventListener("change", async () => {
       todo.completedAt = checkbox.checked ? new Date().toISOString() : "";
@@ -1989,6 +2009,84 @@ async function renderTodoList() {
     });
     list.appendChild(item);
   });
+}
+
+const getTodoSharedWith = todo => Array.isArray(todo.sharedWith) ? todo.sharedWith.filter(id => typeof id === "string") : [];
+
+// The users a task can be shared with: everyone else who has a list of their own.
+async function getTodoRecipients() {
+  try {
+    return (await apiRequest("GET", "/todos/recipients")).recipients || [];
+  } catch (error) {
+    console.warn("Could not load who tasks can be shared with:", error);
+    return [];
+  }
+}
+
+// Picks exactly who one task is shared with. Saved into the latest list so
+// tasks added meanwhile on another device are kept.
+function toggleTodoSharePanel(item, button, todo, recipients) {
+  const open = item.querySelector(".todo-share-panel");
+  if (open) {
+    open.remove();
+    button.setAttribute("aria-expanded", "false");
+    return;
+  }
+  const selected = new Set(getTodoSharedWith(todo));
+  const panel = document.createElement("form");
+  panel.className = "todo-share-panel";
+  panel.innerHTML = recipients.length
+    ? `<fieldset><legend>Dela med</legend>${recipients.map(recipient => `<label><input type="checkbox" value="${escapeHtml(recipient.id)}"${selected.has(recipient.id) ? " checked" : ""} /> ${escapeHtml(recipient.name)}</label>`).join("")}</fieldset>
+      <p class="todo-share-hint">Bara de du väljer ser uppgiften. De kan inte ändra den.</p>
+      <div class="todo-share-actions"><button class="btn" type="button" data-share-cancel>Avbryt</button><button class="btn primary" type="submit">Spara</button></div>`
+    : '<p class="todo-share-hint">Det finns ingen att dela med ännu.</p><div class="todo-share-actions"><button class="btn" type="button" data-share-cancel>Stäng</button></div>';
+  panel.querySelector("[data-share-cancel]").addEventListener("click", () => {
+    panel.remove();
+    button.setAttribute("aria-expanded", "false");
+    button.focus();
+  });
+  panel.addEventListener("submit", async event => {
+    event.preventDefault();
+    const sharedWith = [...panel.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
+    const todos = await getTodos();
+    const stored = todos.find(entry => entry.id === todo.id);
+    if (!stored) return renderTodoList();
+    if (sharedWith.length) stored.sharedWith = sharedWith;
+    else delete stored.sharedWith;
+    await saveTodos(todos);
+    showAppToast(sharedWith.length ? "Uppgiften är delad." : "Uppgiften delas inte längre.");
+    await renderTodoList();
+  });
+  item.append(panel);
+  button.setAttribute("aria-expanded", "true");
+  panel.querySelector("input, button")?.focus();
+}
+
+// Tasks others have shared with me, grouped by owner. Read-only.
+async function renderSharedTodos() {
+  const list = document.getElementById("sharedTodoList");
+  if (!list) return;
+  const count = document.getElementById("sharedTodoCount");
+  let items;
+  try {
+    items = (await apiRequest("GET", "/todos/shared")).items || [];
+  } catch (error) {
+    console.warn("Could not load shared tasks:", error);
+    return;
+  }
+  const currentDay = getTodoDayKey();
+  const visible = items.filter(item => !item.completedAt || (item.completedDay || getTodoDayKey(item.completedAt)) === currentDay);
+  const remaining = visible.filter(item => !item.completedAt).length;
+  if (count) count.textContent = `${remaining} ${remaining === 1 ? "uppgift kvar" : "uppgifter kvar"}`;
+  if (!visible.length) {
+    list.innerHTML = '<div class="todo-empty"><span>Ingen har delat någon uppgift med dig.</span></div>';
+    return;
+  }
+  const owners = [...new Map(visible.map(item => [item.ownerId, item.ownerName])).entries()];
+  list.innerHTML = owners.map(([ownerId, ownerName]) => `<div class="todo-shared-owner"><h4>Från ${escapeHtml(ownerName)}</h4>${visible
+    .filter(item => item.ownerId === ownerId)
+    .map(item => `<div class="todo-item is-shared${item.completedAt ? " is-complete" : ""}"><span class="todo-shared-state" aria-hidden="true">${item.completedAt ? "✓" : "○"}</span><span>${escapeHtml(item.text)}</span>${item.completedAt ? '<small class="todo-shared-done">Klar</small>' : ""}</div>`)
+    .join("")}</div>`).join("");
 }
 
 function setupTodoPage() {
@@ -6744,6 +6842,10 @@ function handleLiveChange(change, { fromSave = false } = {}) {
     if (getChatElements()) void pollChat();
     return;
   }
+  if (change.type === "sharedTodos") {
+    void renderSharedTodos();
+    return;
+  }
   if (change.type === "people") return queueLiveRefresh({ peopleChanged: true });
   if (change.type === "shifts") return queueLiveRefresh({ shiftsChanged: true });
   if (change.type !== "document") return;
@@ -6780,6 +6882,7 @@ function queueLiveRefresh({ document: cacheKey, peopleChanged, shiftsChanged, re
 function isUserBusyEditing() {
   if (productionAutosave.run) return true;
   if ([...document.querySelectorAll('[aria-modal="true"]')].some(modal => modal.getClientRects().length)) return true;
+  if (document.querySelector(".todo-share-panel")) return true;
   const active = document.activeElement;
   if (!active || active.closest("#chatWidget")) return false;
   if (active.isContentEditable || active.tagName === "TEXTAREA") return true;

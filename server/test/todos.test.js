@@ -57,6 +57,48 @@ describe("personal to-do lists", () => {
     assert.equal((await admin.post("/api/audit", { scope: `user:${adminUser.id}`, title: "x" })).status, 403);
   });
 
+  test("a right hand has a private list too", async () => {
+    await admin.post("/api/people", { name: "Hanna Hand", shiftId: shift.id, account: { username: "hanna", password: PASSWORD, role: "right_hand", mustChangePassword: false } });
+    const hand = server.client();
+    const handUser = (await hand.login("hanna", PASSWORD)).user;
+    assert.equal((await hand.put(`/api/documents/user:${handUser.id}/todos`, { value: [todo("Hand")], baseVersion: 0 })).status, 200);
+    assert.deepEqual(await ownTexts(hand, handUser), ["Hand"]);
+    assert.deepEqual((await leader.get(`/api/documents?scope=user:${handUser.id}&keys=todos`)).data.forbidden, ["todos"]);
+    assert.deepEqual((await hand.get(`/api/documents?scope=user:${adminUser.id}&keys=todos`)).data.forbidden, ["todos"]);
+  });
+
+  test("a task is seen only by the people its owner shares it with, read-only", async () => {
+    const recipients = (await leader.get("/api/todos/recipients")).data.recipients;
+    assert.deepEqual(recipients.map(recipient => recipient.name), ["Ada Admin", "Hanna Hand"], "everyone else with a list, no operators");
+    const handId = recipients.find(recipient => recipient.name === "Hanna Hand").id;
+    const hand = server.client();
+    await hand.login("hanna", PASSWORD);
+
+    const current = (await leader.get(`/api/documents?scope=user:${leaderUser.id}&keys=todos`)).data.documents.todos;
+    const shared = { ...todo("Beställ handskar"), sharedWith: [handId] };
+    const value = [...current.value, shared, todo("Hemlig")];
+    assert.equal((await leader.put(`/api/documents/user:${leaderUser.id}/todos`, { value, baseVersion: current.version })).status, 200);
+
+    const forHand = (await hand.get("/api/todos/shared")).data.items;
+    assert.deepEqual(forHand.map(item => [item.text, item.ownerName]), [["Beställ handskar", "Lisa Ledare"]]);
+    assert.deepEqual((await admin.get("/api/todos/shared")).data.items, [], "not shared with the admin");
+    assert.deepEqual((await leader.get("/api/todos/shared")).data.items, [], "your own tasks are not listed as shared with you");
+    assert.deepEqual((await hand.get(`/api/documents?scope=user:${leaderUser.id}&keys=todos`)).data.forbidden, ["todos"], "the rest of the list stays private");
+    assert.equal((await hand.put(`/api/documents/user:${leaderUser.id}/todos`, { value: [], baseVersion: 2 })).status, 403);
+
+    const latest = (await leader.get(`/api/documents?scope=user:${leaderUser.id}&keys=todos`)).data.documents.todos;
+    const unshared = latest.value.map(item => item.text === "Beställ handskar" ? { ...item, sharedWith: [] } : item);
+    assert.equal((await leader.put(`/api/documents/user:${leaderUser.id}/todos`, { value: unshared, baseVersion: latest.version })).status, 200);
+    assert.deepEqual((await hand.get("/api/todos/shared")).data.items, []);
+    const restored = await leader.put(`/api/documents/user:${leaderUser.id}/todos`, { value: current.value, baseVersion: latest.version + 1 });
+    assert.equal(restored.status, 200);
+  });
+
+  test("operators cannot share or see shared tasks", async () => {
+    assert.equal((await operator.get("/api/todos/recipients")).status, 403);
+    assert.equal((await operator.get("/api/todos/shared")).status, 403);
+  });
+
   test("to-do lists no longer belong to a shift", async () => {
     assert.equal((await admin.put(`/api/documents/user:${adminUser.id}/schedule:2026-10-12`, { value: {}, baseVersion: 0 })).status, 400);
     const { rows } = await server.pool.query("SELECT 1 FROM documents WHERE scope = $1 AND key = 'todos'", [shift.id]);
