@@ -1663,6 +1663,11 @@ input:focus {
 @media (max-width: 640px) { .dashboard-stats { grid-template-columns: repeat(2,minmax(0,1fr)); }.filter-bar { align-items: stretch; flex-direction: column; }.machine-detail-panel { grid-template-columns: 1fr; }.skill-notes-label { grid-column: auto; }.modal-overlay { padding: 8px; }.schedule-preview-modal { border-radius: 14px; } }
 
 /* Daily GD production. */
+.production-month { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px 16px; margin-bottom: 14px; border-color: #bcd3f5; border-color: light-dark(#bcd3f5, #2c4466); background: linear-gradient(135deg,#f3f8ff,#e4efff); background: linear-gradient(135deg,light-dark(#f3f8ff, #121c2c),light-dark(#e4efff, #15233a)); }
+.production-month > div { display: grid; gap: 4px; min-width: 0; }.production-month small { color: var(--primary-hover); font-size: 10px; font-weight: 850; letter-spacing: .07em; }.production-month-name { text-transform: uppercase; }
+.production-month strong { color: #172033; color: light-dark(#172033, #d7e0f0); font-size: 32px; line-height: 1.1; overflow-wrap: anywhere; }
+.production-month-days { padding: 6px 10px; border-radius: 9px; background: #fff; background: light-dark(#fff, #141a24); color: #52627a; color: light-dark(#52627a, #abb4c4); font-size: 11px; font-weight: 800; }
+.production-toolbar label small { color: var(--muted); font-size: 10px; font-weight: 700; }
 .production-toolbar { display: flex; align-items: end; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
 .production-toolbar label { display: grid; gap: 5px; color: #52627a; color: light-dark(#52627a, #abb4c4); font-size: 11px; font-weight: 800; }.production-toolbar input { margin: 0; min-height: 40px; }
 .production-settings { display: flex; gap: 10px; flex: 1; }.production-settings label { flex: 1; min-width: 120px; }
