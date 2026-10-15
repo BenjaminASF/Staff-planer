@@ -2,7 +2,7 @@ const express = require("express");
 const { HttpError, hashPassword, normalizeUsername, validateUsername, validatePassword, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  ROLES, ROLE_VALUES, AVAILABILITY_VALUES, isAdmin, roleNeedsShift, canSeeAllPeople, canCreatePerson, editablePersonFields,
+  ROLES, ROLE_VALUES, normalizeAvailability, isAdmin, roleNeedsShift, canSeeAllPeople, canCreatePerson, editablePersonFields,
   canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canChangeUsername, canDeleteAccount, canSetAvailability
 } = require("../permissions");
 const {
@@ -72,7 +72,7 @@ function peopleRoutes({ pool }) {
     if (!canCreatePerson(req.user, shiftId)) throw new HttpError(403, "Du kan bara lägga till personal i ditt eget skift.");
     const name = cleanText(body.name, 120);
     if (!name) throw new HttpError(400, "Ange ett namn.");
-    const availability = AVAILABILITY_VALUES.includes(body.availability) ? body.availability : "available";
+    const availability = normalizeAvailability(body.availability) || "available";
     const account = body.account && typeof body.account === "object" ? body.account : null;
     const id = await withTransaction(pool, async client => {
       await assertShiftExists(client, shiftId);
@@ -98,7 +98,7 @@ function peopleRoutes({ pool }) {
     if (!allowed.length) throw new HttpError(403, "Du har inte behörighet att ändra den här personen.");
     const changes = cleanPersonFields(req.body || {}, allowed);
     if (changes.availability && changes.availability !== person.availability && !canSetAvailability(req.user, changes.availability)) {
-      throw new HttpError(403, "Endast admin, skiftledare och höger hand kan ange statusen Inte tillgänglig.");
+      throw new HttpError(403, "Endast admin, skiftledare och höger hand kan ange statusen Ej tillgänglig.");
     }
     if (!Object.keys(changes).length) return res.json({ person });
     await withTransaction(pool, async client => {

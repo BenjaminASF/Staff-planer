@@ -79,9 +79,9 @@ describe("notifications", () => {
 
   test("an admin changing someone's status is noted for the shift", async () => {
     await clearAll();
-    assert.equal((await admin.patch(`/api/people/${operatorPerson.id}`, { availability: "sick" })).status, 200);
+    assert.equal((await admin.patch(`/api/people/${operatorPerson.id}`, { availability: "off" })).status, 200);
     const { notifications } = await notes(leader);
-    assert.equal(notifications[0]?.title, "Olle Operatör: Sjuk");
+    assert.equal(notifications[0]?.title, "Olle Operatör: Ledig");
   });
 
   test("notes are marked as read", async () => {

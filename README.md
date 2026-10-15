@@ -12,7 +12,7 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 |---|:---:|:---:|:---:|:---:|
 | Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ | ✓ (när veckan är delad) |
 | Ändra sin egen profil (namn, telefon, e-post, status, lösenord) | ✓ | ✓ | ✓ | ✓ |
-| Sätta statusen Inte tillgänglig | ✓ | ✓ | ✓ | |
+| Sätta statusen Ej tillgänglig | ✓ | ✓ | ✓ | |
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | |
 | Ändra skiftets dagliga produktionsmål | ✓ | ✓ | | |
@@ -36,7 +36,7 @@ Admin hamnar på **Översikt** efter inloggningen. Sidan visar alla skift sida v
 
 - Produktion idag och under månaden, jämfört med varje skifts dagliga mål.
 - Svinn under månaden i kg per skift.
-- Antal operatörer på plats och vem som är sjuk, på VAB, har semester eller inte är tillgänglig.
+- Antal operatörer på plats och vem som är ej tillgänglig eller ledig.
 - Hur många linjer varje skift kan köra samtidigt. Det räknas fram från de tillgängliga operatörerna och deras kompetens, med samma regler som autoschemat (avdelningens kompetens, krav på maskinen och GD-begränsning). Om någon linje inte går att bemanna står det kort vilken kompetens som saknas.
 - Kompetensen per skift jämfört med hur många som behövs för att köra alla linjer.
 

@@ -1879,8 +1879,8 @@ input:focus {
   color: light-dark(#187347, #75c897);
 }
 
-.person-availability-sick,
-.schedule-person-sick {
+.person-availability-unavailable,
+.schedule-person-unavailable {
   border-color: #f2a7a7 !important;
   border-color: light-dark(#f2a7a7, #733436) !important;
   background: #fee2e2 !important;
@@ -1889,18 +1889,8 @@ input:focus {
   color: light-dark(#991b1b, #ff9e93) !important;
 }
 
-.person-availability-vab,
-.schedule-person-vab {
-  border-color: #c4a7e7 !important;
-  border-color: light-dark(#c4a7e7, #5a4075) !important;
-  background: #f3e8ff !important;
-  background: light-dark(#f3e8ff, #2d1b3d) !important;
-  color: #6b21a8 !important;
-  color: light-dark(#6b21a8, #cea8ff) !important;
-}
-
-.person-availability-vacation,
-.schedule-person-vacation {
+.person-availability-off,
+.schedule-person-off {
   border-color: #e8c85e !important;
   border-color: light-dark(#e8c85e, #534200) !important;
   background: #fef3c7 !important;
@@ -1909,36 +1899,16 @@ input:focus {
   color: light-dark(#854d0e, #e6a770) !important;
 }
 
-.person-availability-unavailable,
-.schedule-person-unavailable {
-  border-color: #aebbd0 !important;
-  border-color: light-dark(#aebbd0, #424d5f) !important;
-  background: #eef2f7 !important;
-  background: light-dark(#eef2f7, #1c222d) !important;
-  color: #42526b !important;
-  color: light-dark(#42526b, #b4becf) !important;
-}
-
-.person-row-sick {
+.person-row-unavailable {
   border-left: 5px solid #dc2626;
 }
 
-.person-row-vab {
-  border-left: 5px solid #9333ea;
-}
-
-.person-row-vacation {
+.person-row-off {
   border-left: 5px solid #eab308;
 }
 
-.person-row-unavailable {
-  border-left: 5px solid #64748b;
-}
-
-.schedule-person-sick,
-.schedule-person-vab,
-.schedule-person-vacation,
-.schedule-person-unavailable {
+.schedule-person-unavailable,
+.schedule-person-off {
   cursor: not-allowed;
   font-weight: 750;
 }
@@ -2089,7 +2059,7 @@ input:focus {
   box-shadow: 0 0 0 3px light-dark(rgba(255, 255, 255, 0.8), rgba(255,255,255,.048));
 }
 
-.availability-chip-sick {
+.availability-chip-unavailable {
   border-color: #f5b9b9;
   border-color: light-dark(#f5b9b9, #643335);
   background: #fff1f1;
@@ -2098,31 +2068,13 @@ input:focus {
   color: light-dark(#a61b1b, #ff968a);
 }
 
-.availability-chip-vab {
-  border-color: #d8b4fe;
-  border-color: light-dark(#d8b4fe, #52386c);
-  background: #faf5ff;
-  background: light-dark(#faf5ff, #221b29);
-  color: #7e22ce;
-  color: light-dark(#7e22ce, #c49bff);
-}
-
-.availability-chip-vacation {
+.availability-chip-off {
   border-color: #ead47c;
   border-color: light-dark(#ead47c, #4b3e00);
   background: #fff8db;
   background: light-dark(#fff8db, #251e00);
   color: #795500;
   color: light-dark(#795500, #d7b06b);
-}
-
-.availability-chip-unavailable {
-  border-color: #c8d1de;
-  border-color: light-dark(#c8d1de, #3a414f);
-  background: #f1f4f8;
-  background: light-dark(#f1f4f8, #1b212b);
-  color: #42526b;
-  color: light-dark(#42526b, #b4becf);
 }
 
 .availability-all-clear {

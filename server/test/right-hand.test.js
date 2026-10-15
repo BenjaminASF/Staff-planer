@@ -66,9 +66,9 @@ describe("right hand", () => {
     assert.equal((await rightHand.post("/api/people", { name: "Fel Skift", shiftId: eveningShift.id })).status, 403);
     assert.equal((await rightHand.post("/api/people", { name: "Ledare", account: { username: "ledare2", password: PASSWORD, role: "shift_leader" } })).status, 403);
 
-    assert.equal((await rightHand.patch(`/api/people/${annaPerson.id}`, { availability: "sick" })).status, 200);
+    assert.equal((await rightHand.patch(`/api/people/${annaPerson.id}`, { availability: "off" })).status, 200);
     assert.equal((await rightHand.patch(`/api/people/${annaPerson.id}/account`, { password: "tillfalligt1" })).status, 200);
-    assert.equal((await rightHand.patch(`/api/people/${erikPerson.id}`, { availability: "sick" })).status, 403);
+    assert.equal((await rightHand.patch(`/api/people/${erikPerson.id}`, { availability: "off" })).status, 403);
     assert.equal((await rightHand.patch(`/api/people/${leaderPerson.id}`, { phone: "070-1" })).status, 403, "not the shift leader");
     assert.equal((await rightHand.patch(`/api/people/${annaPerson.id}/account`, { role: "shift_leader" })).status, 403);
     assert.equal((await rightHand.delete(`/api/people/${annaPerson.id}`)).status, 403);
