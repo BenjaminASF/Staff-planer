@@ -5403,8 +5403,9 @@ let adminLinesDate = "";
 
 // Drop-down menus (<details data-popover>) close on a click outside them or on Escape.
 document.addEventListener("click", event => {
+  // A click on the menu's own backdrop (the details element itself) also closes it.
   document.querySelectorAll("details[data-popover][open]").forEach(menu => {
-    if (!menu.contains(event.target)) menu.open = false;
+    if (!menu.contains(event.target) || event.target === menu) menu.open = false;
   });
 });
 document.addEventListener("keydown", event => {
