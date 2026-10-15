@@ -4394,7 +4394,7 @@ function ensurePeopleShiftFilter() {
   select.setAttribute("aria-label", "Visa skift");
   select.innerHTML = `<option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}<option value="none">Utan skift</option>`;
   // Shift leaders and right hands start in their own shift; admins see everyone.
-  select.value = !isAdmin() && getOwnShiftId() ? getOwnShiftId() : "";
+  select.value = linkedShiftId || (!isAdmin() && getOwnShiftId() ? getOwnShiftId() : "");
   select.addEventListener("change", () => void renderPeople());
   bar.prepend(select);
 }
@@ -5774,7 +5774,7 @@ function adminShiftCardHtml(data, context) {
         <summary class="btn">Fler inställningar</summary>
         <div class="admin-menu-panel">
           <h4>${shiftColorDot(shift.id)}Skift ${escapeHtml(shift.name)}</h4>
-          ${SHIFT_MANAGE_LINKS.filter(([page]) => canOpenPage(page)).map(([page, label]) => `<a href="${page}" data-shift-link="${escapeHtml(shift.id)}">${label}</a>`).join("")}
+          ${SHIFT_MANAGE_LINKS.filter(([page]) => canOpenPage(page)).map(([page, label]) => `<a href="${page}?skift=${encodeURIComponent(shift.id)}" data-shift-link="${escapeHtml(shift.id)}">${label}</a>`).join("")}
         </div>
       </details>
     </div>
@@ -6576,7 +6576,7 @@ async function renderUsersPage() {
             <option value="none">Utan inloggning</option>
             <option value="">Alla personer</option>
           </select>
-          ${isAdmin() ? `<select id="usersShiftFilter" aria-label="Visa skift"><option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}<option value="none">Utan skift</option></select>` : ""}
+          ${isAdmin() ? `<select id="usersShiftFilter" aria-label="Visa skift"><option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === usersPageFilters.shift ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}<option value="none">Utan skift</option></select>` : ""}
           <a class="btn primary" href="add.html#addPersonSection">+ Ny användare</a>
         </div>
         <div id="usersList" class="people-list users-list"></div>
@@ -8038,16 +8038,36 @@ document.addEventListener("focusout", () => {
   }
 });
 
+// "Fler inställningar" on the overview links to a page with ?skift=<id>. The page opens with that
+// shift chosen: as the active shift, and in the shift filters on Personal, Kompetens and Användare.
+let linkedShiftId = "";
+function applyLinkedShift() {
+  const params = new URLSearchParams(location.search);
+  const shiftId = params.get("skift");
+  if (shiftId === null) return false;
+  params.delete("skift");
+  history.replaceState(history.state, "", `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`);
+  if (!canBrowseShifts() || !shifts.some(shift => shift.id === shiftId)) return false;
+  sessionStorage.setItem(ACTIVE_SHIFT_KEY, shiftId);
+  if (isAdmin()) {
+    linkedShiftId = shiftId;
+    sessionStorage.setItem(COMPETENCY_SHIFT_KEY, shiftId);
+    usersPageFilters.shift = shiftId;
+  }
+  return true;
+}
+
 async function openAppUI() {
   if (!canOpenPage(getCurrentPage())) {
     location.replace("index.html");
     return;
   }
+  const linked = applyLinkedShift();
   // The admin's start page is the production overview. Only the first page of a visit
   // redirects, so the Schema link still opens the schedule.
   const firstPageThisVisit = !sessionStorage.getItem(ADMIN_LANDED_KEY);
   sessionStorage.setItem(ADMIN_LANDED_KEY, "1");
-  if (isAdmin() && firstPageThisVisit && getCurrentPage() === "index.html") {
+  if (isAdmin() && firstPageThisVisit && !linked && getCurrentPage() === "index.html") {
     location.replace("dashboard.html");
     return;
   }
