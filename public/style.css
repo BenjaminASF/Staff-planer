@@ -6630,3 +6630,6 @@ body.schedule-viewer-open { overflow: hidden; }
 @media (max-width: 560px) { .viewer-row { grid-template-columns: minmax(0, 1fr); gap: 2px; } .viewer-head, .viewer-toolbar, .viewer-body { padding-left: 16px; padding-right: 16px; } }
 .schedule-viewer-backdrop[hidden] { display: none; }
 .admin-shift-actions .btn { min-height: 42px; padding: 0 14px; font-size: 14px; font-weight: 700; }
+
+/* A person scheduled for training at the machine, shown under the operator on the production page. */
+.production-machine-row .production-training-badge { justify-self: start; max-width: 100%; overflow-wrap: anywhere; padding: 2px 7px; border-radius: 999px; background: #fff4d6; background: light-dark(#fff4d6, #3a2f12); color: #8a5a00; color: light-dark(#8a5a00, #f3c766); font-size: 11px; font-weight: 750; line-height: 1.4; }
