@@ -105,6 +105,7 @@ const ACTIVE_SHIFT_KEY = "staff_active_shift";
 const SIGNED_IN_HINT_KEY = "staff_signed_in";
 const ADMIN_LANDED_KEY = "staff_admin_landed";
 const SELECTED_WEEK_KEY = "staff_selected_week";
+const COMPETENCY_SHIFT_KEY = "staff_competency_shift";
 const DEFAULT_APP_SETTINGS = {
   workDays: [...ALL_DAYS],
   autoLockMinutes: 30,
@@ -4818,12 +4819,44 @@ async function renderTrainingReminders() {
   });
 }
 
+// Admins choose which shift the competence page shows: one shift or "Alla skift".
+// This only filters the view; nobody's competence or shift is changed.
+function ensureCompetencyShiftFilter() {
+  const bar = document.getElementById("machineSearch")?.closest(".filter-bar");
+  if (!bar || !isAdmin() || document.getElementById("competencyShiftFilter")) return;
+  const select = document.createElement("select");
+  select.id = "competencyShiftFilter";
+  select.setAttribute("aria-label", "Visa skift");
+  select.innerHTML = `<option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}`;
+  const stored = sessionStorage.getItem(COMPETENCY_SHIFT_KEY) || "";
+  select.value = shifts.some(shift => shift.id === stored) ? stored : "";
+  select.addEventListener("change", () => {
+    sessionStorage.setItem(COMPETENCY_SHIFT_KEY, select.value);
+    void renderMachineSkills();
+  });
+  bar.prepend(select);
+}
+
+function getCompetencyShiftFilter() {
+  return isAdmin() ? document.getElementById("competencyShiftFilter")?.value || "" : getShiftScope();
+}
+
+// The people on the competence page. Admins see the chosen shift, or everyone in a shift.
+async function getCompetencyPeople() {
+  if (!isAdmin()) return getEvaluatedPeople();
+  const shiftId = getCompetencyShiftFilter();
+  return (await getAllPeople()).filter(person =>
+    shiftId ? person.shiftId === shiftId : shifts.some(shift => shift.id === person.shiftId)
+  );
+}
+
 async function renderMachineSkills() {
   const root = document.getElementById("machineSkillsGrid");
   if (!root) return;
 
+  ensureCompetencyShiftFilter();
   const [allPeople, departments, skills, timestamps, restrictions, details] = await Promise.all([
-    getEvaluatedPeople(),
+    getCompetencyPeople(),
     getDepartmentsFor("showInCompetency"),
     getMachineSkills(),
     getMachineSkillUpdatedAt(),
@@ -4883,7 +4916,9 @@ async function renderMachineSkills() {
   const peopleList = document.createElement("div");
   const content = document.createElement("section");
   peoplePanel.className = "assessment-people-panel card competency-people-panel";
-  peoplePanel.innerHTML = `<div class="assessment-panel-heading"><div><h3>Medarbetare</h3><p>${people.length} personer</p></div></div>`;
+  const shownShiftId = getCompetencyShiftFilter();
+  const shiftLabel = shownShiftId ? getShiftName(shownShiftId) : "Alla skift";
+  peoplePanel.innerHTML = `<div class="assessment-panel-heading"><div><h3>Medarbetare</h3><p>${people.length} personer${isAdmin() && shiftLabel ? ` · ${escapeHtml(shiftLabel)}` : ""}</p></div></div>`;
   peopleList.className = "assessment-people-list";
   people.forEach(person => {
     const personSkills = Array.isArray(skills[person.id]) ? skills[person.id] : [];
@@ -4892,7 +4927,9 @@ async function renderMachineSkills() {
     button.type = "button";
     button.dataset.personId = person.id;
     button.className = `assessment-person-button competency-person-button status-${personSkills.length >= departments.length && departments.length ? "ready" : personSkills.length ? "one" : "none"}${person.id === selectedCompetencyPersonId ? " active" : ""}`;
-    button.innerHTML = `<span>${escapeHtml(person.name)}</span><small>${personSkills.length} av ${departments.length}${isRestricted ? " · Får inte GD" : ""}</small>`;
+    // With every shift shown, a colored dot tells which shift each person belongs to.
+    button.innerHTML = `<span>${isAdmin() && !shownShiftId ? shiftColorDot(person.shiftId) : ""}${escapeHtml(person.name)}</span><small>${personSkills.length} av ${departments.length}${isRestricted ? " · Får inte GD" : ""}</small>`;
+    button.title = isAdmin() && !shownShiftId ? getShiftName(person.shiftId) : "";
     button.addEventListener("click", () => { selectedCompetencyPersonId = person.id; void renderMachineSkills(); });
     peopleList.appendChild(button);
   });
