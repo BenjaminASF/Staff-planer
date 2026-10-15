@@ -1,7 +1,7 @@
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
-const { isAdmin, AVAILABILITY_VALUES, documentCategory, personalScope, PERSONAL_SCOPE_PREFIX } = require("../permissions");
+const { isAdmin, normalizeAvailability, documentCategory, personalScope, PERSONAL_SCOPE_PREFIX } = require("../permissions");
 const { putDocument, mergeIntoPersonalList, isPlainObject, serializeShift } = require("../store");
 const { cleanText, cleanEmail, SHIFT_COLORS } = require("../validation");
 
@@ -35,7 +35,7 @@ async function upsertPerson(db, person, shiftId) {
       name,
       cleanText(person.company, 120),
       cleanText(person.phone, 40),
-      AVAILABILITY_VALUES.includes(person.availability) ? person.availability : "available",
+      normalizeAvailability(person.availability) || "available",
       shiftId,
       person.demo === true,
       typeof person.createdAt === "string" && !Number.isNaN(Date.parse(person.createdAt)) ? person.createdAt : null,

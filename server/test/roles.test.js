@@ -97,8 +97,8 @@ describe("roles and permissions", () => {
     assert.equal(withLeaderAccount.status, 403);
     assert.equal((await leader.post(`/api/people/${boPerson.id}/account`, { username: "bo", password: PASSWORD, role: "admin" })).status, 403);
 
-    assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "vacation", company: "Bemanning AB" })).status, 200);
-    assert.equal((await leader.patch(`/api/people/${erikPerson.id}`, { availability: "sick" })).status, 403);
+    assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "off", company: "Bemanning AB" })).status, 200);
+    assert.equal((await leader.patch(`/api/people/${erikPerson.id}`, { availability: "off" })).status, 403);
     assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { shiftId: eveningShift.id })).status, 403);
   });
 
@@ -107,7 +107,7 @@ describe("roles and permissions", () => {
       name: "Alva Admin", shiftId: dayShift.id, phone: "070-1",
       account: { username: "alva", password: PASSWORD, role: "admin", mustChangePassword: false }
     })).data.person;
-    for (const change of [{ name: "Annat Namn" }, { phone: "070-2" }, { company: "X AB" }, { availability: "sick" }]) {
+    for (const change of [{ name: "Annat Namn" }, { phone: "070-2" }, { company: "X AB" }, { availability: "off" }]) {
       assert.equal((await leader.patch(`/api/people/${adminInShift.id}`, change)).status, 403, JSON.stringify(change));
     }
     assert.equal((await leader.patch(`/api/people/${adminInShift.id}/account`, { username: "alva2" })).status, 403);
@@ -202,16 +202,16 @@ describe("roles and permissions", () => {
     assert.equal((await otherOperator.put(`/api/documents/${eveningShift.id}/breakPlan:${WEEK}`, { value: {}, baseVersion: 0 })).status, 403);
     assert.equal((await otherOperator.put("/api/documents/global/appSettings", { value: {}, baseVersion: 1 })).status, 403);
     assert.equal((await otherOperator.post("/api/people", { name: "Smyg" })).status, 403);
-    assert.equal((await otherOperator.patch(`/api/people/${annaPerson.id}`, { availability: "sick" })).status, 403);
+    assert.equal((await otherOperator.patch(`/api/people/${annaPerson.id}`, { availability: "off" })).status, 403);
     assert.equal((await otherOperator.get("/api/audit?scopes=global," + eveningShift.id)).data.events.length, 0);
     assert.equal((await otherOperator.get("/api/admin/export")).status, 403);
     assert.equal((await otherOperator.get("/api/work-items/usage?name=GD1")).status, 403);
   });
 
   test("operator updates own status, name and phone but nothing else", async () => {
-    const updated = await otherOperator.patch("/api/me", { availability: "sick", phone: "070-123 45 67", name: "Erik E" });
+    const updated = await otherOperator.patch("/api/me", { availability: "off", phone: "070-123 45 67", name: "Erik E" });
     assert.equal(updated.status, 200);
-    assert.equal(updated.data.person.availability, "sick");
+    assert.equal(updated.data.person.availability, "off");
     assert.equal(updated.data.person.phone, "070-123 45 67");
     assert.equal((await otherOperator.patch("/api/me", { company: "Annat AB" })).status, 403);
     assert.equal((await otherOperator.patch(`/api/people/${erikPerson.id}`, { shiftId: dayShift.id })).status, 403);
@@ -219,11 +219,11 @@ describe("roles and permissions", () => {
 
     // The change shows up for the admin, with an audit entry for the shift.
     const audit = await admin.get(`/api/audit?scopes=${eveningShift.id}&since=2000-01-01T00:00:00Z`);
-    assert.ok(audit.data.events.some(event => event.title === "Erik E: Sjuk"));
+    assert.ok(audit.data.events.some(event => event.title === "Erik E: Ledig"));
     assert.equal((await leader.get(`/api/audit?scopes=${eveningShift.id}`)).data.events.length, 0, "leaders only see their own shift's log");
   });
 
-  test("only admins and shift leaders set the status Inte tillgänglig", async () => {
+  test("only admins and shift leaders set the status Ej tillgänglig", async () => {
     assert.equal((await otherOperator.patch("/api/me", { availability: "unavailable" })).status, 403);
     assert.equal((await otherOperator.patch(`/api/people/${erikPerson.id}`, { availability: "unavailable" })).status, 403);
     assert.equal((await admin.patch(`/api/people/${erikPerson.id}`, { availability: "unavailable" })).status, 200);
@@ -231,7 +231,17 @@ describe("roles and permissions", () => {
     // An operator who was set to unavailable can still save their profile unchanged.
     const unchanged = await otherOperator.patch("/api/me", { availability: "unavailable", name: "Erik E" });
     assert.equal(unchanged.status, 200);
-    assert.equal((await otherOperator.patch("/api/me", { availability: "sick" })).status, 200);
+    assert.equal((await otherOperator.patch("/api/me", { availability: "off" })).status, 200);
+    assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "available" })).status, 200);
+  });
+
+  test("statuses from before the three-status model are saved as their new status", async () => {
+    const sick = await leader.patch(`/api/people/${annaPerson.id}`, { availability: "sick" });
+    assert.equal(sick.status, 200);
+    assert.equal(sick.data.person.availability, "unavailable");
+    const vacation = await leader.patch(`/api/people/${annaPerson.id}`, { availability: "vacation" });
+    assert.equal(vacation.data.person.availability, "off");
+    assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "unknown" })).status, 400);
     assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "available" })).status, 200);
   });
 
@@ -297,9 +307,9 @@ describe("roles and permissions", () => {
 
   test("admin manages any profile, including the username", async () => {
     const nils = (await admin.get("/api/people")).data.people.find(person => person.account?.username === "nils");
-    const updated = await admin.patch(`/api/people/${nils.id}`, { name: "Nils Nyman", phone: "070-000 00 00", availability: "vacation", shiftId: eveningShift.id });
+    const updated = await admin.patch(`/api/people/${nils.id}`, { name: "Nils Nyman", phone: "070-000 00 00", availability: "off", shiftId: eveningShift.id });
     assert.equal(updated.status, 200);
-    assert.equal(updated.data.person.availability, "vacation");
+    assert.equal(updated.data.person.availability, "off");
     assert.equal(updated.data.person.shiftId, eveningShift.id);
     assert.equal((await leader.patch(`/api/people/${nils.id}/account`, { username: "nils.n" })).status, 403);
     const renamed = await admin.patch(`/api/people/${nils.id}/account`, { username: "Nils.Nyman" });
@@ -351,7 +361,7 @@ describe("roles and permissions", () => {
     const people = await admin.get("/api/people");
     const legacy = people.data.people.find(person => person.id === "legacy-1");
     assert.equal(legacy.shiftId, eveningShift.id);
-    assert.equal(legacy.availability, "vab");
+    assert.equal(legacy.availability, "unavailable");
   });
 
   test("logout ends the session", async () => {

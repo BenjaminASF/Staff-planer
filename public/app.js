@@ -1208,26 +1208,25 @@ async function deletePersonRecord(id) {
   peopleCache = null;
 }
 
+// Statuses from before the three-status model, as their new status.
+const LEGACY_AVAILABILITY = { sick: "unavailable", vab: "unavailable", vacation: "off" };
+
 function getPersonAvailability(person) {
-  return ["sick", "vab", "vacation", "unavailable"].includes(person?.availability)
-    ? person.availability
-    : "available";
+  const status = LEGACY_AVAILABILITY[person?.availability] || person?.availability;
+  return ["unavailable", "off"].includes(status) ? status : "available";
 }
 
 function getAvailabilityLabel(status) {
-  if (status === "sick") return "Sjuk";
-  if (status === "vab") return "Vård av barn";
-  if (status === "vacation") return "Semester";
-  if (status === "unavailable") return "Inte tillgänglig";
+  status = LEGACY_AVAILABILITY[status] || status;
+  if (status === "unavailable") return "Ej tillgänglig";
+  if (status === "off") return "Ledig";
   return "Tillgänglig";
 }
 
 function getUnavailableMessage(person) {
   const status = getPersonAvailability(person);
-  if (status === "sick") return `${person.name} är sjuk och kan inte schemaläggas.`;
-  if (status === "vab") return `${person.name} är hemma för vård av barn och kan inte schemaläggas.`;
-  if (status === "vacation") return `${person.name} är på semester och kan inte schemaläggas.`;
-  if (status === "unavailable") return `${person.name} är inte tillgänglig och kan inte schemaläggas.`;
+  if (status === "unavailable") return `${person.name} är inte tillgänglig för arbete och kan inte schemaläggas.`;
+  if (status === "off") return `${person.name} är ledig och kan inte schemaläggas.`;
   return "";
 }
 
@@ -2225,7 +2224,7 @@ function enhanceAppShell() {
   const pageTips = {
     "dashboard.html": "Här finns senaste status och dagens ändringar för skiftet.",
     "anvandare.html": "Klicka på Hantera för att ändra uppgifter eller lösenord. Skiftledare ser bara sitt eget skift; roller, användarnamn och borttagning hanteras av admin.",
-    "personal.html": "Använd status för sjukdom, semester eller annan frånvaro; schemat visar orsaken direkt.",
+    "personal.html": "Sätt status Tillgänglig, Ej tillgänglig eller Ledig; schemat visar statusen direkt.",
     "add.html": "Pausa en arbetsplats när den inte används. Då bevaras historiken och den kan aktiveras igen.",
     "maskiner.html": "Registrerad kompetens används för att varna och hjälpa autoschemat.",
     "testresultat.html": "Sök fram en person och registrera resultaten per maskin eller avdelning.",
@@ -2515,7 +2514,7 @@ function renderHelpPage() {
     ? [
       ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
       ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
-      ["Sjuk eller borta?", "Öppna Min profil och ändra din status. Skiftledaren ser ändringen direkt."],
+      ["Ledig eller borta?", "Öppna Min profil och ändra din status till Ledig. Skiftledaren ser ändringen direkt."],
       ["Att göra", "Under Att göra har du en egen lista som bara du ser. Vill du visa en uppgift för någon väljer du Dela och bockar i vem."],
       ["Lösenord", "Byt lösenord under Min profil. Har du glömt det, be din skiftledare om ett tillfälligt."]
     ]
@@ -3610,7 +3609,7 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   const updatedAt = getDocumentUpdatedAt(getShiftScope(), getWeekDocumentKey("schedule"));
   const companies = [...new Set(people.map(person => person.company).filter(Boolean))].sort((a, b) => a.localeCompare(b, "sv"));
   const knownSkills = [...new Set(Object.values(skills).flat().filter(Boolean))].sort((a, b) => a.localeCompare(b, "sv"));
-  tools.innerHTML = `<div class="schedule-filter-tools"><label>Företag<select id="scheduleCompanyFilter"><option value="">Alla</option>${companies.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></label><label>Status<select id="scheduleAvailabilityFilter"><option value="all">Alla</option><option value="available">Tillgänglig</option><option value="sick">Sjuk</option><option value="vab">Vård av barn</option><option value="vacation">Semester</option><option value="unavailable">Ej tillgänglig</option></select></label><label>Kompetens<select id="scheduleSkillFilter"><option value="">Alla</option>${knownSkills.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></label></div><div class="schedule-copy-tools"><label>Från<select id="copyDayFrom">${DAYS.map(day => `<option>${day}</option>`).join("")}</select></label><label>Till<select id="copyDayTo">${DAYS.map((day, index) => `<option${index === 1 ? " selected" : ""}>${day}</option>`).join("")}</select></label><button id="copyScheduleDay" class="btn" type="button">Kopiera dag</button></div><div class="schedule-template-tools"><select id="scheduleTemplateSelect"><option value="">Välj mall</option>${templates.map(item => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}</select><button id="saveScheduleTemplate" class="btn" type="button">Spara veckan som mall</button><button id="applyScheduleTemplate" class="btn" type="button">Använd mall</button></div><div class="schedule-history-tools"><button id="undoSchedule" class="btn" type="button"${scheduleUndoStack.length ? "" : " disabled"}>↶ Ångra</button><button id="redoSchedule" class="btn" type="button"${scheduleRedoStack.length ? "" : " disabled"}>↷ Gör om</button><span class="schedule-save-state">✓ ${updatedAt ? `Sparat ${new Date(updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Redo att spara"}</span></div>`;
+  tools.innerHTML = `<div class="schedule-filter-tools"><label>Företag<select id="scheduleCompanyFilter"><option value="">Alla</option>${companies.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></label><label>Status<select id="scheduleAvailabilityFilter"><option value="all">Alla</option><option value="available">Tillgänglig</option><option value="unavailable">Ej tillgänglig</option><option value="off">Ledig</option></select></label><label>Kompetens<select id="scheduleSkillFilter"><option value="">Alla</option>${knownSkills.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></label></div><div class="schedule-copy-tools"><label>Från<select id="copyDayFrom">${DAYS.map(day => `<option>${day}</option>`).join("")}</select></label><label>Till<select id="copyDayTo">${DAYS.map((day, index) => `<option${index === 1 ? " selected" : ""}>${day}</option>`).join("")}</select></label><button id="copyScheduleDay" class="btn" type="button">Kopiera dag</button></div><div class="schedule-template-tools"><select id="scheduleTemplateSelect"><option value="">Välj mall</option>${templates.map(item => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}</select><button id="saveScheduleTemplate" class="btn" type="button">Spara veckan som mall</button><button id="applyScheduleTemplate" class="btn" type="button">Använd mall</button></div><div class="schedule-history-tools"><button id="undoSchedule" class="btn" type="button"${scheduleUndoStack.length ? "" : " disabled"}>↶ Ångra</button><button id="redoSchedule" class="btn" type="button"${scheduleRedoStack.length ? "" : " disabled"}>↷ Gör om</button><span class="schedule-save-state">✓ ${updatedAt ? `Sparat ${new Date(updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Redo att spara"}</span></div>`;
   tools.querySelector("#scheduleCompanyFilter").value = scheduleFilters.company;
   tools.querySelector("#scheduleAvailabilityFilter").value = scheduleFilters.availability;
   tools.querySelector("#scheduleSkillFilter").value = scheduleFilters.skill;
@@ -4319,13 +4318,11 @@ async function renderSchedule() {
 
 const AVAILABILITY_OPTIONS = [
   ["available", "Tillgänglig"],
-  ["sick", "Sjuk"],
-  ["vab", "Vård av barn"],
-  ["vacation", "Semester"],
-  ["unavailable", "Inte tillgänglig"]
+  ["unavailable", "Ej tillgänglig"],
+  ["off", "Ledig"]
 ];
 
-// Operators may not choose "Inte tillgänglig" themselves. If a shift leader already set it,
+// Operators may not choose "Ej tillgänglig" themselves. If a shift leader already set it,
 // it stays in the list so the current status is still shown.
 function availabilityOptionsFor(current) {
   return AVAILABILITY_OPTIONS.filter(([value]) => !isOperator() || value !== "unavailable" || value === current);
@@ -4405,10 +4402,8 @@ async function renderPeople() {
   const shiftFilter = document.getElementById("peopleShiftFilter")?.value || "";
   const availabilityOrder = {
     available: 0,
-    vacation: 1,
-    sick: 2,
-    vab: 3,
-    unavailable: 4
+    off: 1,
+    unavailable: 2
   };
   const people = allPeople
     .filter(person =>
@@ -4417,8 +4412,8 @@ async function renderPeople() {
       (!shiftFilter || (shiftFilter === "none" ? !person.shiftId : person.shiftId === shiftFilter))
     )
     .sort((firstPerson, secondPerson) =>
-      (availabilityOrder[getPersonAvailability(firstPerson)] ?? 4) -
-      (availabilityOrder[getPersonAvailability(secondPerson)] ?? 4) ||
+      (availabilityOrder[getPersonAvailability(firstPerson)] ?? 2) -
+      (availabilityOrder[getPersonAvailability(secondPerson)] ?? 2) ||
       firstPerson.name.localeCompare(secondPerson.name, "sv")
     );
   list.innerHTML = "";
@@ -5597,7 +5592,7 @@ function adminCompetenceTableHtml({ shiftData, departments, need }) {
 function adminAbsenceHtml(shiftData) {
   const absent = shiftData.flatMap(data => data.absent.map(person => ({ person, shift: data.shift })));
   if (!absent.length) return '<div class="empty-state">Alla är på plats idag.</div>';
-  const state = { sick: "bad", vab: "warn", vacation: "", unavailable: "" };
+  const state = { unavailable: "bad", off: "" };
   return absent.map(({ person, shift }) => `<div class="admin-absence-item"><span>${shiftColorDot(shift.id)}<strong>${escapeHtml(person.name)}</strong> <small>· ${escapeHtml(shift.name)}</small></span><span class="admin-pill ${state[getPersonAvailability(person)]}">${escapeHtml(getAvailabilityLabel(getPersonAvailability(person)))}</span></div>`).join("");
 }
 
@@ -5618,7 +5613,7 @@ async function renderAdminDashboard(root) {
   const operators = sumBy(shiftData, item => item.operators.length);
   const available = sumBy(shiftData, item => item.available.length);
   const absent = shiftData.flatMap(item => item.absent);
-  const absentCounts = ["sick", "vab", "vacation", "unavailable"]
+  const absentCounts = ["unavailable", "off"]
     .map(status => [status, absent.filter(person => getPersonAvailability(person) === status).length])
     .filter(([, count]) => count)
     .map(([status, count]) => `${count} ${getAvailabilityLabel(status).toLocaleLowerCase("sv-SE")}`);
@@ -5664,7 +5659,7 @@ async function renderAdminDashboard(root) {
     </section>
     <section class="admin-columns">
       <div class="card"><h3>Kompetens per skift</h3><p class="admin-sub">Tillgängliga idag / alla operatörer med kompetensen. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</div>
-      <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Sjuka, vård av barn, semester och inte tillgängliga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
+      <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Ej tillgängliga och lediga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
     </section>
     <section id="adminAuditSection"${adminAuditOpen ? "" : " hidden"}>${auditCardHtml(events)}</section>
   `;
@@ -5870,8 +5865,8 @@ async function renderDashboard() {
   const [people, departments, skills, events, productionRecords] = await Promise.all([
     getPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getAuditLog(), getProductionRecords()
   ]);
-  const sick = people.filter(person => getPersonAvailability(person) === "sick").length;
-  const vacation = people.filter(person => getPersonAvailability(person) === "vacation").length;
+  const unavailable = people.filter(person => getPersonAvailability(person) === "unavailable").length;
+  const off = people.filter(person => getPersonAvailability(person) === "off").length;
   const available = people.filter(person => getPersonAvailability(person) === "available").length;
   const fullyQualified = people.filter(person => {
     const personSkills = Array.isArray(skills[person.id]) ? skills[person.id] : [];
@@ -5882,8 +5877,8 @@ async function renderDashboard() {
     <div class="dashboard-stats">
       <article><span>Personal</span><strong>${people.length}</strong><small>${shiftColorDot(getShiftScope())}${escapeHtml(getShiftName(getShiftScope()) || "inget skift")}</small></article>
       <article class="stat-green"><span>Tillgängliga i gruppen</span><strong>${available}</strong><small>kan schemaläggas</small></article>
-      <article class="stat-red"><span>Sjuka</span><strong>${sick}</strong><small>ej tillgängliga</small></article>
-      <article class="stat-yellow"><span>Semester</span><strong>${vacation}</strong><small>frånvarande</small></article>
+      <article class="stat-red"><span>Ej tillgängliga</span><strong>${unavailable}</strong><small>kan inte arbeta</small></article>
+      <article class="stat-yellow"><span>Lediga</span><strong>${off}</strong><small>frånvarande</small></article>
       <article class="stat-green"><span>Full kompetens</span><strong>${fullyQualified}</strong><small>alla maskiner</small></article>
       <article><span>Senaste produktion</span><strong>${latestProduction?.total || 0}</strong><small>${latestProduction?.date || "ingen dag"}</small></article>
     </div>

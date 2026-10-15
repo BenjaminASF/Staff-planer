@@ -1,16 +1,14 @@
 const { HttpError } = require("./auth");
-const { AVAILABILITY_VALUES } = require("./permissions");
+const { normalizeAvailability } = require("./permissions");
 
 const AVAILABILITY_LABELS = {
   available: "Tillgänglig",
-  sick: "Sjuk",
-  vab: "Vård av barn",
-  vacation: "Semester",
-  unavailable: "Inte tillgänglig"
+  unavailable: "Ej tillgänglig",
+  off: "Ledig"
 };
 
 function availabilityLabel(status) {
-  return AVAILABILITY_LABELS[status] || AVAILABILITY_LABELS.available;
+  return AVAILABILITY_LABELS[normalizeAvailability(status)] || AVAILABILITY_LABELS.available;
 }
 
 function cleanText(value, maxLength) {
@@ -54,8 +52,9 @@ function cleanPersonFields(body, allowedFields) {
   if ("phone" in body) columns.phone = cleanText(body.phone, 40);
   if ("email" in body) columns.email = cleanEmail(body.email);
   if ("availability" in body) {
-    if (!AVAILABILITY_VALUES.includes(body.availability)) throw new HttpError(400, "Okänd status.");
-    columns.availability = body.availability;
+    const availability = normalizeAvailability(body.availability);
+    if (!availability) throw new HttpError(400, "Okänd status.");
+    columns.availability = availability;
   }
   if ("shiftId" in body) columns.shift_id = body.shiftId ? String(body.shiftId) : null;
   return columns;

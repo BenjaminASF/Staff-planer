@@ -44,7 +44,15 @@ const roleLevel = role => ROLE_LEVELS[role] ?? -1;
 const personLevel = person => person?.account ? roleLevel(person.account.role) : ROLE_LEVELS[ROLES.OPERATOR];
 const rolesBelow = role => ROLE_VALUES.filter(other => roleLevel(other) < roleLevel(role));
 
-const AVAILABILITY_VALUES = ["available", "sick", "vab", "vacation", "unavailable"];
+const AVAILABILITY_VALUES = ["available", "unavailable", "off"];
+// Statuses from before the three-status model, as their new status. Old backups and
+// undo entries can still carry them.
+const LEGACY_AVAILABILITY = Object.freeze({ sick: "unavailable", vab: "unavailable", vacation: "off" });
+
+function normalizeAvailability(value) {
+  if (AVAILABILITY_VALUES.includes(value)) return value;
+  return LEGACY_AVAILABILITY[value] || null;
+}
 
 const WEEK_KEY = "\\d{4}-\\d{2}-\\d{2}";
 
@@ -224,7 +232,7 @@ function canEvaluatePerson(user, person) {
   return isLeader(user) && managesPerson(user, person);
 }
 
-// Operators may not mark themselves "unavailable"; only admins and shift leaders set that status.
+// Operators may not mark themselves "unavailable" (Ej tillgänglig); only admins and shift leaders set that status.
 const LEADER_ONLY_AVAILABILITY = ["unavailable"];
 
 function canSetAvailability(user, availability) {
@@ -283,6 +291,7 @@ module.exports = {
   ROLES,
   ROLE_VALUES,
   AVAILABILITY_VALUES,
+  normalizeAvailability,
   GLOBAL_DOCUMENTS,
   WEEKLY_SCHEDULE_PREFIXES,
   PERSONAL_SCOPE_PREFIX,
