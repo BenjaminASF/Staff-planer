@@ -1773,16 +1773,21 @@ async function saveProductionRecords(records, scope = getShiftScope()) {
 
 // recordDate is the day that set the factory record and recordPrevious the record it beat,
 // so a typing mistake on that day can be corrected without leaving a false record behind.
-// targetChanges maps the first day of each daily target to that target ("2026-10-15": 180).
-// dailyTarget is only the target before the first change.
+// Each shift has its own daily target: shiftTargets maps a shift id to the first day of
+// each of its targets ("2026-10-15": 180). targetChanges holds the changes made while all
+// shifts shared one target and dailyTarget the target before them; they stay for history.
+const parseTargetChanges = changes => Object.fromEntries(Object.entries(isPlainObject(changes) ? changes : {})
+  .filter(([date, target]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Number(target)) && Number(target) >= 0)
+  .map(([date, target]) => [date, Number(target)]));
+
 async function getProductionSettings() {
   const settings = await getGlobalDocument("productionSettings", {});
-  const targetChanges = Object.fromEntries(Object.entries(isPlainObject(settings?.targetChanges) ? settings.targetChanges : {})
-    .filter(([date, target]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Number(target)) && Number(target) >= 0)
-    .map(([date, target]) => [date, Number(target)]));
+  const shiftTargets = Object.fromEntries(Object.entries(isPlainObject(settings?.shiftTargets) ? settings.shiftTargets : {})
+    .map(([shiftId, changes]) => [shiftId, parseTargetChanges(changes)]));
   return {
     dailyTarget: Number(settings?.dailyTarget) || 160,
-    targetChanges,
+    targetChanges: parseTargetChanges(settings?.targetChanges),
+    shiftTargets,
     factoryRecord: Number(settings?.factoryRecord) || 0,
     recordDate: typeof settings?.recordDate === "string" ? settings.recordDate : "",
     recordPrevious: Number(settings?.recordPrevious) || 0
@@ -1793,18 +1798,24 @@ async function saveProductionSettings(settings) {
   await saveGlobalDocument("productionSettings", settings);
 }
 
-// The target in force on a day: the latest change made from that day or earlier.
-// Days before the first change keep the target they were saved with.
-function getProductionTarget(settings, date, record) {
-  const from = Object.keys(settings.targetChanges).filter(day => day <= date).sort().pop();
-  if (from) return settings.targetChanges[from];
+const latestTargetChange = (changes, date) => Object.keys(changes || {}).filter(day => day <= date).sort().pop();
+
+// A shift's target on a day: its own latest change made from that day or earlier, else the
+// shared target that applied then. Days before any change keep the target they were saved with.
+function getProductionTarget(settings, shiftId, date, record) {
+  const own = settings.shiftTargets[shiftId];
+  const ownFrom = latestTargetChange(own, date);
+  if (ownFrom) return own[ownFrom];
+  const sharedFrom = latestTargetChange(settings.targetChanges, date);
+  if (sharedFrom) return settings.targetChanges[sharedFrom];
   return Number(record?.target ?? settings.dailyTarget);
 }
 
-// A new target applies from its day onwards, replacing later changes; earlier days keep theirs.
-function setProductionTargetFrom(settings, date, target) {
-  const kept = Object.entries(settings.targetChanges).filter(([day]) => day < date);
-  return { ...settings, targetChanges: Object.fromEntries([...kept, [date, target]]) };
+// A new target applies to its shift from its day onwards, replacing that shift's later changes.
+// Earlier days and the other shifts keep theirs.
+function setProductionTargetFrom(settings, shiftId, date, target) {
+  const kept = Object.entries(settings.shiftTargets[shiftId] || {}).filter(([day]) => day < date);
+  return { ...settings, shiftTargets: { ...settings.shiftTargets, [shiftId]: Object.fromEntries([...kept, [date, target]]) } };
 }
 
 function getStartOfToday() {
@@ -5090,7 +5101,7 @@ window.addEventListener("beforeunload", event => {
 // so other days and changes saved meanwhile are kept.
 async function saveProductionDay(scope, dayRecord, targetChange = null) {
   const [records, settings] = await Promise.all([getProductionRecords(scope), getProductionSettings()]);
-  let next = targetChange ? setProductionTargetFrom(settings, targetChange.date, targetChange.target) : { ...settings };
+  let next = targetChange ? setProductionTargetFrom(settings, scope, targetChange.date, targetChange.target) : { ...settings };
   if (!dayRecord) {
     if (JSON.stringify(next) !== JSON.stringify(settings)) await saveProductionSettings(next);
     return { records, settings: next, brokeRecord: false, previousRecord: settings.factoryRecord };
@@ -5109,11 +5120,11 @@ async function saveProductionDay(scope, dayRecord, targetChange = null) {
   return { records, settings: next, brokeRecord: dayRecord.total > recordToBeat, previousRecord: recordToBeat };
 }
 
-function renderProductionHistory(root, records, settings) {
+function renderProductionHistory(root, records, settings, scope) {
   const section = root.querySelector(".production-history");
   if (!section) return;
   const days = Object.values(records).filter(item => item?.date).sort((a, b) => b.date.localeCompare(a.date));
-  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= getProductionTarget(settings, item.date, item) ? "history-met" : "history-missed"}">${Number(item.total) >= getProductionTarget(settings, item.date, item) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button><button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button></div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
+  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "history-met" : "history-missed"}">${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button><button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button></div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
   section.querySelectorAll("[data-production-menu]").forEach(button => button.addEventListener("click", event => {
     event.stopPropagation();
     const menu = section.querySelector(`[data-production-actions="${button.dataset.productionMenu}"]`);
@@ -5168,7 +5179,7 @@ async function renderProduction() {
     }]))
   };
   const total = machines.reduce((sum, machine) => sum + (Number(record.machines?.[machine]?.result) || 0), 0);
-  const target = getProductionTarget(settings, selectedProductionDate, record);
+  const target = getProductionTarget(settings, scope, selectedProductionDate, record);
   const month = selectedProductionDate.slice(0, 7);
   const otherMonthDays = Object.values(records).filter(item => item.date?.startsWith(month) && item.date !== selectedProductionDate);
   const otherMonthTotal = otherMonthDays.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
@@ -5178,12 +5189,12 @@ async function renderProduction() {
   const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
   root.innerHTML = `
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
-    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Dagligt mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller från valt datum och framåt. Tidigare dagar behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
+    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
     <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small><button id="editFactoryRecordBtn" type="button">Ändra manuellt</button></article></div>
     <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select></label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
   `;
-  renderProductionHistory(root, records, settings);
+  renderProductionHistory(root, records, settings, scope);
   const saveStatus = root.querySelector("#productionSaveStatus");
   const setSaveStatus = (text, state = "") => {
     saveStatus.textContent = text;
@@ -5238,7 +5249,7 @@ async function renderProduction() {
       pending.day = pending.target = false;
       try {
         const result = await saveProductionDay(scope, dayRecord, targetChange);
-        if (targetChange) await addAuditEvent("production", "Dagligt mål ändrat", `${targetChange.target} box från ${date}`);
+        if (targetChange) await addAuditEvent("production", "Dagligt mål ändrat", `Skift ${getShiftName(scope)}: ${targetChange.target} box från ${date}`);
         if (dayRecord && !productionAuditedDates.has(`${scope}|${date}`)) {
           productionAuditedDates.add(`${scope}|${date}`);
           await addAuditEvent("production", `Produktion ${date}`, `${dayRecord.total} box`);
@@ -5247,7 +5258,7 @@ async function renderProduction() {
         if (!productionAutosave.run) setSaveStatus(`Sparat ${new Date().toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}`, "saved");
         root.querySelector("#factoryRecordValue").textContent = result.settings.factoryRecord;
         Object.assign(settings, result.settings);
-        renderProductionHistory(root, result.records, settings);
+        renderProductionHistory(root, result.records, settings, scope);
         if (dayRecord) root.querySelector("#productionMonthDays").textContent = monthDaysText(otherMonthDays.length + 1);
         if (result.brokeRecord && !productionCelebratedDates.has(`${scope}|${date}`)) {
           productionCelebratedDates.add(`${scope}|${date}`);
@@ -5439,9 +5450,9 @@ async function getAdminDashboardData() {
       days,
       reportedToday: Boolean(todayRecord),
       today: getProductionDayTotal(todayRecord),
-      todayTarget: getProductionTarget(settings, today, todayRecord),
+      todayTarget: getProductionTarget(settings, shift.id, today, todayRecord),
       month: sumBy(days, getProductionDayTotal),
-      monthTarget: sumBy(days, record => getProductionTarget(settings, record.date, record)),
+      monthTarget: sumBy(days, record => getProductionTarget(settings, shift.id, record.date, record)),
       waste: sumBy(days, getProductionDayWaste),
       competence: departments.map(department => ({
         department,
@@ -5504,7 +5515,10 @@ function adminShiftCardHtml(data) {
   </article>`;
 }
 
-function adminProductionChartHtml(shiftData, target) {
+// Each shift's daily target is a dashed line in its colour; one grey line when they all match.
+function adminProductionChartHtml(shiftData) {
+  const targets = [...new Set(shiftData.map(data => data.todayTarget))];
+  const target = Math.max(0, ...targets);
   const dates = [...new Set(shiftData.flatMap(data => data.days.map(record => record.date)))].sort();
   if (!dates.length) return '<div class="empty-state">Ingen produktion registrerad den här månaden ännu.</div>';
   const values = shiftData.flatMap(data => data.days.map(getProductionDayTotal));
@@ -5521,7 +5535,11 @@ function adminProductionChartHtml(shiftData, target) {
   dates.forEach((date, index) => {
     if (index % labelEvery === 0 || index === dates.length - 1) svg += `<text x="${x(index)}" y="${height - 8}" text-anchor="middle">${Number(date.slice(8))}/${Number(date.slice(5, 7))}</text>`;
   });
-  if (target) svg += `<line class="admin-target" x1="${left}" x2="${width - right}" y1="${y(target)}" y2="${y(target)}"/>`;
+  const targetLine = value => `<line class="admin-target" x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}"/>`;
+  if (targets.length === 1 && target) svg += targetLine(target);
+  if (targets.length > 1) shiftData.filter(data => data.todayTarget).forEach(data => {
+    svg += `<g class="admin-series${shiftColorClass(data.shift)}"><title>Skift ${escapeHtml(data.shift.name)}: mål ${formatNumber(data.todayTarget)} box</title>${targetLine(data.todayTarget)}</g>`;
+  });
   shiftData.forEach(data => {
     const points = data.days.map(record => [x(dates.indexOf(record.date)), y(getProductionDayTotal(record))]);
     if (!points.length) return;
@@ -5558,7 +5576,7 @@ function adminAbsenceHtml(shiftData) {
 
 async function renderAdminDashboard(root) {
   const data = await getAdminDashboardData();
-  const { shiftData, settings, events, today } = data;
+  const { shiftData, events, today } = data;
   const header = document.querySelector(".main > .header");
   if (header) {
     header.querySelector(":scope > h2").textContent = "Produktionsöversikt";
@@ -5577,7 +5595,7 @@ async function renderAdminDashboard(root) {
     .map(status => [status, absent.filter(person => getPersonAvailability(person) === status).length])
     .filter(([, count]) => count)
     .map(([status, count]) => `${count} ${getAvailabilityLabel(status).toLocaleLowerCase("sv-SE")}`);
-  const currentTarget = getProductionTarget(settings, today, null);
+  const currentTargets = [...new Set(shiftData.map(item => item.todayTarget))];
   const moreLink = (href, label, detail = "") => `<a href="${href}">${label}${detail ? `<small>${detail}</small>` : ""}</a>`;
   root.innerHTML = `
     <div class="admin-toolbar">
@@ -5612,9 +5630,9 @@ async function renderAdminDashboard(root) {
     </section>
     <section class="admin-shifts" aria-label="Skiften">${shiftData.map(adminShiftCardHtml).join("") || '<div class="card empty-state">Inga skift finns ännu. Skapa skift under Inställningar.</div>'}</section>
     <section class="admin-charts">
-      <div class="card"><h3>Produktion per dag, ${escapeHtml(month)}</h3><p class="admin-sub">Box per skift och dag.${currentTarget ? ` Streckad linje = dagligt mål ${formatNumber(currentTarget)} box.` : ""}</p>
+      <div class="card"><h3>Produktion per dag, ${escapeHtml(month)}</h3><p class="admin-sub">Box per skift och dag.${currentTargets.length === 1 && currentTargets[0] ? ` Streckad linje = dagligt mål ${formatNumber(currentTargets[0])} box.` : currentTargets.length > 1 ? " Streckade linjer = varje skifts dagliga mål." : ""}</p>
         <div class="admin-legend">${shiftData.map(item => `<span>${shiftColorDot(item.shift.id)}${escapeHtml(item.shift.name)} · ${formatNumber(item.month)} box</span>`).join("")}</div>
-        ${adminProductionChartHtml(shiftData, currentTarget)}</div>
+        ${adminProductionChartHtml(shiftData)}</div>
       <div class="card"><h3>Svinn hittills i månaden</h3><p class="admin-sub">Kilo svinn per skift.</p><div class="admin-waste">${adminWasteHtml(shiftData)}</div></div>
     </section>
     <section class="admin-columns">

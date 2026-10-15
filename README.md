@@ -15,7 +15,7 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Sätta statusen Inte tillgänglig | ✓ | ✓ | ✓ | |
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | |
-| Ändra det dagliga produktionsmålet | ✓ | ✓ | | |
+| Ändra skiftets dagliga produktionsmål | ✓ | ✓ | | |
 | Egen privat att göra-lista, med delning av enskilda uppgifter | ✓ | ✓ | ✓ | ✓ |
 | Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | Eget skift | |
 | Lägga till personal och skapa konton | Alla roller och skift | Höger hand och operatörer, eget skift | Operatörer, eget skift | |
@@ -34,7 +34,7 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 
 Admin hamnar på **Översikt** efter inloggningen. Sidan visar alla skift sida vid sida:
 
-- Produktion idag och under månaden, jämfört med det dagliga målet.
+- Produktion idag och under månaden, jämfört med varje skifts dagliga mål.
 - Svinn under månaden i kg per skift.
 - Antal operatörer på plats och vem som är sjuk, på VAB, har semester eller inte är tillgänglig.
 - Hur många linjer varje skift kan köra samtidigt. Det räknas fram från de tillgängliga operatörerna och deras kompetens, med samma regler som autoschemat (avdelningens kompetens, krav på maskinen och GD-begränsning). Om någon linje inte går att bemanna står det kort vilken kompetens som saknas.
@@ -55,7 +55,7 @@ Mejlen skickas via [Resend](https://resend.com), eftersom Railway blockerar vanl
 
 Utan `RESEND_API_KEY` och `MAIL_FROM` skickas inga mejl, och allt annat fungerar som vanligt.
 
-Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas för hela månaden, och den 10:e i nästa månad tas förra månadens dagar bort automatiskt. Fabriksrekordet och det dagliga målet finns kvar. När admin eller skiftledaren ändrar det dagliga målet gäller det nya målet från det valda datumet och framåt; tidigare dagar behåller sitt mål. Högst upp på sidan visas hur mycket skiftet har producerat totalt under månaden, och siffran uppdateras direkt när dagens resultat skrivs in.
+Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas för hela månaden, och den 10:e i nästa månad tas förra månadens dagar bort automatiskt. Fabriksrekordet och det dagliga målet finns kvar. Varje skift har sitt eget dagliga mål. När admin eller skiftledaren ändrar målet gäller det nya målet bara det skift som är valt, från det valda datumet och framåt; tidigare dagar och de andra skiftens mål ändras inte. Högst upp på sidan visas hur mycket skiftet har producerat totalt under månaden, och siffran uppdateras direkt när dagens resultat skrivs in.
 
 Skiftledare kan aldrig ändra uppgifter (namn, företag, telefon, status eller inloggning) för admin eller en annan skiftledare, inte ens i samma skift. Höger hand kan bara ändra uppgifter för operatörer och personal utan inloggning.
 
