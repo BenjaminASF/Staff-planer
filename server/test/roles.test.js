@@ -119,7 +119,7 @@ describe("roles and permissions", () => {
     assert.equal((await admin.delete(`/api/people/${adminInShift.id}`)).status, 200);
   });
 
-  test("shift leader cannot delete users or change roles", async () => {
+  test("shift leader cannot delete users or make anyone a shift leader", async () => {
     assert.equal((await leader.delete(`/api/people/${boPerson.id}`)).status, 403);
     assert.equal((await leader.delete(`/api/people/${annaPerson.id}/account`)).status, 403);
     assert.equal((await leader.patch(`/api/people/${annaPerson.id}/account`, { role: "shift_leader" })).status, 403);

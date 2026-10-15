@@ -3,7 +3,7 @@ const { HttpError, hashPassword, normalizeUsername, validateUsername, validatePa
 const { withTransaction } = require("../db");
 const {
   ROLES, ROLE_VALUES, AVAILABILITY_VALUES, isAdmin, roleNeedsShift, canSeeAllPeople, canCreatePerson, editablePersonFields,
-  canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canDeleteAccount, canSetAvailability
+  canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canChangeUsername, canDeleteAccount, canSetAvailability
 } = require("../permissions");
 const {
   newId, serializePerson, PERSON_SELECT, getPersonById, purgePersonFromDocuments, deletePersonalDocuments,
@@ -83,7 +83,7 @@ function peopleRoutes({ pool }) {
       if (account) {
         const role = account.role || ROLES.OPERATOR;
         const person = { id: personId, shiftId };
-        if (!canCreateAccount(req.user, person, role)) throw new HttpError(403, "Du kan bara skapa operatörskonton i ditt eget skift.");
+        if (!canCreateAccount(req.user, person, role)) throw new HttpError(403, "Du kan bara skapa konton med en roll under din egen, i ditt eget skift.");
         await insertAccount(client, person, { ...account, role }, account.mustChangePassword !== false);
       }
       return personId;
@@ -155,7 +155,7 @@ function peopleRoutes({ pool }) {
     const body = req.body || {};
     const role = body.role || ROLES.OPERATOR;
     if (!canCreateAccount(req.user, person, role)) {
-      throw new HttpError(403, "Du kan bara skapa operatörskonton för personal i ditt eget skift.");
+      throw new HttpError(403, "Du kan bara skapa konton med en roll under din egen, för personal i ditt eget skift.");
     }
     await withTransaction(pool, client => insertAccount(client, person, { ...body, role }, body.mustChangePassword !== false));
     res.status(201).json({ person: await getPersonById(pool, person.id) });
@@ -167,7 +167,9 @@ function peopleRoutes({ pool }) {
     const body = req.body || {};
     await withTransaction(pool, async client => {
       if ("role" in body && body.role !== person.account.role) {
-        if (!canChangeRole(req.user)) throw new HttpError(403, "Endast admin kan ändra roller.");
+        if (!canChangeRole(req.user, person, body.role)) {
+          throw new HttpError(403, "Du kan bara ge eller ta bort roller som ligger under din egen, för personal i ditt eget skift.");
+        }
         validateRole(body.role);
         if (person.account.role === ROLES.ADMIN && await countAdmins(client) <= 1) {
           throw new HttpError(400, "Det måste finnas minst en admin.");
@@ -176,7 +178,7 @@ function peopleRoutes({ pool }) {
         await client.query("UPDATE users SET role = $2, updated_at = now() WHERE person_id = $1", [person.id, body.role]);
       }
       if ("username" in body && normalizeUsername(body.username) !== person.account.username) {
-        if (!canChangeRole(req.user)) throw new HttpError(403, "Endast admin kan byta användarnamn.");
+        if (!canChangeUsername(req.user)) throw new HttpError(403, "Endast admin kan byta användarnamn.");
         const username = normalizeUsername(body.username);
         validateUsername(username);
         const { rows } = await client.query("SELECT 1 FROM users WHERE username = $1", [username]);
@@ -185,7 +187,7 @@ function peopleRoutes({ pool }) {
       }
       if ("password" in body) {
         if (!canResetPassword(req.user, person, person.account)) {
-          throw new HttpError(403, "Du kan bara återställa lösenord för operatörer i ditt eget skift.");
+          throw new HttpError(403, "Du kan bara återställa lösenord för personal under din egen nivå i ditt eget skift.");
         }
         validatePassword(body.password);
         // A reset password is temporary: the person chooses a new one at next login.

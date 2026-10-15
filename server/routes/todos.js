@@ -1,6 +1,6 @@
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
-const { ROLES, PERSONAL_SCOPE_PREFIX, hasPersonalList } = require("../permissions");
+const { PERSONAL_SCOPE_PREFIX, hasPersonalList } = require("../permissions");
 
 // Each to-do item lists the user ids it is shared with in `sharedWith`. Nobody
 // else's list is ever read whole: these routes hand out only the items shared
@@ -13,29 +13,28 @@ function todoRoutes({ pool }) {
     next();
   });
 
-  // Who a task can be shared with: everyone else who has a list of their own.
+  // Who a task can be shared with: everyone else with a login, since everyone has a list.
   router.get("/recipients", async (req, res) => {
     const { rows } = await pool.query(
       `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id
-        WHERE u.role <> $1 AND u.id <> $2 ORDER BY lower(p.name)`,
-      [ROLES.OPERATOR, req.user.id]
+        WHERE u.id <> $1 ORDER BY lower(p.name)`,
+      [req.user.id]
     );
     res.json({ recipients: rows.map(row => ({ id: row.id, name: row.name })) });
   });
 
-  // Tasks other users have shared with me. Owners who have since lost their
-  // list (for example by becoming operators) no longer share anything.
+  // Tasks other users have shared with me.
   router.get("/shared", async (req, res) => {
     const { rows } = await pool.query(
       `SELECT u.id AS owner_id, p.name AS owner_name, d.value
          FROM documents d
          JOIN users u ON d.scope = $1 || u.id
          JOIN people p ON p.id = u.person_id
-        WHERE d.key = 'todos' AND u.id <> $2 AND u.role <> $3
+        WHERE d.key = 'todos' AND u.id <> $2
           AND jsonb_typeof(d.value) = 'array'
           AND d.value @> jsonb_build_array(jsonb_build_object('sharedWith', jsonb_build_array($2::text)))
         ORDER BY lower(p.name)`,
-      [PERSONAL_SCOPE_PREFIX, req.user.id, ROLES.OPERATOR]
+      [PERSONAL_SCOPE_PREFIX, req.user.id]
     );
     const items = rows.flatMap(row => row.value
       .filter(item => Array.isArray(item?.sharedWith) && item.sharedWith.includes(req.user.id))
