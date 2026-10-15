@@ -3,9 +3,10 @@
 // Admin        – everything.
 // Skiftledare  – like admin, but changes only their own shift, sees other shifts'
 //                schedules read-only, may add staff to their own shift and may
-//                change shared machines and settings. May not change an admin's
-//                details, delete users,
-//                change roles, or edit competence, test results or assessments.
+//                change shared machines and settings. Tests and assesses the
+//                operators in their own shift: test results, competence and
+//                assessments, for those people only. May not change an admin's
+//                details, delete users or change roles.
 // Höger hand   – the shift leader's assistant, who runs the shift when the leader
 //                is away. Like a shift leader, but only in their own shift: sees and
 //                changes only that shift's schedule, adds and manages operators
@@ -39,8 +40,8 @@ const GLOBAL_DOCUMENTS = Object.freeze({
   machineSkillUpdatedAt: "competence",
   machineRestrictions: "competence",
   machineSkillDetails: "competence",
-  assessments: "sensitive",
-  testResults: "sensitive",
+  assessments: "evaluation",
+  testResults: "evaluation",
   safetySnapshots: "sensitive"
 });
 
@@ -92,6 +93,8 @@ function canReadDocument(user, scope, key) {
     case "configPrivate": return isAdminOrLeader(user);
     // Scheduling depends on competence, so everyone who plans a shift reads it.
     case "competence": return isShiftManager(user);
+    // Shift leaders get only the entries for the people they evaluate (see evaluations.js).
+    case "evaluation": return isAdminOrLeader(user);
     case "sensitive": return isAdmin(user);
     // Shift leaders may look at every shift's schedule; everyone else only their own.
     case "shiftPlan":
@@ -107,7 +110,9 @@ function canWriteDocument(user, scope, key) {
     // Right hands record production, which may set a new factory record.
     case "config": return isAdminOrLeader(user) || (isRightHand(user) && key === "productionSettings");
     case "configPrivate": return isAdminOrLeader(user);
+    // Shift leaders change only the entries for the people they evaluate (see evaluations.js).
     case "competence":
+    case "evaluation": return isAdminOrLeader(user);
     case "sensitive": return isAdmin(user);
     case "shiftPlan":
     case "shiftWork":
@@ -177,6 +182,20 @@ function editablePersonFields(user, person) {
   return [];
 }
 
+// Test results, competence and assessments. Admins evaluate everyone. Shift
+// leaders evaluate the operators in their own shift, and the right hands and
+// staff without a login there, but never another shift leader or an admin.
+const EVALUATED_BY_LEADERS = [ROLES.OPERATOR, ROLES.RIGHT_HAND];
+
+function evaluatesEveryone(user) {
+  return isAdmin(user);
+}
+
+function canEvaluatePerson(user, person) {
+  if (isAdmin(user)) return true;
+  return isLeader(user) && leadsShift(user, person.shiftId) && (!person.account || EVALUATED_BY_LEADERS.includes(person.account.role));
+}
+
 // Operators may not mark themselves "unavailable"; only admins and shift leaders set that status.
 const LEADER_ONLY_AVAILABILITY = ["unavailable"];
 
@@ -236,6 +255,9 @@ module.exports = {
   roleNeedsShift,
   canEditShift,
   canChangeProductionTarget,
+  EVALUATED_BY_LEADERS,
+  evaluatesEveryone,
+  canEvaluatePerson,
   changesProductionTarget,
   documentCategory,
   sharedFlagKey,
