@@ -5983,9 +5983,22 @@ async function renderProductionSummary() {
   const { today } = adminDashboardData;
   const isToday = adminDashboardPeriod === "today";
   const { day, weekKey } = getScheduleDayForDate(today);
-  const [people, schedule] = await Promise.all([getAllPeople(), isToday ? getDocument(shiftId, `schedule:${weekKey}`, null) : null]);
-  const nameById = new Map(people.map(person => [person.id, person.name]));
   const records = isToday ? (data.todayRecord ? [data.todayRecord] : []) : data.days;
+  // Training comes from the schedule: a training row's person, with the machine chosen as its place.
+  const scheduleDays = (isToday ? [today] : records.map(record => record.date)).map(getScheduleDayForDate).filter(item => item.day);
+  const weekKeys = [...new Set([weekKey, ...scheduleDays.map(item => item.weekKey)])];
+  const [people, ...weekDocuments] = await Promise.all([getAllPeople(), ...weekKeys.flatMap(key => [
+    getDocument(shiftId, `schedule:${key}`, null), getDocument(shiftId, `trainingLocations:${key}`, null)
+  ])]);
+  const weeks = new Map(weekKeys.map((key, index) => [key, { schedule: weekDocuments[index * 2], locations: weekDocuments[index * 2 + 1] }]));
+  const schedule = weeks.get(weekKey).schedule;
+  const nameById = new Map(people.map(person => [person.id, person.name]));
+  const traineesOn = machine => [...new Set(scheduleDays.flatMap(({ day: scheduleDay, weekKey: key }) => {
+    const { schedule: weekSchedule, locations } = weeks.get(key);
+    return TASKS.filter(isTrainingTaskName)
+      .filter(task => locations?.[task]?.[scheduleDay] === machine && weekSchedule?.[task]?.[scheduleDay])
+      .map(task => nameById.get(weekSchedule[task][scheduleDay]) || "Borttagen person");
+  }))];
   const lineOf = machine => Object.keys(BREAK_LINE_WORKPLACES).find(lineId => BREAK_LINE_WORKPLACES[lineId].includes(machine));
   const operatorsOn = machine => {
     const registered = records.map(record => {
@@ -6004,7 +6017,8 @@ async function renderProductionSummary() {
       reported: entries.length > 0,
       boxes: sumBy(entries, entry => entry.result),
       waste: sumBy(entries, entry => entry.waste),
-      ...operatorsOn(machine)
+      ...operatorsOn(machine),
+      trainees: traineesOn(machine)
     };
   });
   const total = sumBy(records, getProductionDayTotal);
@@ -6014,12 +6028,13 @@ async function renderProductionSummary() {
   const period = isToday
     ? new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long" })
     : `${new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { month: "long" })}, ${data.days.length} ${data.days.length === 1 ? "rapporterad dag" : "rapporterade dagar"}`;
-  const operatorHtml = row => row.names.length
-    ? `${escapeHtml(row.names.join(", "))}${row.fromSchedule ? ' <small class="admin-muted">enligt schemat</small>' : ""}`
-    : '<span class="admin-muted">–</span>';
+  const operatorHtml = row => [
+    row.names.length ? `${escapeHtml(row.names.join(", "))}${row.fromSchedule ? ' <small class="admin-muted">enligt schemat</small>' : ""}` : "",
+    ...row.trainees.map(name => `<span class="summary-trainee">${escapeHtml(name)} <b>(Utbildning)</b></span>`)
+  ].filter(Boolean).join("") || '<span class="admin-muted">–</span>';
   const body = !records.length
     ? `<div class="empty-state">${isToday ? "Ingen produktion är rapporterad idag." : "Ingen produktion är rapporterad den här månaden."}</div>`
-    : `<div class="admin-table-scroll"><table class="admin-table production-summary-table"><thead><tr><th>Linje / maskin</th><th>Box</th><th>Svinn</th><th class="summary-operator">GD-operatör</th></tr></thead><tbody>
+    : `<div class="admin-table-scroll"><table class="admin-table production-summary-table"><thead><tr><th>Linje / maskin</th><th>Box</th><th>Svinn</th><th class="summary-operator">Operatörer</th></tr></thead><tbody>
       ${rows.map(row => `<tr class="${row.boxes ? "" : "is-idle"}"><th scope="row">${row.line ? `${escapeHtml(row.line)} <small>· ${escapeHtml(row.machine)}</small>` : escapeHtml(row.machine)}<span class="summary-operator-inline">${operatorHtml(row)}</span></th><td>${row.reported ? formatNumber(row.boxes) : "–"}</td><td>${row.reported ? `${formatNumber(row.waste, row.waste % 1 ? 1 : 0)} kg` : "–"}</td><td class="summary-operator">${operatorHtml(row)}</td></tr>`).join("")}
       </tbody><tfoot><tr><th scope="row">Totalt</th><td>${formatNumber(total)}</td><td>${formatNumber(waste, waste % 1 ? 1 : 0)} kg</td><td class="summary-operator">${target ? `Mål ${formatNumber(target)} box · <b class="${total >= target ? "admin-good" : "admin-bad"}">${Math.round(total / target * 100)} %</b>` : ""}</td></tr></tfoot></table></div>${target ? `<p class="summary-target-inline">Mål ${formatNumber(target)} box · <b class="${total >= target ? "admin-good" : "admin-bad"}">${Math.round(total / target * 100)} %</b></p>` : ""}`;
   overlay.innerHTML = `<section class="schedule-viewer production-summary${shift.color ? ` shift-color-${shift.color}` : ""}">
@@ -7974,7 +7989,8 @@ function queueLiveRefresh({ document: cacheKey, peopleChanged, shiftsChanged, re
 
 function isUserBusyEditing() {
   if (productionAutosave.run) return true;
-  if ([...document.querySelectorAll('[aria-modal="true"]')].some(modal => modal.getClientRects().length)) return true;
+  // The production summary only shows data, so it is redrawn while open.
+  if ([...document.querySelectorAll('[aria-modal="true"]')].some(modal => modal.getClientRects().length && !modal.closest("#productionSummary"))) return true;
   if (document.querySelector(".todo-share-panel")) return true;
   const active = document.activeElement;
   if (!active || active.closest("#chatWidget")) return false;
