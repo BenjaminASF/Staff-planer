@@ -6305,3 +6305,17 @@ footer { color: var(--g-muted) !important; }
   .schedule-grid.schedule-readonly .readonly-cell { min-height: 46px; hyphens: auto; }
   .schedule-grid.schedule-readonly .readonly-cell .mine-badge { padding: 0 4px; font-size: 8px; }
 }
+
+/* Editable schedule showing a single day: a wider, easier-to-tap column. */
+.schedule-grid.schedule-edit-day { grid-template-columns: minmax(130px, 220px) minmax(0, 1fr); }
+.schedule-grid.schedule-edit-day .cell:not(.task):not(.header) { padding: 10px 14px; }
+.schedule-grid.schedule-edit-day .schedule-select { max-width: 460px; }
+
+@media (max-width: 640px) {
+  .schedule-grid.schedule-edit-day { grid-template-columns: minmax(92px, 34%) minmax(0, 1fr); }
+  .schedule-grid.schedule-edit-day .cell { padding: 8px; font-size: 13px; }
+  .schedule-grid.schedule-edit-day .cell.task { padding-inline: 10px; }
+  .schedule-grid.schedule-edit-day .schedule-select { min-height: 42px; padding: 6px 8px; font-size: 14px; }
+  .schedule-grid.schedule-edit-day .day-name-full { display: inline; }
+  .schedule-grid.schedule-edit-day .day-name-short { display: none; }
+}

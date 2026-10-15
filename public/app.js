@@ -3485,20 +3485,20 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   });
 }
 
-const READONLY_SCHEDULE_VIEW_KEY = "staff_schedule_view";
-let readOnlyScheduleDay = "";
-let readOnlyScheduleDayWeek = "";
+const SCHEDULE_VIEW_KEY = "staff_schedule_view";
+let selectedScheduleDay = "";
+let selectedScheduleDayWeek = "";
 
-function getReadOnlyScheduleView() {
+function getScheduleView() {
   try {
-    const stored = localStorage.getItem(READONLY_SCHEDULE_VIEW_KEY);
+    const stored = localStorage.getItem(SCHEDULE_VIEW_KEY);
     if (stored === "day" || stored === "week") return stored;
   } catch { /* Private mode: use the default below. */ }
   return window.matchMedia?.("(max-width: 640px)").matches ? "day" : "week";
 }
 
-function setReadOnlyScheduleView(view) {
-  try { localStorage.setItem(READONLY_SCHEDULE_VIEW_KEY, view); } catch { /* Private mode: keep it for this render only. */ }
+function setScheduleView(view) {
+  try { localStorage.setItem(SCHEDULE_VIEW_KEY, view); } catch { /* Private mode: keep it for this render only. */ }
 }
 
 function getTodayScheduleDay() {
@@ -3507,13 +3507,13 @@ function getTodayScheduleDay() {
   return DAYS.includes(today) ? today : "";
 }
 
-function getReadOnlyScheduleDay() {
+function getSelectedScheduleDay() {
   const week = getSelectedWeekKey();
-  if (readOnlyScheduleDayWeek !== week || !DAYS.includes(readOnlyScheduleDay)) {
-    readOnlyScheduleDayWeek = week;
-    readOnlyScheduleDay = getTodayScheduleDay() || DAYS[0] || "";
+  if (selectedScheduleDayWeek !== week || !DAYS.includes(selectedScheduleDay)) {
+    selectedScheduleDayWeek = week;
+    selectedScheduleDay = getTodayScheduleDay() || DAYS[0] || "";
   }
-  return readOnlyScheduleDay;
+  return selectedScheduleDay;
 }
 
 function formatScheduleName(personId, nameById, ownId, tag = "strong") {
@@ -3549,7 +3549,7 @@ function describeReadOnlySlot(task, day, { nameById, ownId, schedule, trainingLe
   return { html: lines.join(""), mine: Boolean(ownId) && involved.includes(ownId) };
 }
 
-function renderReadOnlyViewBar(root, view, selectedDay, rerender) {
+function renderScheduleViewBar(root, view, selectedDay, rerender) {
   const card = root.parentElement;
   card?.querySelector(".schedule-view-bar")?.remove();
   if (!card) return;
@@ -3566,11 +3566,11 @@ function renderReadOnlyViewBar(root, view, selectedDay, rerender) {
       ${DAYS.map((day, index) => `<button type="button" data-day="${escapeHtml(day)}" aria-pressed="${day === selectedDay}" class="${day === today ? "is-today" : ""}"><span>${escapeHtml(day.slice(0, 3))}</span><small>${escapeHtml(dates[index])}</small></button>`).join("")}
     </div>`;
   bar.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => {
-    setReadOnlyScheduleView(button.dataset.view);
+    setScheduleView(button.dataset.view);
     rerender();
   }));
   bar.querySelectorAll("[data-day]").forEach(button => button.addEventListener("click", () => {
-    readOnlyScheduleDay = button.dataset.day;
+    selectedScheduleDay = button.dataset.day;
     rerender();
   }));
   card.insertBefore(bar, root);
@@ -3586,15 +3586,15 @@ function renderReadOnlySchedule(root, data) {
   renderTrainingScheduleSummary(root, people, schedule, trainingLocations);
 
   const rerender = () => renderReadOnlySchedule(root, data);
-  const view = getReadOnlyScheduleView();
-  const selectedDay = getReadOnlyScheduleDay();
+  const view = getScheduleView();
+  const selectedDay = getSelectedScheduleDay();
   renderMyWeekSummary(root, data, day => {
-    readOnlyScheduleDay = day;
-    setReadOnlyScheduleView("day");
+    selectedScheduleDay = day;
+    setScheduleView("day");
     rerender();
     root.scrollIntoView({ behavior: "smooth", block: "start" });
   });
-  renderReadOnlyViewBar(root, view, selectedDay, rerender);
+  renderScheduleViewBar(root, view, selectedDay, rerender);
 
   const context = {
     ...data,
@@ -3706,7 +3706,7 @@ async function renderSchedule() {
     ]);
   const dates = getDatesForWeek();
   void updateShareScheduleButton();
-  root.classList.remove("schedule-readonly", "schedule-day-view");
+  root.classList.remove("schedule-readonly", "schedule-day-view", "schedule-edit-day");
   root.parentElement?.querySelectorAll(".schedule-view-bar, .my-week-summary").forEach(element => element.remove());
 
   if (isOperator() && !(await getScheduleShare())) {
@@ -3725,12 +3725,21 @@ async function renderSchedule() {
   renderUnassignedPeopleSummary(root, people, schedule, trainingLeaders);
   renderTrainingScheduleSummary(root, people, schedule, trainingLocations);
   await renderSchedulePrioritySelector(root);
+
+  const view = getScheduleView();
+  const selectedDay = getSelectedScheduleDay();
+  const visibleDays = view === "day" ? [selectedDay] : DAYS;
+  const today = getTodayScheduleDay();
+  renderScheduleViewBar(root, view, selectedDay, () => void renderSchedule());
+  root.style.setProperty("--schedule-day-count", String(visibleDays.length));
+  root.classList.toggle("schedule-edit-day", view === "day");
   root.innerHTML = "";
   root.appendChild(makeCell("Uppgift", "header task"));
 
-  DAYS.forEach((day, index) => {
+  visibleDays.forEach(day => {
+    const index = DAYS.indexOf(day);
     const header = document.createElement("div");
-    header.className = "cell header day-header";
+    header.className = `cell header day-header${day === today ? " is-today" : ""}`;
     header.innerHTML = `
       <span class="day-name-full">${day}</span>
       <span class="day-name-short">${day.slice(0, 2)}</span>
@@ -3757,7 +3766,7 @@ async function renderSchedule() {
     taskCell.innerHTML = `<span>${escapeHtml(task)}</span>${requiredStaff > 1 ? `<small class="required-staff-badge">${requiredStaff} personer behövs</small>` : ""}`;
     root.appendChild(taskCell);
 
-    DAYS.forEach(day => {
+    visibleDays.forEach(day => {
       const cell = document.createElement("div");
       const select = document.createElement("select");
       const emptyOption = document.createElement("option");
