@@ -37,7 +37,12 @@ Admin hamnar på **Översikt** efter inloggningen. Sidan visar alla skift sida v
 - Produktion idag och under månaden, jämfört med varje skifts dagliga mål.
 - Svinn under månaden i kg per skift.
 - Antal operatörer på plats och vem som är ej tillgänglig eller ledig.
-- Hur många linjer varje skift kan köra samtidigt. Det räknas fram från de tillgängliga operatörerna och deras kompetens, med samma regler som autoschemat (avdelningens kompetens, krav på maskinen och GD-begränsning). Om någon linje inte går att bemanna står det kort vilken kompetens som saknas.
+- Vilka linjer som är bemannade enligt skiftets schema för det valda datumet (**Linjer för**, idag som standard). En linje är bemannad när varje plats på linjen har en schemalagd operatör som är Tillgänglig och har platsens kompetens, med samma regler som autoschemat (avdelningens kompetens, krav på maskinen och GD-begränsning). En operatör räknas bara på en linje; en plats som hör till flera linjer, som Logimark på linje 2 och 3, delas av dem. För varje linje som inte är bemannad står vad som saknas, till exempel att ingen är schemalagd, att personen inte är tillgänglig eller saknar kompetens.
+- Om linjen är i produktion, det vill säga om produktion är rapporterad för linjens maskin den dagen. Bemannad och i produktion visas var för sig.
+- Kapacitet per skift: hur många linjer schemat bemannar, och om skiftets tillgängliga operatörer och deras kompetens räcker för att köra alla linjer samtidigt. Om svaret är nej står det vad som saknas, personal eller en viss kompetens.
+- **Regler för linjebemanning** visar vilka platser, kompetenser och hur många personer varje linje kräver. Saknas en regel, till exempel en plats utan kopplad kompetens, visas linjen som **Regel saknas** och regeln listas där i stället för att appen gissar. Platserna per linje ändras under **Inställningar → Rastlinjer**.
+
+Linjeöversikten uppdateras direkt när schemat, personalens status eller kompetensen ändras. Tillgängligheten är personens status just nu, även när man tittar på ett annat datum.
 - Kompetensen per skift jämfört med hur många som behövs för att köra alla linjer.
 
 Admin har ingen sidomeny. Överst finns en kompakt menyrad med genvägar till Översikt, Schema, Produktion och Personal. Under **Meny** finns alla sidor, valet av skift, Min profil och Logga ut.
