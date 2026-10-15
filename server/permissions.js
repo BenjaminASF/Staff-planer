@@ -21,8 +21,9 @@
 //                daily production target, shared machines or settings, and does
 //                not look at other shifts' schedules.
 // Operatör     – sees their own shift's schedule and break plan once an admin or
-//                shift leader has shared that week, edits their own profile
-//                (name, phone, status) and password.
+//                shift leader has shared that week, edits their own phone,
+//                status and password. Their name and e-mail address are changed
+//                only by an admin, shift leader or right hand.
 //
 // Personal documents ("Att göra") belong to one user, whatever their role, and
 // only that user reads and writes them – admins included. The owner can share
@@ -214,7 +215,8 @@ function canCreatePerson(user, shiftId) {
 function editablePersonFields(user, person) {
   if (isAdmin(user)) return ["name", "company", "phone", "email", "availability", "shiftId"];
   if (managesPerson(user, person)) return ["name", "company", "phone", "email", "availability"];
-  if (user?.personId === person.id) return ["name", "phone", "email", "availability"];
+  // Operators change only their phone and status; their name and e-mail are set by the shift's managers.
+  if (user?.personId === person.id) return isShiftManager(user) ? ["name", "phone", "email", "availability"] : ["phone", "availability"];
   return [];
 }
 

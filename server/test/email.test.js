@@ -43,15 +43,14 @@ describe("e-mail when a schedule is shared", () => {
     await server?.close();
   });
 
-  test("operators set their own e-mail address, and it must be valid", async () => {
-    assert.equal((await operator.patch("/api/me", { email: "inte-en-adress" })).status, 400);
-    const saved = await operator.patch("/api/me", { email: " Anna@Example.com " });
-    assert.equal(saved.status, 200);
-    assert.equal(saved.data.person.email, "anna@example.com");
+  test("operators cannot change their own e-mail address", async () => {
+    assert.equal((await operator.patch("/api/me", { email: "anna@example.com" })).status, 403);
+    assert.equal((await operator.patch(`/api/people/${annaPerson.id}`, { email: "anna@example.com" })).status, 403);
   });
 
-  test("the shift leader can set an operator's e-mail address", async () => {
-    const result = await leader.patch(`/api/people/${annaPerson.id}`, { email: "anna@example.com" });
+  test("the shift leader can set an operator's e-mail address, and it must be valid", async () => {
+    assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { email: "inte-en-adress" })).status, 400);
+    const result = await leader.patch(`/api/people/${annaPerson.id}`, { email: " Anna@Example.com " });
     assert.equal(result.status, 200);
     assert.equal(result.data.person.email, "anna@example.com");
   });

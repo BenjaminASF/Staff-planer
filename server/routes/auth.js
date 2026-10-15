@@ -100,7 +100,7 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     res.json(await buildMePayload(pool, req.user));
   });
 
-  // Own profile: name, phone, e-mail and status. Available to every role.
+  // Own profile: phone and status for every role; name and e-mail only for shift managers (see permissions.js).
   router.patch("/me", requireUser, async (req, res) => {
     const person = await getPersonById(pool, req.user.personId);
     const allowed = editablePersonFields(req.user, person).filter(field => ["name", "phone", "email", "availability"].includes(field));

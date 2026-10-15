@@ -2316,18 +2316,21 @@ function renderShiftNotice() {
   header.querySelector("h2")?.after(notice);
 }
 
-// "Min profil": everyone edits their own name, phone, e-mail and status, and their password.
+// "Min profil": everyone edits their own phone, status and password. Operators see their
+// name and e-mail read-only; an admin, shift leader or right hand changes those.
 async function renderProfilePage() {
   const root = document.getElementById("profilePage");
   if (!root || !currentUser || !currentPerson) return;
   const person = currentPerson;
   const availability = getPersonAvailability(person);
+  const lockedDetails = isOperator();
+  const lockedAttr = lockedDetails ? " readonly" : "";
   root.innerHTML = `
     <form id="profileForm" class="card settings-card profile-card">
       <div><h3>Mina uppgifter</h3><p>Användarnamn <strong>${escapeHtml(currentUser.username)}</strong> · ${escapeHtml(ROLE_LABELS[currentUser.role] || "")} · Skift: ${shiftColorDot(person.shiftId)}${escapeHtml(getShiftName(person.shiftId) || "inget skift")}</p></div>
-      <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required autocomplete="name" /></label>
+      <label>Namn<input name="name" value="${escapeHtml(person.name)}" maxlength="120" required autocomplete="name"${lockedAttr} />${lockedDetails ? "<small>Be din skiftledare om du vill ändra namnet.</small>" : ""}</label>
       <label>Telefon<input name="phone" type="tel" value="${escapeHtml(person.phone || "")}" maxlength="40" autocomplete="tel" /></label>
-      <label>E-post<input name="email" type="email" value="${escapeHtml(person.email || "")}" maxlength="200" autocomplete="email" /><small>Du får ett mejl när veckans schema finns.</small></label>
+      <label>E-post<input name="email" type="email" value="${escapeHtml(person.email || "")}" maxlength="200" autocomplete="email"${lockedAttr} /><small>Du får ett mejl när veckans schema finns.${lockedDetails ? " Be din skiftledare om du vill ändra adressen." : ""}</small></label>
       <label>Status<select name="availability" class="person-availability person-availability-${availability}">${availabilityOptionsFor(availability).map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select><small>Är du sjuk eller borta? Ändra här så ser skiftledaren det direkt.</small></label>
       <div class="settings-actions"><span id="profileMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara</button></div>
     </form>
@@ -2360,11 +2363,13 @@ async function renderProfilePage() {
   bindOnce(profileForm, "submit", async event => {
     event.preventDefault();
     const changes = {
-      name: profileForm.elements.name.value.trim(),
       phone: profileForm.elements.phone.value.trim(),
-      email: profileForm.elements.email.value.trim(),
       availability: profileForm.elements.availability.value
     };
+    if (!lockedDetails) {
+      changes.name = profileForm.elements.name.value.trim();
+      changes.email = profileForm.elements.email.value.trim();
+    }
     try {
       const me = await apiRequest("PATCH", "/me", changes);
       currentPerson = me.person;
