@@ -234,13 +234,6 @@ function canEvaluatePerson(user, person) {
   return isLeader(user) && managesPerson(user, person);
 }
 
-// Operators may not mark themselves "unavailable" (Ej tillgänglig); only admins and shift leaders set that status.
-const LEADER_ONLY_AVAILABILITY = ["unavailable"];
-
-function canSetAvailability(user, availability) {
-  return user?.role !== ROLES.OPERATOR || !LEADER_ONLY_AVAILABILITY.includes(availability);
-}
-
 function canDeletePerson(user) {
   return isAdmin(user);
 }
@@ -335,6 +328,5 @@ module.exports = {
   canChangeRole,
   canChangeUsername,
   canDeleteAccount,
-  canExportShiftBackup,
-  canSetAvailability
+  canExportShiftBackup
 };

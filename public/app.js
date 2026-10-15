@@ -4340,10 +4340,8 @@ const AVAILABILITY_OPTIONS = [
   ["off", "Ledig"]
 ];
 
-// Operators may not choose "Ej tillgänglig" themselves. If a shift leader already set it,
-// it stays in the list so the current status is still shown.
-function availabilityOptionsFor(current) {
-  return AVAILABILITY_OPTIONS.filter(([value]) => !isOperator() || value !== "unavailable" || value === current);
+function availabilityOptionsFor() {
+  return AVAILABILITY_OPTIONS;
 }
 
 function canCreateAccountFor(person, role = ROLES.OPERATOR) {

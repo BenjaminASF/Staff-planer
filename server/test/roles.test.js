@@ -228,14 +228,12 @@ describe("roles and permissions", () => {
     assert.equal((await leader.get(`/api/audit?scopes=${eveningShift.id}`)).data.events.length, 0, "leaders only see their own shift's log");
   });
 
-  test("only admins and shift leaders set the status Ej tillgänglig", async () => {
-    assert.equal((await otherOperator.patch("/api/me", { availability: "unavailable" })).status, 403);
-    assert.equal((await otherOperator.patch(`/api/people/${erikPerson.id}`, { availability: "unavailable" })).status, 403);
-    assert.equal((await admin.patch(`/api/people/${erikPerson.id}`, { availability: "unavailable" })).status, 200);
+  test("operators can set the status Ej tillgänglig themselves", async () => {
+    const own = await otherOperator.patch("/api/me", { availability: "unavailable" });
+    assert.equal(own.status, 200);
+    assert.equal(own.data.person.availability, "unavailable");
+    assert.equal((await otherOperator.patch(`/api/people/${annaPerson.id}`, { availability: "unavailable" })).status, 403, "but not for someone else");
     assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "unavailable" })).status, 200);
-    // An operator who was set to unavailable can still save their profile unchanged.
-    const unchanged = await otherOperator.patch("/api/me", { availability: "unavailable", phone: "070-123 45 67" });
-    assert.equal(unchanged.status, 200);
     assert.equal((await otherOperator.patch("/api/me", { availability: "off" })).status, 200);
     assert.equal((await leader.patch(`/api/people/${annaPerson.id}`, { availability: "available" })).status, 200);
   });
