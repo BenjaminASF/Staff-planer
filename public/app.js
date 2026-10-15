@@ -103,6 +103,7 @@ const LEGACY_WEEKLY_DOCUMENTS = {
 const TRAINING_REMINDER_DISMISSED_KEY = "staff_training_reminder_dismissed_day";
 const ACTIVE_SHIFT_KEY = "staff_active_shift";
 const SIGNED_IN_HINT_KEY = "staff_signed_in";
+const ADMIN_LANDED_KEY = "staff_admin_landed";
 const SELECTED_WEEK_KEY = "staff_selected_week";
 const DEFAULT_APP_SETTINGS = {
   workDays: [...ALL_DAYS],
@@ -5317,11 +5318,335 @@ async function renderProduction() {
   });
 }
 
+// Admin's production overview: every shift side by side.
+let adminDashboardPeriod = "today";
+let adminAuditOpen = false;
+
+// Closes the "Fler inställningar" menu on a click outside it.
+document.addEventListener("click", event => {
+  const open = document.querySelector(".admin-more[open]");
+  if (open && !open.contains(event.target)) open.open = false;
+});
+
+const sumBy = (items, value) => items.reduce((sum, item) => sum + (Number(value(item)) || 0), 0);
+const formatNumber = (value, decimals = 0) => Number(value || 0).toLocaleString("sv-SE", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+
+function getProductionDayTotal(record) {
+  const machines = Object.values(record?.machines || {});
+  return Number(record?.total) || sumBy(machines, machine => machine.result);
+}
+
+function getProductionDayWaste(record) {
+  return sumBy(Object.values(record?.machines || {}), machine => machine.waste);
+}
+
+function getWorkplaceStaffCount(workplace) {
+  return Math.max(1, Number(customWorkItems.find(item => item.name === workplace)?.staffCount) || 1);
+}
+
+// The same rules as the weekly schedule: the department skill, any skills the work item requires, and no GD restriction.
+function canStaffWorkplace(personId, workplace, skills, restrictions) {
+  const department = getTaskDepartment(workplace);
+  if (!department) return false;
+  const personSkills = Array.isArray(skills[personId]) ? skills[personId] : [];
+  const required = customWorkItems.find(item => item.name === workplace)?.requiredSkills || [];
+  const personRestrictions = Array.isArray(restrictions[personId]) ? restrictions[personId] : [];
+  return personSkills.includes(department) && required.every(skill => personSkills.includes(skill))
+    && !(department === "GD" && personRestrictions.includes("GD"));
+}
+
+// Whether every place in the workplaces can get its own person at the same time (bipartite matching).
+function canStaffWorkplaces(workplaces, personIds, skills, restrictions) {
+  const slots = workplaces.flatMap(workplace => Array(getWorkplaceStaffCount(workplace)).fill(workplace));
+  if (slots.length > personIds.length) return false;
+  const assigned = new Map();
+  const assign = (slotIndex, seen) => personIds.some(personId => {
+    if (seen.has(personId) || !canStaffWorkplace(personId, slots[slotIndex], skills, restrictions)) return false;
+    seen.add(personId);
+    if (assigned.has(personId) && !assign(assigned.get(personId), seen)) return false;
+    assigned.set(personId, slotIndex);
+    return true;
+  });
+  return slots.every((_, index) => assign(index, new Set()));
+}
+
+function getLineWorkplaces(lineId) {
+  return (BREAK_LINE_WORKPLACES[lineId] || []).filter(task => TASKS.includes(task));
+}
+
+// The largest set of lines the available people can run together. Earlier lines win a tie.
+function getRunnableLines(personIds, skills, restrictions) {
+  const lines = Object.keys(BREAK_LINE_WORKPLACES).filter(lineId => getLineWorkplaces(lineId).length);
+  let best = [];
+  for (let mask = 1; mask < 2 ** lines.length; mask += 1) {
+    const chosen = lines.filter((_, index) => mask & (2 ** index));
+    if (chosen.length <= best.length) continue;
+    const workplaces = [...new Set(chosen.flatMap(getLineWorkplaces))];
+    if (canStaffWorkplaces(workplaces, personIds, skills, restrictions)) best = chosen;
+  }
+  return lines.map(lineId => {
+    const runnable = best.includes(lineId);
+    let reason = "";
+    if (!runnable) {
+      // Departments with fewer qualified people than this line and the runnable ones need together.
+      const short = Object.entries(getDepartmentNeed([...best, lineId])).map(([department, count]) => [department, count,
+        personIds.filter(personId => (skills[personId] || []).includes(department)
+          && !(department === "GD" && (restrictions[personId] || []).includes("GD"))).length])
+        .filter(([, count, qualified]) => qualified < count);
+      reason = short.length
+        ? short.map(([department, count, qualified]) => `${department}: ${qualified} tillgängliga, behöver ${count}`).join(", ")
+        : "personer med rätt kompetens behövs på flera platser samtidigt";
+    }
+    return { id: lineId, label: BREAK_LINE_LABELS[lineId] || lineId, runnable, reason };
+  });
+}
+
+// How many people of each department the lines need at the same time.
+function getDepartmentNeed(lineIds) {
+  const need = {};
+  [...new Set(lineIds.flatMap(getLineWorkplaces))].forEach(workplace => {
+    const department = getTaskDepartment(workplace);
+    if (department) need[department] = (need[department] || 0) + getWorkplaceStaffCount(workplace);
+  });
+  return need;
+}
+
+function auditCardHtml(events) {
+  return `<section class="card audit-card"><div class="audit-heading"><div><h3>Dagens ändringar</h3><p>Aktiviteter som registrerats idag</p></div><span>${events.length}</span></div><div class="audit-list">${events.map(event => `<article><span class="audit-dot"></span><div><strong>${escapeHtml(event.title)}</strong><p>${escapeHtml(event.detail || "")}</p><small>${new Date(event.createdAt).toLocaleString("sv-SE")}${event.userName ? ` · ${escapeHtml(event.userName)}` : ""}</small></div>${event.undo && (isAdmin() || event.undo.action === "availability") ? `<button class="audit-undo" data-audit-id="${escapeHtml(event.id)}" type="button">Återställ</button>` : ""}</article>`).join("") || '<div class="empty-state">Inga ändringar registrerade idag.</div>'}</div></section>`;
+}
+
+function bindAuditUndo(root, events) {
+  root.querySelectorAll(".audit-undo").forEach(button => button.addEventListener("click", () => {
+    const event = events.find(item => item.id === button.dataset.auditId);
+    if (event) void applyAuditUndo(event);
+  }));
+}
+
+async function getAdminDashboardData() {
+  const today = formatDateKey(new Date());
+  const monthStart = `${today.slice(0, 8)}01`;
+  const [allPeople, departments, skills, restrictions, settings, events, recordsByShift] = await Promise.all([
+    getAllPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getMachineRestrictions(),
+    getProductionSettings(), getAuditLog(), Promise.all(shifts.map(shift => getProductionRecords(shift.id)))
+  ]);
+  const need = getDepartmentNeed(Object.keys(BREAK_LINE_WORKPLACES));
+  const shiftData = shifts.map((shift, index) => {
+    const staff = allPeople.filter(person => person.shiftId === shift.id);
+    const leaders = staff.filter(person => person.account?.role === ROLES.LEADER);
+    const operators = staff.filter(person => ![ROLES.ADMIN, ROLES.LEADER].includes(person.account?.role));
+    const available = operators.filter(person => getPersonAvailability(person) === "available");
+    const days = Object.values(recordsByShift[index])
+      .filter(record => record?.date >= monthStart && record.date <= today)
+      .sort((first, second) => first.date.localeCompare(second.date));
+    const todayRecord = days.find(record => record.date === today);
+    return {
+      shift, leaders, operators, available,
+      absent: staff.filter(person => getPersonAvailability(person) !== "available"),
+      days,
+      reportedToday: Boolean(todayRecord),
+      today: getProductionDayTotal(todayRecord),
+      todayTarget: getProductionTarget(settings, today, todayRecord),
+      month: sumBy(days, getProductionDayTotal),
+      monthTarget: sumBy(days, record => getProductionTarget(settings, record.date, record)),
+      waste: sumBy(days, getProductionDayWaste),
+      competence: departments.map(department => ({
+        department,
+        need: need[department] || 0,
+        available: available.filter(person => (skills[person.id] || []).includes(department)).length,
+        total: operators.filter(person => (skills[person.id] || []).includes(department)).length
+      })),
+      lines: getRunnableLines(available.map(person => person.id), skills, restrictions)
+    };
+  });
+  return { today, settings, events, shiftData, departments, need };
+}
+
+const shiftColorClass = shift => shift.color ? ` shift-color-${shift.color}` : "";
+const competenceState = (available, need) => !need ? "" : available > need ? "good" : available === need ? "warn" : "bad";
+
+function adminShiftCardHtml(data) {
+  const { shift, leaders, operators, available, absent, lines } = data;
+  const runnable = lines.filter(line => line.runnable).length;
+  const lineState = !lines.length ? "" : runnable === lines.length ? "good" : runnable > 0 ? "warn" : "bad";
+  const isToday = adminDashboardPeriod === "today";
+  const produced = isToday ? data.today : data.month;
+  const target = isToday ? data.todayTarget : data.monthTarget;
+  const progress = target ? produced / target : 0;
+  const notReported = isToday && !data.reportedToday;
+  const absentOperators = operators.length - available.length;
+  const maxCompetence = Math.max(1, ...data.competence.map(item => item.total));
+  const missing = lines.filter(line => !line.runnable);
+  return `<article class="card admin-shift-card${shiftColorClass(shift)}">
+    <div class="admin-shift-head">
+      <div><h3>${shiftColorDot(shift.id)}Skift ${escapeHtml(shift.name)}</h3><small>${leaders.length ? `Skiftledare: ${leaders.map(person => escapeHtml(person.name)).join(", ")}` : "Ingen skiftledare"}</small></div>
+      ${lines.length ? `<span class="admin-pill ${lineState}">${runnable} av ${lines.length} linjer</span>` : ""}
+    </div>
+    <div class="admin-shift-figures">
+      <div><span>${isToday ? "Idag" : "Månaden"}</span><strong>${notReported ? "–" : formatNumber(produced)}</strong><small>box</small></div>
+      <div><span>Svinn månaden</span><strong>${formatNumber(data.waste, data.waste % 1 ? 1 : 0)}</strong><small>kg</small></div>
+      <div><span>Operatörer</span><strong>${available.length}/${operators.length}</strong><small>på plats</small></div>
+    </div>
+    <div class="admin-progress">
+      <div class="admin-row"><span>${isToday ? `Mot dagens mål ${formatNumber(target)} box` : `Mot målet för ${data.days.length} rapporterade dagar`}</span><strong>${notReported ? "Ej rapporterat" : target ? `${Math.round(progress * 100)} %` : "–"}</strong></div>
+      <div class="admin-bar"><i style="width:${Math.min(100, progress * 100)}%"></i></div>
+    </div>
+    ${lines.length ? `<div>
+      <div class="admin-label">Linjer som kan köras idag</div>
+      <div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.runnable ? "ok" : "no"}" title="${escapeHtml(line.runnable ? "Kan bemannas" : line.reason)}">${escapeHtml(line.label)}<small>${line.runnable ? "Bemannad" : "Saknas"}</small></div>`).join("")}</div>
+      ${missing.length ? `<p class="admin-reason">${missing.map(line => `${escapeHtml(line.label)}: ${escapeHtml(line.reason)}`).join("<br>")}</p>` : ""}
+    </div>` : ""}
+    <div>
+      <div class="admin-label">Kompetens, tillgängliga idag</div>
+      <div class="admin-competence">${data.competence.map(item => `<span>${escapeHtml(item.department)}</span><div class="admin-bar"><i style="width:${item.available / maxCompetence * 100}%"></i></div><strong>${item.available}<small> / ${item.total}</small></strong>`).join("") || '<span class="admin-muted">Inga avdelningar</span>'}</div>
+    </div>
+    <div><span class="admin-pill ${absent.length ? "bad" : "good"}">${absent.length ? `${absent.length} frånvarande` : "Alla på plats"}</span>${absentOperators !== absent.length && absent.length ? ` <span class="admin-muted">varav ${absentOperators} operatörer</span>` : ""}</div>
+  </article>`;
+}
+
+function adminProductionChartHtml(shiftData, target) {
+  const dates = [...new Set(shiftData.flatMap(data => data.days.map(record => record.date)))].sort();
+  if (!dates.length) return '<div class="empty-state">Ingen produktion registrerad den här månaden ännu.</div>';
+  const values = shiftData.flatMap(data => data.days.map(getProductionDayTotal));
+  const max = Math.max(50, Math.ceil(Math.max(target, ...values) * 1.1 / 50) * 50);
+  const width = 640, height = 240, left = 40, right = 14, top = 12, bottom = 28;
+  const x = index => dates.length === 1 ? (left + width - right) / 2 : left + index * (width - left - right) / (dates.length - 1);
+  const y = value => top + (1 - value / max) * (height - top - bottom);
+  const step = max / 5;
+  let svg = "";
+  for (let value = 0; value <= max; value += step) {
+    svg += `<line class="admin-grid" x1="${left}" x2="${width - right}" y1="${y(value)}" y2="${y(value)}"/><text x="${left - 6}" y="${y(value) + 4}" text-anchor="end">${formatNumber(value)}</text>`;
+  }
+  const labelEvery = Math.ceil(dates.length / 8);
+  dates.forEach((date, index) => {
+    if (index % labelEvery === 0 || index === dates.length - 1) svg += `<text x="${x(index)}" y="${height - 8}" text-anchor="middle">${Number(date.slice(8))}/${Number(date.slice(5, 7))}</text>`;
+  });
+  if (target) svg += `<line class="admin-target" x1="${left}" x2="${width - right}" y1="${y(target)}" y2="${y(target)}"/>`;
+  shiftData.forEach(data => {
+    const points = data.days.map(record => [x(dates.indexOf(record.date)), y(getProductionDayTotal(record))]);
+    if (!points.length) return;
+    const end = points[points.length - 1];
+    svg += `<g class="admin-series${shiftColorClass(data.shift)}"><title>Skift ${escapeHtml(data.shift.name)}</title>${points.length > 1 ? `<polyline points="${points.map(point => point.join(",")).join(" ")}"/>` : ""}<circle cx="${end[0]}" cy="${end[1]}" r="4.5"/></g>`;
+  });
+  return `<div class="admin-chart-scroll"><svg class="admin-chart" viewBox="0 0 ${width} ${height}" role="img" aria-label="Produktion per dag och skift">${svg}</svg></div>`;
+}
+
+function adminWasteHtml(shiftData) {
+  const withWaste = shiftData.map(data => ({ ...data, perHundred: data.month ? data.waste / data.month * 100 : null }))
+    .sort((first, second) => (first.perHundred ?? Infinity) - (second.perHundred ?? Infinity));
+  const max = Math.max(1, ...withWaste.map(data => data.waste));
+  return withWaste.map(data => `<div class="admin-waste-row${shiftColorClass(data.shift)}">
+    <div class="admin-row"><strong>${shiftColorDot(data.shift.id)}${escapeHtml(data.shift.name)}</strong><span><b>${formatNumber(data.waste, 1)} kg</b>${data.perHundred === null ? "" : ` · ${formatNumber(data.perHundred, 1)} kg/100 box`}</span></div>
+    <div class="admin-bar"><i style="width:${data.waste / max * 100}%"></i></div>
+  </div>`).join("");
+}
+
+function adminCompetenceTableHtml({ shiftData, departments, need }) {
+  if (!departments.length) return '<div class="empty-state">Inga avdelningar är tillagda.</div>';
+  return `<div class="admin-table-scroll"><table class="admin-table"><thead><tr><th>Kompetens</th><th>Behövs för alla linjer</th>${shiftData.map(data => `<th>${shiftColorDot(data.shift.id)}${escapeHtml(data.shift.name)}</th>`).join("")}</tr></thead><tbody>
+    ${departments.map(department => `<tr><th scope="row">${escapeHtml(department)}</th><td>${need[department] || "–"}</td>${shiftData.map(data => {
+      const item = data.competence.find(entry => entry.department === department);
+      return `<td><span class="admin-cell ${competenceState(item.available, item.need)}">${item.available} / ${item.total}</span></td>`;
+    }).join("")}</tr>`).join("")}
+  </tbody></table></div>`;
+}
+
+function adminAbsenceHtml(shiftData) {
+  const absent = shiftData.flatMap(data => data.absent.map(person => ({ person, shift: data.shift })));
+  if (!absent.length) return '<div class="empty-state">Alla är på plats idag.</div>';
+  const state = { sick: "bad", vab: "warn", vacation: "", unavailable: "" };
+  return absent.map(({ person, shift }) => `<div class="admin-absence-item"><span>${shiftColorDot(shift.id)}<strong>${escapeHtml(person.name)}</strong> <small>· ${escapeHtml(shift.name)}</small></span><span class="admin-pill ${state[getPersonAvailability(person)]}">${escapeHtml(getAvailabilityLabel(getPersonAvailability(person)))}</span></div>`).join("");
+}
+
+async function renderAdminDashboard(root) {
+  const data = await getAdminDashboardData();
+  const { shiftData, settings, events, today } = data;
+  const header = document.querySelector(".main > .header");
+  if (header) {
+    header.querySelector(":scope > h2").textContent = "Produktionsöversikt";
+    header.querySelector(":scope > p").textContent = new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  }
+  const month = new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { month: "long" });
+  const todayTotal = sumBy(shiftData, item => item.today);
+  const reported = shiftData.filter(item => item.reportedToday);
+  const monthTotal = sumBy(shiftData, item => item.month);
+  const monthTarget = sumBy(shiftData, item => item.monthTarget);
+  const waste = sumBy(shiftData, item => item.waste);
+  const operators = sumBy(shiftData, item => item.operators.length);
+  const available = sumBy(shiftData, item => item.available.length);
+  const absent = shiftData.flatMap(item => item.absent);
+  const absentCounts = ["sick", "vab", "vacation", "unavailable"]
+    .map(status => [status, absent.filter(person => getPersonAvailability(person) === status).length])
+    .filter(([, count]) => count)
+    .map(([status, count]) => `${count} ${getAvailabilityLabel(status).toLocaleLowerCase("sv-SE")}`);
+  const currentTarget = getProductionTarget(settings, today, null);
+  const moreLink = (href, label, detail = "") => `<a href="${href}">${label}${detail ? `<small>${detail}</small>` : ""}</a>`;
+  root.innerHTML = `
+    <div class="admin-toolbar">
+      <div class="admin-period" role="group" aria-label="Period för skiftens produktion">
+        <button type="button" data-period="today" aria-pressed="${adminDashboardPeriod === "today"}">Idag</button>
+        <button type="button" data-period="month" aria-pressed="${adminDashboardPeriod === "month"}">Månaden</button>
+      </div>
+      <details class="admin-more">
+        <summary class="btn">Fler inställningar</summary>
+        <div class="admin-more-menu">
+          <h4>Data</h4>
+          <button type="button" id="adminAuditToggle">Dagens ändringar<small>${events.length} st</small></button>
+          <button type="button" id="exportDataBtn">Exportera backup</button>
+          <button type="button" id="importDataBtn">Importera backup</button>
+          <input id="importDataInput" type="file" accept="application/json,.json" hidden>
+          <h4>Inställningar</h4>
+          ${moreLink("installningar.html", "Inställningar")}
+          ${moreLink("anvandare.html", "Användare och roller")}
+          ${moreLink("personal.html", "Personal")}
+          ${moreLink("add.html", "Lägg till personal")}
+          <h4>Övrigt</h4>
+          ${moreLink("testresultat.html", "Testresultat")}
+          ${moreLink("hjalp.html", "Hjälp")}
+        </div>
+      </details>
+    </div>
+    <section class="admin-kpis" aria-label="Alla skift">
+      <article class="card"><span>Producerat idag</span><strong>${formatNumber(todayTotal)} <small>box</small></strong><p>${reported.length} av ${shiftData.length} skift har rapporterat</p></article>
+      <article class="card"><span>Producerat i ${escapeHtml(month)}</span><strong>${formatNumber(monthTotal)} <small>box</small></strong><p>${monthTarget ? `<b class="${monthTotal >= monthTarget ? "admin-good" : "admin-bad"}">${Math.round(monthTotal / monthTarget * 100)} %</b> av målet för rapporterade dagar` : "Ingen produktion registrerad ännu"}</p></article>
+      <article class="card"><span>Svinn i ${escapeHtml(month)}</span><strong>${formatNumber(waste, 1)} <small>kg</small></strong><p>${monthTotal ? `${formatNumber(waste / monthTotal * 100, 1)} kg per 100 box` : "Inget svinn registrerat"}</p></article>
+      <article class="card"><span>Bemanning idag</span><strong>${available} <small>/ ${operators} operatörer på plats</small></strong><p>${absent.length ? `<b class="admin-bad">${absent.length} frånvarande</b> · ${absentCounts.join(", ")}` : "Alla är på plats"}</p></article>
+    </section>
+    <section class="admin-shifts" aria-label="Skiften">${shiftData.map(adminShiftCardHtml).join("") || '<div class="card empty-state">Inga skift finns ännu. Skapa skift under Inställningar.</div>'}</section>
+    <section class="admin-charts">
+      <div class="card"><h3>Produktion per dag, ${escapeHtml(month)}</h3><p class="admin-sub">Box per skift och dag.${currentTarget ? ` Streckad linje = dagligt mål ${formatNumber(currentTarget)} box.` : ""}</p>
+        <div class="admin-legend">${shiftData.map(item => `<span>${shiftColorDot(item.shift.id)}${escapeHtml(item.shift.name)} · ${formatNumber(item.month)} box</span>`).join("")}</div>
+        ${adminProductionChartHtml(shiftData, currentTarget)}</div>
+      <div class="card"><h3>Svinn hittills i månaden</h3><p class="admin-sub">Kilo och kilo per 100 producerade box. Lägst svinn per box överst.</p><div class="admin-waste">${adminWasteHtml(shiftData)}</div></div>
+    </section>
+    <section class="admin-columns">
+      <div class="card"><h3>Kompetens per skift</h3><p class="admin-sub">Tillgängliga idag / alla operatörer med kompetensen. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</div>
+      <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Sjuka, vård av barn, semester och inte tillgängliga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
+    </section>
+    <section id="adminAuditSection"${adminAuditOpen ? "" : " hidden"}>${auditCardHtml(events)}</section>
+  `;
+  root.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => {
+    adminDashboardPeriod = button.dataset.period;
+    root.querySelectorAll("[data-period]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
+    root.querySelector(".admin-shifts").innerHTML = shiftData.map(adminShiftCardHtml).join("");
+  }));
+  const more = root.querySelector(".admin-more");
+  root.querySelector("#adminAuditToggle").addEventListener("click", () => {
+    adminAuditOpen = !adminAuditOpen;
+    const section = root.querySelector("#adminAuditSection");
+    section.hidden = !adminAuditOpen;
+    more.open = false;
+    if (adminAuditOpen) section.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  setupDataTools();
+  bindAuditUndo(root, events);
+}
+
 async function renderDashboard() {
   const root = document.getElementById("dashboardPage");
   if (!root) return;
-  const [people, departments, skills, results, events, productionRecords] = await Promise.all([
-    getPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getTestResults(), getAuditLog(), getProductionRecords()
+  if (isAdmin()) return renderAdminDashboard(root);
+  const [people, departments, skills, events, productionRecords] = await Promise.all([
+    getPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getAuditLog(), getProductionRecords()
   ]);
   const sick = people.filter(person => getPersonAvailability(person) === "sick").length;
   const vacation = people.filter(person => getPersonAvailability(person) === "vacation").length;
@@ -5330,7 +5655,6 @@ async function renderDashboard() {
     const personSkills = Array.isArray(skills[person.id]) ? skills[person.id] : [];
     return departments.length > 0 && departments.every(item => personSkills.includes(item));
   }).length;
-  const tested = people.filter(person => Object.keys(results[person.id] || {}).length > 0).length;
   const latestProduction = Object.values(productionRecords).sort((a, b) => b.date.localeCompare(a.date))[0];
   root.innerHTML = `
     <div class="dashboard-stats">
@@ -5339,19 +5663,11 @@ async function renderDashboard() {
       <article class="stat-red"><span>Sjuka</span><strong>${sick}</strong><small>ej tillgängliga</small></article>
       <article class="stat-yellow"><span>Semester</span><strong>${vacation}</strong><small>frånvarande</small></article>
       <article class="stat-green"><span>Full kompetens</span><strong>${fullyQualified}</strong><small>alla maskiner</small></article>
-      ${isAdmin() ? `<article><span>Testade</span><strong>${tested}</strong><small>av ${people.length}</small></article>` : ""}
       <article><span>Senaste produktion</span><strong>${latestProduction?.total || 0}</strong><small>${latestProduction?.date || "ingen dag"}</small></article>
     </div>
-    <div class="dashboard-columns">
-      ${isAdmin() ? '<section class="card data-tools-card"><div><h3>Data och säkerhet</h3><p>Exportera en säkerhetskopia av all data på servern eller återställ från en tidigare fil. Lösenord ingår inte.</p></div><div class="data-tool-actions"><button id="exportDataBtn" class="btn primary" type="button">Exportera backup</button><button id="importDataBtn" class="btn" type="button">Importera backup</button><input id="importDataInput" type="file" accept="application/json,.json" hidden></div></section>' : ""}
-      <section class="card audit-card"><div class="audit-heading"><div><h3>Dagens ändringar</h3><p>Aktiviteter som registrerats idag</p></div><span>${events.length}</span></div><div class="audit-list">${events.map(event => `<article><span class="audit-dot"></span><div><strong>${escapeHtml(event.title)}</strong><p>${escapeHtml(event.detail || "")}</p><small>${new Date(event.createdAt).toLocaleString("sv-SE")}${event.userName ? ` · ${escapeHtml(event.userName)}` : ""}</small></div>${event.undo && (isAdmin() || event.undo.action === "availability") ? `<button class="audit-undo" data-audit-id="${escapeHtml(event.id)}" type="button">Återställ</button>` : ""}</article>`).join("") || '<div class="empty-state">Inga ändringar registrerade idag.</div>'}</div></section>
-    </div>
+    ${auditCardHtml(events)}
   `;
-  setupDataTools();
-  root.querySelectorAll(".audit-undo").forEach(button => button.addEventListener("click", () => {
-    const event = events.find(item => item.id === button.dataset.auditId);
-    if (event) void applyAuditUndo(event);
-  }));
+  bindAuditUndo(root, events);
 }
 
 const MAX_BACKUP_SIZE_BYTES = 20 * 1024 * 1024;
@@ -6872,6 +7188,7 @@ async function signOut(notice = "") {
   }
   sessionStorage.removeItem(SIGNED_IN_HINT_KEY);
   sessionStorage.removeItem(ACTIVE_SHIFT_KEY);
+  sessionStorage.removeItem(ADMIN_LANDED_KEY);
   if (notice) sessionStorage.setItem(AUTH_NOTICE_KEY, notice);
   location.reload();
 }
@@ -7140,6 +7457,14 @@ document.addEventListener("focusout", () => {
 async function openAppUI() {
   if (!canOpenPage(getCurrentPage())) {
     location.replace("index.html");
+    return;
+  }
+  // The admin's start page is the production overview. Only the first page of a visit
+  // redirects, so the Schema link still opens the schedule.
+  const firstPageThisVisit = !sessionStorage.getItem(ADMIN_LANDED_KEY);
+  sessionStorage.setItem(ADMIN_LANDED_KEY, "1");
+  if (isAdmin() && firstPageThisVisit && getCurrentPage() === "index.html") {
+    location.replace("dashboard.html");
     return;
   }
   setupShareSchedule(); // Before the page is shown, so operators never see the share button.
