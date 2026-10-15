@@ -2220,6 +2220,7 @@ function enhanceAppShell() {
     if (!canOpenPage(link.getAttribute("href"))) link.remove();
   });
   renderSidebarAccount();
+  setupAdminTopbar();
   renderShiftNotice();
   const pageTips = {
     "dashboard.html": "Här finns senaste status och dagens ändringar för skiftet.",
@@ -5333,11 +5334,27 @@ async function renderProduction() {
 let adminDashboardPeriod = "today";
 let adminAuditOpen = false;
 
-// Closes the "Fler inställningar" menu on a click outside it.
+// Drop-down menus (<details data-popover>) close on a click outside them or on Escape.
 document.addEventListener("click", event => {
-  const open = document.querySelector(".admin-more[open]");
-  if (open && !open.contains(event.target)) open.open = false;
+  document.querySelectorAll("details[data-popover][open]").forEach(menu => {
+    if (!menu.contains(event.target)) menu.open = false;
+  });
 });
+document.addEventListener("keydown", event => {
+  if (event.key !== "Escape") return;
+  if (document.getElementById("scheduleViewer")?.hidden === false) return closeScheduleViewer();
+  document.querySelectorAll("details[data-popover][open]").forEach(menu => {
+    menu.open = false;
+    menu.querySelector("summary")?.focus();
+  });
+});
+
+// The pages behind "Fler inställningar" on a shift card. Each opens with that shift selected.
+const SHIFT_MANAGE_LINKS = [
+  ["index.html", "Ändra schema"], ["rast.html", "Rastplanering"], ["produktion.html", "Registrera produktion"],
+  ["personal.html", "Personal och frånvaro"], ["anvandare.html", "Användare och inloggningar"], ["add.html", "Lägg till personal"],
+  ["maskiner.html", "Kompetens"], ["testresultat.html", "Testresultat"], ["bedomning.html", "Bedömning"]
+];
 
 const sumBy = (items, value) => items.reduce((sum, item) => sum + (Number(value(item)) || 0), 0);
 const formatNumber = (value, decimals = 0) => Number(value || 0).toLocaleString("sv-SE", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
@@ -5512,6 +5529,16 @@ function adminShiftCardHtml(data) {
       <div class="admin-competence">${data.competence.map(item => `<span>${escapeHtml(item.department)}</span><div class="admin-bar"><i style="width:${item.available / maxCompetence * 100}%"></i></div><strong>${item.available}<small> / ${item.total}</small></strong>`).join("") || '<span class="admin-muted">Inga avdelningar</span>'}</div>
     </div>
     <div><span class="admin-pill ${absent.length ? "bad" : "good"}">${absent.length ? `${absent.length} frånvarande` : "Alla på plats"}</span>${absentOperators !== absent.length && absent.length ? ` <span class="admin-muted">varav ${absentOperators} operatörer</span>` : ""}</div>
+    <div class="admin-shift-actions">
+      <button class="btn primary" type="button" data-view-schedule="${escapeHtml(shift.id)}">Visa schema</button>
+      <details class="admin-shift-menu" data-popover>
+        <summary class="btn">Fler inställningar</summary>
+        <div class="admin-menu-panel">
+          <h4>${shiftColorDot(shift.id)}Skift ${escapeHtml(shift.name)}</h4>
+          ${SHIFT_MANAGE_LINKS.filter(([page]) => canOpenPage(page)).map(([page, label]) => `<a href="${page}" data-shift-link="${escapeHtml(shift.id)}">${label}</a>`).join("")}
+        </div>
+      </details>
+    </div>
   </article>`;
 }
 
@@ -5603,9 +5630,9 @@ async function renderAdminDashboard(root) {
         <button type="button" data-period="today" aria-pressed="${adminDashboardPeriod === "today"}">Idag</button>
         <button type="button" data-period="month" aria-pressed="${adminDashboardPeriod === "month"}">Månaden</button>
       </div>
-      <details class="admin-more">
-        <summary class="btn">Fler inställningar</summary>
-        <div class="admin-more-menu">
+      <details class="admin-more" data-popover>
+        <summary class="btn">Inställningar</summary>
+        <div class="admin-menu-panel">
           <h4>Data</h4>
           <button type="button" id="adminAuditToggle">Dagens ändringar<small>${events.length} st</small></button>
           <button type="button" id="exportDataBtn">Exportera backup</button>
@@ -5654,8 +5681,186 @@ async function renderAdminDashboard(root) {
     more.open = false;
     if (adminAuditOpen) section.scrollIntoView({ behavior: "smooth", block: "start" });
   });
+  if (root.dataset.adminBound !== "true") {
+    root.dataset.adminBound = "true";
+    root.addEventListener("click", event => {
+      const shiftLink = event.target.closest("[data-shift-link]");
+      if (shiftLink) sessionStorage.setItem(ACTIVE_SHIFT_KEY, shiftLink.dataset.shiftLink);
+      const scheduleButton = event.target.closest("[data-view-schedule]");
+      if (scheduleButton) void openScheduleViewer(scheduleButton.dataset.viewSchedule, scheduleButton);
+    });
+  }
   setupDataTools();
   bindAuditUndo(root, events);
+}
+
+// A read-only schedule for one shift, by day or by week. Changes are made on the Schema page.
+const scheduleViewer = { shiftId: "", weekStart: null, view: "day", day: "", opener: null };
+
+function getScheduleViewerDefaultDay() {
+  const today = ALL_DAYS[new Date().getDay() - 1];
+  return DAYS.includes(today) ? today : DAYS[0];
+}
+
+async function openScheduleViewer(shiftId, opener) {
+  Object.assign(scheduleViewer, { shiftId, weekStart: getActualStartOfWeek(), day: getScheduleViewerDefaultDay(), opener });
+  let overlay = document.getElementById("scheduleViewer");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "scheduleViewer";
+    overlay.className = "schedule-viewer-backdrop";
+    document.body.appendChild(overlay);
+    overlay.addEventListener("click", event => {
+      if (event.target === overlay || event.target.closest("[data-viewer-close]")) return closeScheduleViewer();
+      const week = event.target.closest("[data-viewer-week]");
+      if (week) {
+        const offset = Number(week.dataset.viewerWeek);
+        const start = offset ? new Date(scheduleViewer.weekStart) : getActualStartOfWeek();
+        if (offset) start.setDate(start.getDate() + offset);
+        scheduleViewer.weekStart = start;
+        return void renderScheduleViewer();
+      }
+      const view = event.target.closest("[data-viewer-view]");
+      if (view) { scheduleViewer.view = view.dataset.viewerView; return void renderScheduleViewer(); }
+      const day = event.target.closest("[data-viewer-day]");
+      if (day) { scheduleViewer.day = day.dataset.viewerDay; scheduleViewer.view = "day"; return void renderScheduleViewer(); }
+    });
+  }
+  overlay.hidden = false;
+  document.body.classList.add("schedule-viewer-open");
+  await renderScheduleViewer();
+  overlay.querySelector("[data-viewer-close]")?.focus();
+}
+
+function closeScheduleViewer() {
+  const overlay = document.getElementById("scheduleViewer");
+  if (!overlay) return;
+  overlay.hidden = true;
+  document.body.classList.remove("schedule-viewer-open");
+  scheduleViewer.opener?.focus();
+}
+
+async function renderScheduleViewer() {
+  const overlay = document.getElementById("scheduleViewer");
+  if (!overlay || overlay.hidden) return;
+  const { shiftId, weekStart, view } = scheduleViewer;
+  const focused = document.activeElement?.closest?.("#scheduleViewer [data-viewer-view], #scheduleViewer [data-viewer-week], #scheduleViewer [data-viewer-day]");
+  const focusSelector = focused ? ["viewerView", "viewerWeek", "viewerDay"].filter(key => key in focused.dataset)
+    .map(key => `[data-${key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)}="${focused.dataset[key]}"]`)[0] : "";
+  const weekKey = formatDateKey(weekStart);
+  const [schedule, leaders, extraLocations, shared, people] = await Promise.all([
+    getDocument(shiftId, `schedule:${weekKey}`, null), getDocument(shiftId, `trainingLeaders:${weekKey}`, null),
+    getDocument(shiftId, `extraPersonLocations:${weekKey}`, null), getDocument(shiftId, `scheduleShared:${weekKey}`, null), getAllPeople()
+  ]);
+  // A newer render may have started while this one waited.
+  if (scheduleViewer.shiftId !== shiftId || scheduleViewer.weekStart !== weekStart || scheduleViewer.view !== view) return;
+  const peopleById = new Map(people.map(person => [person.id, person]));
+  const dateFor = day => { const date = new Date(weekStart); date.setDate(date.getDate() + ALL_DAYS.indexOf(day)); return date; };
+  const todayKey = formatDateKey(new Date());
+  const isToday = day => formatDateKey(dateFor(day)) === todayKey;
+  const production = getProductionWorkplaces();
+  const others = TASKS.filter(task => !production.includes(task));
+  const placed = (task, day) => schedule?.[task]?.[day] || "";
+  const usedOthers = others.filter(task => DAYS.some(day => placed(task, day)));
+  const personHtml = (task, day) => {
+    const person = peopleById.get(placed(task, day));
+    if (!placed(task, day)) return '<span class="viewer-empty">Obemannad</span>';
+    const status = person && isToday(day) ? getPersonAvailability(person) : "available";
+    const leader = isTrainingTaskName(task) ? peopleById.get(leaders?.[task]?.[day] || "")?.name : "";
+    const location = isExtraPersonTask(task) ? extraLocations?.[task]?.[day] : "";
+    return `<span class="viewer-person">${escapeHtml(person?.name || "Borttagen person")}</span>${status !== "available" ? ` <span class="admin-pill bad">${escapeHtml(getAvailabilityLabel(status))}</span>` : ""}${leader ? `<small>Handledare: ${escapeHtml(leader)}</small>` : ""}${location ? `<small>${escapeHtml(location)}</small>` : ""}`;
+  };
+  const dayLabel = (day, long = false) => `${long ? day : day.slice(0, 3)} ${dateFor(day).getDate()}/${dateFor(day).getMonth() + 1}`;
+  const hasSchedule = Boolean(schedule) && TASKS.some(task => DAYS.some(day => placed(task, day)));
+  const thisWeek = formatDateKey(getActualStartOfWeek());
+  const previousWeek = formatDateKey(getPreviousWeekStart());
+  let body;
+  if (!hasSchedule) {
+    body = '<div class="empty-state">Inget schema är skapat för den här veckan.</div>';
+  } else if (view === "day") {
+    const day = DAYS.includes(scheduleViewer.day) ? scheduleViewer.day : DAYS[0];
+    const staffed = production.filter(task => placed(task, day)).length;
+    const row = task => `<div class="viewer-row"><span class="viewer-task">${escapeHtml(task)}</span><span class="viewer-cell">${personHtml(task, day)}</span></div>`;
+    const othersToday = usedOthers.filter(task => placed(task, day));
+    body = `<div class="viewer-days" role="tablist" aria-label="Dag">${DAYS.map(item => `<button type="button" role="tab" data-viewer-day="${item}" aria-selected="${item === day}">${dayLabel(item)}${isToday(item) ? " · idag" : ""}</button>`).join("")}</div>
+      <p class="viewer-summary"><strong>${staffed} av ${production.length}</strong> produktionsplatser bemannade ${escapeHtml(dayLabel(day, true).toLocaleLowerCase("sv-SE"))}</p>
+      <div class="viewer-list"><h4>Produktion</h4>${production.map(row).join("")}</div>
+      ${othersToday.length ? `<div class="viewer-list"><h4>Utbildning och extra</h4>${othersToday.map(row).join("")}</div>` : ""}`;
+  } else {
+    const rows = [...production, ...usedOthers];
+    body = `<div class="viewer-table-scroll"><table class="viewer-table"><thead><tr><th>Plats</th>${DAYS.map(day => `<th class="${isToday(day) ? "is-today" : ""}"><button type="button" data-viewer-day="${day}" title="Visa ${day}">${dayLabel(day)}</button></th>`).join("")}</tr></thead>
+      <tbody>${rows.map(task => `<tr><th scope="row">${escapeHtml(task)}</th>${DAYS.map(day => `<td class="${isToday(day) ? "is-today" : ""}">${personHtml(task, day)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  }
+  const shift = shifts.find(item => item.id === shiftId);
+  overlay.innerHTML = `<section class="schedule-viewer${shift?.color ? ` shift-color-${shift.color}` : ""}" role="dialog" aria-modal="true" aria-labelledby="scheduleViewerTitle">
+    <header class="viewer-head">
+      <div><h3 id="scheduleViewerTitle">${shiftColorDot(shiftId)}Schema · Skift ${escapeHtml(shift?.name || "")}</h3>
+        <small>${weekKey === thisWeek ? "Denna vecka" : weekKey === previousWeek ? "Förra veckan" : weekKey > thisWeek ? "Kommande vecka" : "Tidigare vecka"} · ${escapeHtml(formatDateRange(weekStart))} · ${shared?.shared ? "Delat med operatörerna" : "Inte delat med operatörerna"}</small></div>
+      <button class="viewer-close" type="button" data-viewer-close aria-label="Stäng schemat">×</button>
+    </header>
+    <div class="viewer-toolbar">
+      <div class="admin-period" role="group" aria-label="Vy">
+        <button type="button" data-viewer-view="day" aria-pressed="${view === "day"}">Dag</button>
+        <button type="button" data-viewer-view="week" aria-pressed="${view === "week"}">Vecka</button>
+      </div>
+      <div class="viewer-weeks">
+        <button class="btn" type="button" data-viewer-week="-7"${weekKey <= previousWeek ? " disabled" : ""} aria-label="Föregående vecka">‹</button>
+        <button class="btn" type="button" data-viewer-week="0"${weekKey === thisWeek ? " disabled" : ""}>Denna vecka</button>
+        <button class="btn" type="button" data-viewer-week="7" aria-label="Nästa vecka">›</button>
+      </div>
+    </div>
+    <div class="viewer-body">${body}</div>
+  </section>`;
+  if (focusSelector) (overlay.querySelector(`${focusSelector}:not([disabled])`) || overlay.querySelector("[data-viewer-close]")).focus();
+}
+
+function formatDateRange(monday) {
+  const friday = new Date(monday);
+  friday.setDate(monday.getDate() + 4);
+  const formatter = new Intl.DateTimeFormat("sv-SE", { day: "numeric", month: "short" });
+  return `${formatter.format(monday)} – ${formatter.format(friday)}`;
+}
+
+// Admin works from a compact top bar instead of the sidebar. The sidebar's links,
+// shift switcher and logout move into its menu, so every page is still one click away.
+const ADMIN_QUICK_PAGES = ["dashboard.html", "index.html", "produktion.html", "personal.html"];
+const ADMIN_MENU_GROUPS = [
+  ["Planering", ["dashboard.html", "index.html", "rast.html", "produktion.html", "todo.html"]],
+  ["Personal och kompetens", ["personal.html", "anvandare.html", "add.html", "maskiner.html", "testresultat.html", "bedomning.html"]],
+  ["Konto och system", ["profil.html", "installningar.html", "hjalp.html"]]
+];
+
+function setupAdminTopbar() {
+  const appShell = document.getElementById("appShell");
+  const sidebar = document.querySelector(".sidebar");
+  const nav = sidebar?.querySelector(".nav");
+  if (!isAdmin() || !appShell || !nav || document.getElementById("adminTopbar")) return;
+  const labels = new Map([...nav.querySelectorAll(".nav-link")].map(link => [link.getAttribute("href"), link.textContent.trim()]));
+  const grouped = new Set(ADMIN_MENU_GROUPS.flatMap(([, pages]) => pages));
+  const groups = ADMIN_MENU_GROUPS.map(([title, pages], index) => [title, [
+    ...pages, ...(index === ADMIN_MENU_GROUPS.length - 1 ? [...labels.keys()].filter(page => !grouped.has(page)) : [])
+  ].filter(page => labels.has(page))]).filter(([, pages]) => pages.length);
+  const current = getCurrentPage();
+  const link = (page, className) => `<a class="${className}${page === current ? " is-active" : ""}" href="${page}"${page === current ? ' aria-current="page"' : ""}>${escapeHtml(labels.get(page))}</a>`;
+  const bar = document.createElement("header");
+  bar.id = "adminTopbar";
+  bar.className = "admin-topbar";
+  bar.innerHTML = `<a class="admin-brand" href="dashboard.html"><span aria-hidden="true">SP</span>Staff Planner</a>
+    <nav class="admin-quick" aria-label="Genvägar">${ADMIN_QUICK_PAGES.filter(page => labels.has(page)).map(page => link(page, "admin-quick-link")).join("")}</nav>
+    <details class="admin-nav-menu" data-popover>
+      <summary class="btn">Meny</summary>
+      <div class="admin-menu-panel admin-nav-panel">
+        <div class="admin-nav-account"></div>
+        ${groups.map(([title, pages]) => `<h4>${title}</h4>${pages.map(page => link(page, "admin-nav-item")).join("")}`).join("")}
+        <div class="admin-nav-footer"></div>
+      </div>
+    </details>`;
+  appShell.prepend(bar);
+  const account = document.getElementById("sidebarAccount");
+  if (account) bar.querySelector(".admin-nav-account").appendChild(account);
+  const logout = document.getElementById("logoutBtn");
+  if (logout) bar.querySelector(".admin-nav-footer").appendChild(logout);
+  document.body.classList.add("admin-topnav");
 }
 
 async function renderDashboard() {
