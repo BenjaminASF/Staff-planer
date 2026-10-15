@@ -5462,6 +5462,10 @@ button {
 .shift-color-red { --shift-color: #dc2626; --shift-color: light-dark(#dc2626, #f87171); }
 .shift-color-blue { --shift-color: #2563eb; --shift-color: light-dark(#2563eb, #60a5fa); }
 .shift-color-yellow { --shift-color: #eab308; --shift-color: light-dark(#eab308, #facc15); }
+.shift-color-green { --shift-color: #16a34a; --shift-color: light-dark(#16a34a, #4ade80); }
+.shift-color-purple { --shift-color: #9333ea; --shift-color: light-dark(#9333ea, #c084fc); }
+.shift-color-orange { --shift-color: #ea580c; --shift-color: light-dark(#ea580c, #fb923c); }
+.shift-color-brown { --shift-color: #92400e; --shift-color: light-dark(#92400e, #d6a06b); }
 .shift-dot { display: inline-block; flex: 0 0 auto; width: 10px; height: 10px; margin-right: 6px; border: 1px solid var(--border); border-radius: 50%; background: transparent; vertical-align: 0; }
 .shift-dot[class*="shift-color-"] { border-color: transparent; background: var(--shift-color); box-shadow: 0 0 0 2px color-mix(in srgb, var(--shift-color) 22%, transparent); }
 .sidebar-shift strong { display: flex; align-items: center; }
@@ -5498,6 +5502,14 @@ button {
 .shift-settings-list select,
 .shift-settings-add select { flex: 0 1 160px; width: auto; min-height: 42px; margin: 0; padding: 0 10px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-bg); color: var(--text); font: inherit; font-size: 14px; }
 .shift-settings-list .shift-dot { width: 14px; height: 14px; margin-right: 0; }
+.shift-color-choices { display: flex; flex: 1 1 100%; flex-wrap: wrap; gap: 8px; margin: 4px 0 0; padding: 0; border: 0; }
+.shift-color-choices legend { margin-bottom: 6px; padding: 0; font-size: 13px; font-weight: 600; }
+.shift-color-choices small { flex-basis: 100%; color: var(--muted); font-size: 12px; }
+.shift-color-choice { position: relative; display: inline-flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px; border: 1px solid var(--border); border-radius: 999px; background: var(--card-bg); font-size: 14px; cursor: pointer; }
+.shift-color-choice input { position: absolute; opacity: 0; pointer-events: none; }
+.shift-color-choice .shift-dot { width: 14px; height: 14px; margin: 0; }
+.shift-color-choice:has(input:checked) { border-color: var(--primary); box-shadow: 0 0 0 2px color-mix(in srgb, var(--primary) 30%, transparent); font-weight: 600; }
+.shift-color-choice:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 .form-card select { width: 100%; margin-bottom: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 14px; background: white; background: light-dark(white, #141a24); color: var(--text); }
 .form-card .form-hint { display: block; margin: -4px 0 10px; color: var(--muted); font-size: 12px; }

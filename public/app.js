@@ -358,7 +358,11 @@ function getShiftName(shiftId) {
 }
 
 // Colors a shift can be marked with. The emoji stands in for the color in <option> lists.
-const SHIFT_COLORS = [["red", "Röd", "🔴"], ["blue", "Blå", "🔵"], ["yellow", "Gul", "🟡"]];
+// Each color belongs to at most one shift.
+const SHIFT_COLORS = [
+  ["red", "Röd", "🔴"], ["blue", "Blå", "🔵"], ["yellow", "Gul", "🟡"], ["green", "Grön", "🟢"],
+  ["purple", "Lila", "🟣"], ["orange", "Orange", "🟠"], ["brown", "Brun", "🟤"]
+];
 
 function getShiftColor(shiftId) {
   return shifts.find(shift => shift.id === shiftId)?.color || "";
@@ -374,8 +378,26 @@ function shiftOptionLabel(shift) {
   return emoji ? `${emoji} ${shift.name}` : shift.name;
 }
 
-function shiftColorOptions(selected) {
-  return `<option value=""${selected ? "" : " selected"}>Ingen färg</option>${SHIFT_COLORS.map(([value, label, emoji]) => `<option value="${value}"${value === selected ? " selected" : ""}>${emoji} ${label}</option>`).join("")}`;
+// Colors no shift has yet, apart from the given one.
+function freeShiftColors(exceptShiftId = "") {
+  const taken = new Set(shifts.filter(shift => shift.id !== exceptShiftId).map(shift => shift.color).filter(Boolean));
+  return SHIFT_COLORS.filter(([value]) => !taken.has(value));
+}
+
+// The colors a shift may switch to: its own and the free ones.
+function shiftColorOptions(shift) {
+  const selected = shift.color || "";
+  return `<option value=""${selected ? "" : " selected"}>Ingen färg</option>${freeShiftColors(shift.id).map(([value, label, emoji]) => `<option value="${value}"${value === selected ? " selected" : ""}>${emoji} ${label}</option>`).join("")}`;
+}
+
+// The free colors for a new shift as swatches. The first free color is chosen from the start.
+function newShiftColorChoices() {
+  const free = freeShiftColors();
+  const choice = (value, label, checked) => `<label class="shift-color-choice"><input type="radio" name="color" value="${value}"${checked ? " checked" : ""} />${value ? `<span class="shift-dot shift-color-${value}" aria-hidden="true"></span>` : '<span class="shift-dot" aria-hidden="true"></span>'}<span>${label}</span></label>`;
+  return `<fieldset class="shift-color-choices"><legend>Färg</legend>
+    ${free.map(([value, label], index) => choice(value, label, index === 0)).join("")}${choice("", "Ingen färg", !free.length)}
+    <small>${free.length ? "Färger som redan används av ett annat skift visas inte." : "Alla färger används redan av andra skift. Ta bort färgen från ett skift för att kunna välja den här."}</small>
+  </fieldset>`;
 }
 
 function canBrowseShifts() {
@@ -2251,8 +2273,8 @@ async function renderSettings() {
     <section class="card settings-card"><div><h3>Maskiner, avdelningar och uppgifter</h3><p>Lägg till, redigera, pausa och ordna arbetsplatser från en samlad vy. De gäller alla skift.</p></div><div class="settings-actions">${isAdmin() ? '<button id="removeDemoDataBtn" class="btn danger" type="button">Ta bort testdata</button>' : ""}<a class="btn primary settings-link" href="add.html#workItemForm">Öppna hanteraren</a></div></section>
     ${isAdmin() ? `
     <section class="card settings-card" id="shiftSettings"><div><h3>Skift</h3><p>Varje skift har ett eget veckoschema. Personal och skiftledare kopplas till ett skift under Personal.</p></div>
-      <div class="shift-settings-list">${shifts.map(shift => `<article>${shiftColorDot(shift.id) || '<span class="shift-dot" aria-hidden="true"></span>'}<input value="${escapeHtml(shift.name)}" aria-label="Namn på skiftet ${escapeHtml(shift.name)}" data-shift-name="${escapeHtml(shift.id)}" maxlength="60" /><select aria-label="Färg på skiftet ${escapeHtml(shift.name)}" data-shift-color="${escapeHtml(shift.id)}">${shiftColorOptions(shift.color)}</select><button class="btn" type="button" data-rename-shift="${escapeHtml(shift.id)}">Spara</button><button class="btn danger" type="button" data-delete-shift="${escapeHtml(shift.id)}">Ta bort</button></article>`).join("") || '<div class="empty-state">Inga skift ännu. Lägg till det första nedan.</div>'}</div>
-      <form id="addShiftForm" class="shift-settings-add"><input name="name" placeholder="Nytt skift, t.ex. Grön" maxlength="60" required aria-label="Namn på nytt skift" /><select name="color" aria-label="Färg på nytt skift">${shiftColorOptions("")}</select><button class="btn primary" type="submit">+ Lägg till skift</button></form>
+      <div class="shift-settings-list">${shifts.map(shift => `<article>${shiftColorDot(shift.id) || '<span class="shift-dot" aria-hidden="true"></span>'}<input value="${escapeHtml(shift.name)}" aria-label="Namn på skiftet ${escapeHtml(shift.name)}" data-shift-name="${escapeHtml(shift.id)}" maxlength="60" /><select aria-label="Färg på skiftet ${escapeHtml(shift.name)}" data-shift-color="${escapeHtml(shift.id)}">${shiftColorOptions(shift)}</select><button class="btn" type="button" data-rename-shift="${escapeHtml(shift.id)}">Spara</button><button class="btn danger" type="button" data-delete-shift="${escapeHtml(shift.id)}">Ta bort</button></article>`).join("") || '<div class="empty-state">Inga skift ännu. Lägg till det första nedan.</div>'}</div>
+      <form id="addShiftForm" class="shift-settings-add"><input name="name" placeholder="Nytt skift, t.ex. Grön" maxlength="60" required aria-label="Namn på nytt skift" /><button class="btn primary" type="submit">+ Lägg till skift</button>${newShiftColorChoices()}</form>
     </section>
     <section class="card settings-card"><div><h3>Säkerhet och historik</h3><p>${snapshots.length} säkerhetspunkter för arbetsplatser finns sparade. Exportera en backup av all data på servern innan större förändringar. Lösenord ingår aldrig i backupen.</p></div>
       <div class="settings-actions"><button id="exportDataBtn" class="btn" type="button">Exportera backup</button><button id="importDataBtn" class="btn" type="button">Importera backup</button><input id="importDataInput" type="file" accept="application/json,.json" hidden></div>
@@ -2289,11 +2311,19 @@ async function renderSettings() {
   });
   if (!isAdmin()) return;
 
-  bindOnce(root.querySelector("#addShiftForm"), "submit", async event => {
+  const addShiftForm = root.querySelector("#addShiftForm");
+  // A name like "Grön" picks that color, if it is free.
+  bindOnce(addShiftForm.elements.name, "input", event => {
+    const named = SHIFT_COLORS.find(([, label]) => label.toLowerCase() === event.target.value.trim().toLowerCase())?.[0];
+    const radio = named && addShiftForm.querySelector(`input[name="color"][value="${named}"]`);
+    if (radio) radio.checked = true;
+  });
+  bindOnce(addShiftForm, "submit", async event => {
     event.preventDefault();
     const name = event.currentTarget.elements.name.value.trim();
     if (!name) return;
-    const { shift } = await apiRequest("POST", "/shifts", { name, color: event.currentTarget.elements.color.value });
+    const color = event.currentTarget.querySelector('input[name="color"]:checked')?.value || "";
+    const { shift } = await apiRequest("POST", "/shifts", { name, color });
     shifts = [...shifts, shift];
     if (!getShiftScope()) sessionStorage.setItem(ACTIVE_SHIFT_KEY, shift.id);
     showAppToast(`Skiftet ${shift.name} har lagts till.`);
