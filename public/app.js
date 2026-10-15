@@ -5531,11 +5531,9 @@ function adminProductionChartHtml(shiftData, target) {
 }
 
 function adminWasteHtml(shiftData) {
-  const withWaste = shiftData.map(data => ({ ...data, perHundred: data.month ? data.waste / data.month * 100 : null }))
-    .sort((first, second) => (first.perHundred ?? Infinity) - (second.perHundred ?? Infinity));
-  const max = Math.max(1, ...withWaste.map(data => data.waste));
-  return withWaste.map(data => `<div class="admin-waste-row${shiftColorClass(data.shift)}">
-    <div class="admin-row"><strong>${shiftColorDot(data.shift.id)}${escapeHtml(data.shift.name)}</strong><span><b>${formatNumber(data.waste, 1)} kg</b>${data.perHundred === null ? "" : ` · ${formatNumber(data.perHundred, 1)} kg/100 box`}</span></div>
+  const max = Math.max(1, ...shiftData.map(data => data.waste));
+  return shiftData.map(data => `<div class="admin-waste-row${shiftColorClass(data.shift)}">
+    <div class="admin-row"><strong>${shiftColorDot(data.shift.id)}${escapeHtml(data.shift.name)}</strong><span><b>${formatNumber(data.waste, 1)} kg</b></span></div>
     <div class="admin-bar"><i style="width:${data.waste / max * 100}%"></i></div>
   </div>`).join("");
 }
@@ -5608,7 +5606,7 @@ async function renderAdminDashboard(root) {
     <section class="admin-kpis" aria-label="Alla skift">
       <article class="card"><span>Producerat idag</span><strong>${formatNumber(todayTotal)} <small>box</small></strong><p>${reported.length} av ${shiftData.length} skift har rapporterat</p></article>
       <article class="card"><span>Producerat i ${escapeHtml(month)}</span><strong>${formatNumber(monthTotal)} <small>box</small></strong><p>${monthTarget ? `<b class="${monthTotal >= monthTarget ? "admin-good" : "admin-bad"}">${Math.round(monthTotal / monthTarget * 100)} %</b> av målet för rapporterade dagar` : "Ingen produktion registrerad ännu"}</p></article>
-      <article class="card"><span>Svinn i ${escapeHtml(month)}</span><strong>${formatNumber(waste, 1)} <small>kg</small></strong><p>${monthTotal ? `${formatNumber(waste / monthTotal * 100, 1)} kg per 100 box` : "Inget svinn registrerat"}</p></article>
+      <article class="card"><span>Svinn i ${escapeHtml(month)}</span><strong>${formatNumber(waste, 1)} <small>kg</small></strong><p>${waste ? "Alla skift tillsammans" : "Inget svinn registrerat"}</p></article>
       <article class="card"><span>Bemanning idag</span><strong>${available} <small>/ ${operators} operatörer på plats</small></strong><p>${absent.length ? `<b class="admin-bad">${absent.length} frånvarande</b> · ${absentCounts.join(", ")}` : "Alla är på plats"}</p></article>
     </section>
     <section class="admin-shifts" aria-label="Skiften">${shiftData.map(adminShiftCardHtml).join("") || '<div class="card empty-state">Inga skift finns ännu. Skapa skift under Inställningar.</div>'}</section>
@@ -5616,7 +5614,7 @@ async function renderAdminDashboard(root) {
       <div class="card"><h3>Produktion per dag, ${escapeHtml(month)}</h3><p class="admin-sub">Box per skift och dag.${currentTarget ? ` Streckad linje = dagligt mål ${formatNumber(currentTarget)} box.` : ""}</p>
         <div class="admin-legend">${shiftData.map(item => `<span>${shiftColorDot(item.shift.id)}${escapeHtml(item.shift.name)} · ${formatNumber(item.month)} box</span>`).join("")}</div>
         ${adminProductionChartHtml(shiftData, currentTarget)}</div>
-      <div class="card"><h3>Svinn hittills i månaden</h3><p class="admin-sub">Kilo och kilo per 100 producerade box. Lägst svinn per box överst.</p><div class="admin-waste">${adminWasteHtml(shiftData)}</div></div>
+      <div class="card"><h3>Svinn hittills i månaden</h3><p class="admin-sub">Kilo svinn per skift.</p><div class="admin-waste">${adminWasteHtml(shiftData)}</div></div>
     </section>
     <section class="admin-columns">
       <div class="card"><h3>Kompetens per skift</h3><p class="admin-sub">Tillgängliga idag / alla operatörer med kompetensen. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</div>

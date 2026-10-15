@@ -1,4 +1,4 @@
-const CACHE_NAME = "staff-planner-v20261015-12";
+const CACHE_NAME = "staff-planner-v20261015-13";
 const APP_FILES = ["./", "./index.html", "./dashboard.html", "./produktion.html", "./rast.html", "./personal.html", "./anvandare.html", "./testresultat.html", "./maskiner.html", "./bedomning.html", "./todo.html", "./add.html", "./installningar.html", "./hjalp.html", "./profil.html", "./style.css", "./theme.js", "./app.js", "./manifest.webmanifest", "./app-icon.svg"];
 const APP_URLS = new Set(APP_FILES.map(path => new URL(path, self.registration.scope).pathname));
 
