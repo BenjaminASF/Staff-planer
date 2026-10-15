@@ -124,6 +124,8 @@ let appSettings = { ...DEFAULT_APP_SETTINGS };
 
 const ROLES = { ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" };
 const ROLE_LABELS = { admin: "Admin", shift_leader: "Skiftledare", right_hand: "Höger hand", operator: "Operatör" };
+// The role hierarchy, as on the server: higher numbers rank higher.
+const ROLE_LEVELS = { admin: 3, shift_leader: 2, right_hand: 1, operator: 0 };
 // Pages each role may open. The server enforces the same rules (server/permissions.js);
 // this only decides what is shown.
 const PAGE_ACCESS = {
@@ -136,7 +138,7 @@ const PAGE_ACCESS = {
   "testresultat.html": [ROLES.ADMIN, ROLES.LEADER],
   "maskiner.html": [ROLES.ADMIN, ROLES.LEADER],
   "bedomning.html": [ROLES.ADMIN, ROLES.LEADER],
-  "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
+  "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
   "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
   "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
@@ -425,14 +427,28 @@ function canEditActiveShift() {
   return canEditShift(getShiftScope());
 }
 
+const roleLevel = role => ROLE_LEVELS[role] ?? -1;
+// Staff without a login rank as operators.
+const personLevel = person => person?.account ? roleLevel(person.account.role) : ROLE_LEVELS.operator;
+
+// Shift leaders and right hands manage the people in their own shift who rank below them.
 function canEditPerson(person) {
   if (!person || !currentUser) return false;
   if (isAdmin()) return true;
+  if (!isShiftLeader() && !isRightHand()) return false;
   if (!person.shiftId || person.shiftId !== getOwnShiftId()) return false;
-  // Shift leaders manage the staff in their shift, but never an admin's details.
-  if (isShiftLeader()) return person.account?.role !== ROLES.ADMIN;
-  // Right hands manage the operators and the staff without a login.
-  return isRightHand() && (!person.account || person.account.role === ROLES.OPERATOR);
+  return personLevel(person) < roleLevel(currentUser.role);
+}
+
+// Admins hand out any role; everyone else only the roles below their own.
+function assignableRoles() {
+  if (isAdmin()) return [ROLES.OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER, ROLES.ADMIN];
+  return [ROLES.OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER].filter(role => roleLevel(role) < roleLevel(currentUser?.role));
+}
+
+function canChangeRoleOf(person) {
+  if (!person?.account || person.id === currentPerson?.id) return false;
+  return isAdmin() || (canEditPerson(person) && assignableRoles().length > 1);
 }
 
 // Server API.
@@ -2487,6 +2503,7 @@ function renderHelpPage() {
       ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
       ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
       ["Sjuk eller borta?", "Öppna Min profil och ändra din status. Skiftledaren ser ändringen direkt."],
+      ["Att göra", "Under Att göra har du en egen lista som bara du ser. Vill du visa en uppgift för någon väljer du Dela och bockar i vem."],
       ["Lösenord", "Byt lösenord under Min profil. Har du glömt det, be din skiftledare om ett tillfälligt."]
     ]
     : [
@@ -2494,7 +2511,7 @@ function renderHelpPage() {
       ["Bygg arbetsplatser", "Lägg till maskiner, avdelningar, utbildningar och extraplatser. De gäller alla skift och kan pausas och ordnas."],
       ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
       ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
-      ["Roller", "Admin kan allt. Skiftledare ändrar sitt eget skift och ser andra skift. Skiftledare testar och bedömer också operatörerna i sitt skift. Höger hand hjälper skiftledaren och sköter sitt eget skift, men ändrar inte det dagliga målet. Operatörer ser sitt schema och ändrar sin profil."],
+      ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas att göra-listor är privata."],
       ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen."]
     ];
   root.innerHTML = `<section class="card help-intro"><div><h3>Kom igång</h3><p>All data sparas på servern, så alla ser samma schema från sina egna enheter.</p></div><a class="btn primary" href="${canChangeSharedSettings() ? "installningar.html" : "profil.html"}">${canChangeSharedSettings() ? "Öppna inställningar" : "Öppna min profil"}</a></section><div class="help-grid">${steps.map(([title, text], index) => `<article class="card"><span>${index + 1}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></article>`).join("")}</div><section class="card help-feedback"><div><h3>Förslag eller problem?</h3><p>Skicka feedback till den adress som angetts i Inställningar.</p></div>${appSettings.feedbackEmail ? `<a class="btn" href="mailto:${escapeHtml(appSettings.feedbackEmail)}?subject=Staff%20Planner%20feedback">Skicka feedback</a>` : isOperator() ? "" : '<a class="btn" href="installningar.html">Ange feedbackadress</a>'}</section>`;
@@ -4303,13 +4320,11 @@ function availabilityOptionsFor(current) {
 
 function canCreateAccountFor(person, role = ROLES.OPERATOR) {
   if (isAdmin()) return true;
-  return canEditPerson(person) && role === ROLES.OPERATOR;
+  return canEditPerson(person) && assignableRoles().includes(role);
 }
 
 function canResetPasswordFor(person) {
-  if (!person.account) return false;
-  if (isAdmin()) return true;
-  return canEditPerson(person) && person.account.role === ROLES.OPERATOR;
+  return Boolean(person.account) && canEditPerson(person);
 }
 
 function describeAccount(person) {
@@ -5787,8 +5802,7 @@ function shiftOptionsHtml(selectedId, { allowNone = true } = {}) {
 }
 
 function roleOptionsHtml(selectedRole = ROLES.OPERATOR) {
-  const roles = isAdmin() ? [ROLES.OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER, ROLES.ADMIN] : [ROLES.OPERATOR];
-  return roles.map(role => `<option value="${role}"${role === selectedRole ? " selected" : ""}>${ROLE_LABELS[role]}</option>`).join("");
+  return assignableRoles().map(role => `<option value="${role}"${role === selectedRole ? " selected" : ""}>${ROLE_LABELS[role]}</option>`).join("");
 }
 
 function loginInstructions(username, password) {
@@ -5800,7 +5814,7 @@ function renderAccountSection(person) {
     const lastLogin = person.account.lastLoginAt ? new Date(person.account.lastLoginAt).toLocaleString("sv-SE") : "aldrig";
     return `<p><strong>${escapeHtml(person.account.username)}</strong> · ${escapeHtml(ROLE_LABELS[person.account.role] || "")} · senast inloggad ${escapeHtml(lastLogin)}${person.account.mustChangePassword ? " · väntar på nytt lösenord" : ""}</p>
       ${isAdmin() ? `<div class="person-account-row"><label>Användarnamn<input name="username" value="${escapeHtml(person.account.username)}" autocomplete="off" maxlength="60" /></label><button class="btn" type="button" data-account-action="username">Spara användarnamn</button></div>` : ""}
-      ${isAdmin() && person.id !== currentPerson?.id ? `<div class="person-account-row"><label>Roll<select name="role">${roleOptionsHtml(person.account.role)}</select></label><button class="btn" type="button" data-account-action="role">Spara roll</button></div>` : ""}
+      ${canChangeRoleOf(person) ? `<div class="person-account-row"><label>Roll<select name="role">${roleOptionsHtml(person.account.role)}</select></label><button class="btn" type="button" data-account-action="role">Spara roll</button></div>` : ""}
       ${canResetPasswordFor(person) && person.id !== currentPerson?.id ? `<div class="person-account-row"><label>Tillfälligt lösenord<input name="resetPassword" autocomplete="off" minlength="${MIN_PASSWORD_LENGTH}" /></label><button class="btn" type="button" data-account-action="suggest">Föreslå</button><button class="btn" type="button" data-account-action="reset">Återställ lösenord</button></div>` : ""}
       ${isAdmin() && person.id !== currentPerson?.id ? '<div class="person-account-row"><button class="btn danger" type="button" data-account-action="remove">Ta bort inloggning</button></div>' : ""}`;
   }

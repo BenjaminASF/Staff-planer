@@ -1,12 +1,19 @@
 // Every rule about what each role may do lives in this file.
 //
+// The roles form a hierarchy (ROLE_LEVELS). Admins can do everything. Below
+// them, a user manages only people in their own shift who rank strictly below
+// them, and hands out only roles below their own. So nobody can change the
+// details, login or role of someone at their own level or above.
+//
 // Admin        – everything.
 // Skiftledare  – like admin, but changes only their own shift, sees other shifts'
 //                schedules read-only, may add staff to their own shift and may
 //                change shared machines and settings. Tests and assesses the
 //                operators in their own shift: test results, competence and
-//                assessments, for those people only. May not change an admin's
-//                details, delete users or change roles.
+//                assessments, for those people only. Makes operators in their
+//                shift right hands, and right hands operators again. May not
+//                change another shift leader's or an admin's details, delete
+//                users or give anyone else a role.
 // Höger hand   – the shift leader's assistant, who runs the shift when the leader
 //                is away. Like a shift leader, but only in their own shift: sees and
 //                changes only that shift's schedule, adds and manages operators
@@ -17,13 +24,25 @@
 //                shift leader has shared that week, edits their own profile
 //                (name, phone, status) and password.
 //
-// Personal documents ("Att göra") belong to one user, and only that user reads
-// and writes them. Every role except operators has a list, so roles added later
-// get one too. The owner can share single tasks with chosen users, who then
-// see those tasks read-only. Backups leave the lists out.
+// Personal documents ("Att göra") belong to one user, whatever their role, and
+// only that user reads and writes them – admins included. The owner can share
+// single tasks with chosen users, who then see those tasks read-only. Backups
+// leave the lists out.
 
 const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" });
 const ROLE_VALUES = Object.values(ROLES);
+
+// Higher numbers rank higher. A role added later only needs a level here.
+const ROLE_LEVELS = Object.freeze({
+  [ROLES.ADMIN]: 3,
+  [ROLES.LEADER]: 2,
+  [ROLES.RIGHT_HAND]: 1,
+  [ROLES.OPERATOR]: 0
+});
+const roleLevel = role => ROLE_LEVELS[role] ?? -1;
+// Staff without a login rank as operators.
+const personLevel = person => person?.account ? roleLevel(person.account.role) : ROLE_LEVELS[ROLES.OPERATOR];
+const rolesBelow = role => ROLE_VALUES.filter(other => roleLevel(other) < roleLevel(role));
 
 const AVAILABILITY_VALUES = ["available", "sick", "vab", "vacation", "unavailable"];
 
@@ -76,7 +95,9 @@ const isShiftManager = user => isAdminOrLeader(user) || isRightHand(user);
 const roleNeedsShift = role => role === ROLES.LEADER || role === ROLES.RIGHT_HAND;
 const leadsShift = (user, shiftId) => (isLeader(user) || isRightHand(user)) && Boolean(user.shiftId) && user.shiftId === shiftId;
 const canEditShift = (user, shiftId) => isAdmin(user) || leadsShift(user, shiftId);
-const hasPersonalList = user => Boolean(user?.role) && user.role !== ROLES.OPERATOR;
+// Shift leaders and right hands manage the people in their own shift who rank below them.
+const managesPerson = (user, person) => leadsShift(user, person?.shiftId) && personLevel(person) < roleLevel(user.role);
+const hasPersonalList = user => Boolean(user?.id) && Boolean(user.role);
 const ownsPersonalScope = (user, scope) => hasPersonalList(user) && Boolean(user.id) && personalScopeOwner(scope) === user.id;
 
 function documentCategory(scope, key) {
@@ -172,20 +193,15 @@ function canCreatePerson(user, shiftId) {
 // Which fields of `person` the user may change. An empty list means none.
 function editablePersonFields(user, person) {
   if (isAdmin(user)) return ["name", "company", "phone", "email", "availability", "shiftId"];
-  // Shift leaders manage the staff in their shift, but never an admin's details.
-  // Right hands manage the operators and the staff without a login.
-  const managedRoles = isLeader(user) ? [ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR] : [ROLES.OPERATOR];
-  if (leadsShift(user, person.shiftId) && (!person.account || managedRoles.includes(person.account.role))) {
-    return ["name", "company", "phone", "email", "availability"];
-  }
+  if (managesPerson(user, person)) return ["name", "company", "phone", "email", "availability"];
   if (user?.personId === person.id) return ["name", "phone", "email", "availability"];
   return [];
 }
 
 // Test results, competence and assessments. Admins evaluate everyone. Shift
-// leaders evaluate the operators in their own shift, and the right hands and
-// staff without a login there, but never another shift leader or an admin.
-const EVALUATED_BY_LEADERS = [ROLES.OPERATOR, ROLES.RIGHT_HAND];
+// leaders evaluate the people they manage: the operators, right hands and staff
+// without a login in their own shift.
+const EVALUATED_BY_LEADERS = rolesBelow(ROLES.LEADER);
 
 function evaluatesEveryone(user) {
   return isAdmin(user);
@@ -193,7 +209,7 @@ function evaluatesEveryone(user) {
 
 function canEvaluatePerson(user, person) {
   if (isAdmin(user)) return true;
-  return isLeader(user) && leadsShift(user, person.shiftId) && (!person.account || EVALUATED_BY_LEADERS.includes(person.account.role));
+  return isLeader(user) && managesPerson(user, person);
 }
 
 // Operators may not mark themselves "unavailable"; only admins and shift leaders set that status.
@@ -207,17 +223,31 @@ function canDeletePerson(user) {
   return isAdmin(user);
 }
 
+// The roles a user may hand out: admins any, everyone else only those below their own.
+function assignableRoles(user) {
+  if (isAdmin(user)) return [...ROLE_VALUES];
+  return ROLE_VALUES.includes(user?.role) ? rolesBelow(user.role) : [];
+}
+
 function canCreateAccount(user, person, role) {
   if (isAdmin(user)) return true;
-  return leadsShift(user, person.shiftId) && role === ROLES.OPERATOR;
+  return leadsShift(user, person.shiftId) && assignableRoles(user).includes(role);
 }
 
 function canResetPassword(user, person, account) {
   if (isAdmin(user)) return true;
-  return leadsShift(user, person.shiftId) && account?.role === ROLES.OPERATOR;
+  return Boolean(account) && managesPerson(user, { ...person, account });
 }
 
-function canChangeRole(user) {
+// Shift leaders turn operators in their shift into right hands and back.
+// Nobody changes the role of someone at their own level or above.
+function canChangeRole(user, person, role) {
+  if (isAdmin(user)) return true;
+  if (!person?.account || person.id === user?.personId) return false;
+  return managesPerson(user, person) && assignableRoles(user).includes(role);
+}
+
+function canChangeUsername(user) {
   return isAdmin(user);
 }
 
@@ -246,6 +276,9 @@ module.exports = {
   PERSONAL_SCOPE_PREFIX,
   personalScope,
   personalScopeOwner,
+  ROLE_LEVELS,
+  roleLevel,
+  assignableRoles,
   isAdmin,
   isLeader,
   isRightHand,
@@ -272,6 +305,7 @@ module.exports = {
   canCreateAccount,
   canResetPassword,
   canChangeRole,
+  canChangeUsername,
   canDeleteAccount,
   canSetAvailability
 };

@@ -33,11 +33,12 @@ describe("right hand", () => {
     await server?.close();
   });
 
-  test("a right hand needs a shift and only admins hand out the role", async () => {
+  test("a right hand needs a shift and is handed out by admins and shift leaders", async () => {
     const withoutShift = await admin.post("/api/people", { name: "Utan Skift", account: { username: "utan", password: PASSWORD, role: "right_hand" } });
     assert.equal(withoutShift.status, 400);
     const byLeader = await leader.post("/api/people", { name: "Ny Hand", account: { username: "nyhand", password: PASSWORD, role: "right_hand" } });
-    assert.equal(byLeader.status, 403);
+    assert.equal(byLeader.status, 201);
+    assert.equal(byLeader.data.person.shiftId, dayShift.id, "in the leader's own shift");
     assert.equal((await admin.patch(`/api/people/${annaPerson.id}/account`, { role: "right_hand" })).status, 200);
     assert.equal((await admin.patch(`/api/people/${annaPerson.id}`, { shiftId: null })).status, 400, "cannot leave the shift");
     assert.equal((await admin.patch(`/api/people/${annaPerson.id}/account`, { role: "operator" })).status, 200);
