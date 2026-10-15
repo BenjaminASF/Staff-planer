@@ -2160,7 +2160,20 @@ async function renderProfilePage() {
       <label>Nytt lösenord<input name="newPassword" type="password" minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" required /><small>Minst ${MIN_PASSWORD_LENGTH} tecken.</small></label>
       <label>Bekräfta nytt lösenord<input name="confirm" type="password" minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" required /></label>
       <div class="settings-actions"><span id="passwordChangeMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara nytt lösenord</button></div>
-    </form>`;
+    </form>
+    <section class="card settings-card">
+      <div><h3>Ljudnotiser</h3><p>Ett kort ljud spelas när någon annan ${canManageStaff() ? "skickar ett meddelande i chatten eller " : ""}ändrar schemat eller rastplanen för ditt skift, utan att du behöver ladda om sidan. Valet gäller den här enheten och sparas direkt. Webbläsaren spelar bara ljud efter att du har klickat någonstans på sidan.</p></div>
+      <label class="settings-switch"><input id="soundNotificationsSetting" type="checkbox"${soundNotificationsEnabled() ? " checked" : ""} /><span>Spela ljud vid ${canManageStaff() ? "nya meddelanden och " : ""}schemaändringar</span></label>
+      <div class="settings-actions"><button id="testSoundBtn" class="btn" type="button">Testa ljudet</button></div>
+    </section>`;
+  root.querySelector("#soundNotificationsSetting").addEventListener("change", event => {
+    setSoundNotificationsEnabled(event.target.checked);
+    if (event.target.checked) playTones("schedule");
+  });
+  root.querySelector("#testSoundBtn").addEventListener("click", () => {
+    playTones("schedule");
+    if (canManageStaff()) setTimeout(() => playTones("message"), 700);
+  });
 
   const profileForm = root.querySelector("#profileForm");
   const profileMessage = root.querySelector("#profileMessage");
@@ -6326,6 +6339,7 @@ async function checkChatUnread() {
   const notified = BigInt(sessionStorage.getItem(CHAT_NOTIFIED_KEY) || 0);
   if (!count || !latest || chatMessageId(latest) <= notified) return;
   sessionStorage.setItem(CHAT_NOTIFIED_KEY, latest.id);
+  playChatMessageSound(latest);
   const { preview } = getChatElements();
   const text = latest.text || (latest.imageUrl ? "Skickade en bild" : "");
   preview.innerHTML = `<strong>${escapeHtml(latest.authorName)}</strong><span>${escapeHtml(text.length > 90 ? `${text.slice(0, 90)}…` : text)}</span>${count > 1 ? `<small>${count} olästa meddelanden</small>` : ""}`;
@@ -6383,6 +6397,7 @@ async function loadNewChatMessages() {
   const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 80;
   chatState.messages.push(...fresh);
   renderChatMessages({ scrollToEnd: nearEnd });
+  playChatMessageSound(fresh.findLast(message => message.userId !== currentUser?.id));
   if (chatState.open && !document.hidden) await markChatRead();
 }
 
@@ -6550,6 +6565,120 @@ async function reloadSharedData() {
   await refreshAppViews();
 }
 
+// Sound notifications: a short chime when someone else sends a chat message or
+// changes the schedule. The tones are made with Web Audio, so no sound files are
+// needed. The setting belongs to this device and is on by default.
+const SOUND_SETTING_KEY = "staff_sound_notifications";
+const SOUND_LAST_PLAYED_KEY = "staff_sound_last_played";
+const SOUND_CHAT_HEARD_KEY = "staff_sound_chat_id";
+// One save often changes several documents, and several tabs may be open: one chime is enough.
+const SOUND_MIN_GAP_MS = 4000;
+const SOUND_TONES = {
+  message: [[880, 0], [1318.5, 0.13]],
+  schedule: [[523.25, 0], [659.25, 0.15], [783.99, 0.3]]
+};
+const SCHEDULE_SOUND_KEY = /^(schedule|breakPlan|trainingLeaders|trainingLocations|extraPersonLocations|scheduleShared):/;
+const soundState = { context: null, lastPlayed: {} };
+
+function soundNotificationsEnabled() {
+  try {
+    return localStorage.getItem(SOUND_SETTING_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function setSoundNotificationsEnabled(enabled) {
+  try {
+    localStorage.setItem(SOUND_SETTING_KEY, enabled ? "on" : "off");
+  } catch (error) {
+    console.warn("The sound setting could not be saved:", error);
+  }
+}
+
+function getSoundContext() {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+  if (!AudioContextClass) return null;
+  soundState.context ??= new AudioContextClass();
+  return soundState.context;
+}
+
+// Browsers only allow sound once the user has clicked or typed on the page.
+function unlockSound() {
+  if (!soundNotificationsEnabled()) return;
+  const context = getSoundContext();
+  if (context?.state === "suspended") context.resume().catch(() => {});
+}
+["pointerdown", "keydown"].forEach(type => document.addEventListener(type, unlockSound, { capture: true, passive: true }));
+
+function playTones(kind) {
+  const context = getSoundContext();
+  if (!context) return;
+  const play = () => {
+    const start = context.currentTime + 0.02;
+    SOUND_TONES[kind].forEach(([frequency, offset]) => {
+      const oscillator = context.createOscillator();
+      const gain = context.createGain();
+      const at = start + offset;
+      oscillator.type = "sine";
+      oscillator.frequency.value = frequency;
+      gain.gain.setValueAtTime(0.0001, at);
+      gain.gain.exponentialRampToValueAtTime(0.2, at + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.4);
+      oscillator.connect(gain).connect(context.destination);
+      oscillator.start(at);
+      oscillator.stop(at + 0.45);
+    });
+  };
+  if (context.state === "running") return play();
+  // Without a click on this page the browser may keep the sound blocked; a late chime is worse than none.
+  const asked = Date.now();
+  context.resume().then(() => { if (Date.now() - asked < 1000) play(); }, () => {});
+}
+
+function playNotificationSound(kind) {
+  if (!soundNotificationsEnabled()) return;
+  const now = Date.now();
+  try {
+    const lastPlayed = JSON.parse(localStorage.getItem(SOUND_LAST_PLAYED_KEY) || "{}");
+    if (Math.abs(now - (lastPlayed[kind] || 0)) < SOUND_MIN_GAP_MS) return;
+    localStorage.setItem(SOUND_LAST_PLAYED_KEY, JSON.stringify({ ...lastPlayed, [kind]: now }));
+  } catch {
+    if (now - (soundState.lastPlayed[kind] || 0) < SOUND_MIN_GAP_MS) return;
+    soundState.lastPlayed[kind] = now;
+  }
+  playTones(kind);
+}
+
+// A chat message is chimed once, even with several tabs open or after a page change.
+function playChatMessageSound(message) {
+  if (!message || message.userId === currentUser?.id) return;
+  try {
+    if (chatMessageId(message) <= BigInt(localStorage.getItem(SOUND_CHAT_HEARD_KEY) || 0)) return;
+    localStorage.setItem(SOUND_CHAT_HEARD_KEY, message.id);
+  } catch {
+    // Without storage the gap between chimes still keeps it from repeating.
+  }
+  playNotificationSound("message");
+}
+
+// Someone else changed the schedule or break plan of the user's own shift or the shift shown.
+async function noticeScheduleChange(change) {
+  if (!SCHEDULE_SOUND_KEY.test(change.key) || !change.by || change.by === currentUser?.id) return;
+  if (change.scope !== getOwnShiftId() && change.scope !== getShiftScope()) return;
+  if (!soundNotificationsEnabled()) return;
+  if (change.key.startsWith("scheduleShared:")) {
+    // Sharing a week is news; taking the share back is not.
+    try {
+      const { documents } = await apiRequest("GET", `/documents?scope=${encodeURIComponent(change.scope)}&keys=${encodeURIComponent(change.key)}`);
+      if (documents?.[change.key]?.value?.shared !== true) return;
+    } catch {
+      return;
+    }
+  }
+  playNotificationSound("schedule");
+}
+
 // Live updates: the server tells the page when someone saves something, and the
 // views that show it are drawn again. A redraw waits while the user is typing or
 // has a dialog open, so nothing they are in the middle of is lost.
@@ -6591,7 +6720,8 @@ function setupLiveUpdates() {
   });
 }
 
-function handleLiveChange(change) {
+function handleLiveChange(change, { fromSave = false } = {}) {
+  if (change.type === "document" && !fromSave) void noticeScheduleChange(change);
   if (change.type === "chat") {
     if (getChatElements()) void pollChat();
     return;
@@ -6617,7 +6747,7 @@ function recheckDeferredLiveChange(scope, key) {
   if (!liveUpdates.deferredVersions.has(cacheKey)) return;
   const version = liveUpdates.deferredVersions.get(cacheKey);
   liveUpdates.deferredVersions.delete(cacheKey);
-  handleLiveChange({ type: "document", scope, key, version: Number.isFinite(version) ? version : 0 });
+  handleLiveChange({ type: "document", scope, key, version: Number.isFinite(version) ? version : 0 }, { fromSave: true });
 }
 
 function queueLiveRefresh({ document: cacheKey, peopleChanged, shiftsChanged, reloadAll } = {}) {

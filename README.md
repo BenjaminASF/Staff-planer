@@ -78,9 +78,15 @@ Ange det gamla lösenordet och välj vilket skift personalen och schemana ska h�
 
 ### Uppdateringar i realtid
 
-När någon sparar en ändring syns den direkt hos alla andra som har appen öppen, utan att de behöver ladda om sidan. Servern skickar ett meddelande till öppna sidor (Server-Sent Events på `/api/events`) som sedan hämtar det som ändrats och ritar om vyn. Den som håller på att skriva i ett fält eller har en dialogruta öppen får uppdateringen när fältet lämnas eller dialogen stängs, så inget man skriver försvinner. Varje sida får bara veta om ändringar i data den själv får läsa. Om anslutningen bryts kopplar sidan upp sig igen och hämtar allt på nytt.
+När någon sparar en ändring syns den direkt hos alla andra som har appen öppen, utan att de behöver ladda om sidan. Servern skickar ett meddelande till öppna sidor (Server-Sent Events på `/api/events`) som sedan hämtar det som ändrats och ritar om vyn. Den som håller på att skriva i ett fält eller har en dialogruta öppen får uppdateringen när fältet lämnas eller dialogen stängs, så inget man skriver försvinner. Varje sida får bara veta om ändringar i data den själv får läsa, och operatörer får bara veta om ändringar i veckor som har delats med dem. Om anslutningen bryts kopplar sidan upp sig igen och hämtar allt på nytt.
 
 Ändringarna meddelas via Postgres (`LISTEN`/`NOTIFY`), så det fungerar även om appen körs på flera instanser.
+
+### Ljudnotiser
+
+Appen spelar ett kort ljud när någon annan skickar ett meddelande i chatten eller ändrar schemat eller rastplanen för ens eget skift (eller skiftet man tittar på), utan att man behöver ladda om sidan. Operatörer hör bara ändringar i veckor som har delats med dem, och ett ljud när en vecka delas. Egna ändringar ger inget ljud, och en sparning som ändrar flera saker samtidigt ger bara ett ljud, även med flera flikar öppna.
+
+Ljudnotiserna är på från början och stängs av eller slås på under **Min profil → Ljudnotiser**, där det också finns en knapp för att testa ljudet. Valet gäller den enhet man använder. Webbläsare spelar bara upp ljud efter att man har klickat någonstans på sidan.
 
 ### Chatt
 
