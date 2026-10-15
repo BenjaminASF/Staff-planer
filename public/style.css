@@ -6608,6 +6608,11 @@ body.admin-topnav .main { width: 100%; max-width: 1440px; margin: 0 auto; paddin
 .admin-shift-menu { position: relative; flex: 1 1 auto; }
 .admin-shift-menu > summary { justify-content: center; width: 100%; }
 .admin-shift-menu .admin-menu-panel { right: 0; bottom: calc(100% + 6px); top: auto; max-height: min(460px, calc(100vh - 120px)); max-height: min(460px, calc(100dvh - 120px)); overflow-y: auto; overscroll-behavior: contain; }
+.admin-shift-menu.opens-down .admin-menu-panel { top: calc(100% + 6px); bottom: auto; }
+/* Cards scroll sideways by default, which would clip the menu; shift cards let it show outside. */
+.admin-shift-card { overflow: visible; }
+/* The card with an open menu is lifted, so the cards around it never cover the list. */
+.admin-shift-card:has(.admin-shift-menu[open]) { position: relative; z-index: 50; }
 /* On phones the shift menu is a sheet at the bottom of the screen, so every link is in view. */
 @media (max-width: 640px) {
   /* The card's blur and the page's finished rise animation would frame the fixed sheet; drop them while it is open. */
