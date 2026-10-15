@@ -6470,7 +6470,7 @@ a.notification-item:hover { background: color-mix(in srgb, var(--primary) 8%, tr
 }
 
 /* Admin's production overview (dashboard.html). Shift cards take their color from --shift-color. */
-#dashboardPage { --ok: #187347; --ok: light-dark(#187347, #75c897); --ok-soft: #dcf5e6; --ok-soft: light-dark(#dcf5e6, #123222); --warn: #a16207; --warn: light-dark(#a16207, #f2c14e); --warn-soft: #fdf1d3; --warn-soft: light-dark(#fdf1d3, #352a10); --bad: #b42318; --bad: light-dark(#b42318, #ff8d7c); --bad-soft: #fde4e1; --bad-soft: light-dark(#fde4e1, #3a1715); --track: #e8edf5; --track: light-dark(#e8edf5, #243042); }
+#dashboardPage, .schedule-viewer { --ok: #187347; --ok: light-dark(#187347, #75c897); --ok-soft: #dcf5e6; --ok-soft: light-dark(#dcf5e6, #123222); --warn: #a16207; --warn: light-dark(#a16207, #f2c14e); --warn-soft: #fdf1d3; --warn-soft: light-dark(#fdf1d3, #352a10); --bad: #b42318; --bad: light-dark(#b42318, #ff8d7c); --bad-soft: #fde4e1; --bad-soft: light-dark(#fde4e1, #3a1715); --track: #e8edf5; --track: light-dark(#e8edf5, #243042); }
 #dashboardPage > section + section, #dashboardPage > .admin-toolbar + section { margin-top: 18px; }
 #dashboardPage h3 { margin: 0 0 4px; font-size: 16px; }
 .admin-sub { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
@@ -6485,12 +6485,12 @@ a.notification-item:hover { background: color-mix(in srgb, var(--primary) 8%, tr
 .admin-more > summary { display: inline-flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
 .admin-more > summary::-webkit-details-marker { display: none; }
 .admin-more > summary::after { content: "▾"; font-size: 12px; }
-.admin-more-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; display: grid; width: min(300px, calc(100vw - 32px)); padding: 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--card-bg); box-shadow: 0 18px 40px rgba(10, 20, 40, .18); }
-.admin-more-menu h4 { margin: 10px 10px 4px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
-.admin-more-menu h4:first-child { margin-top: 4px; }
-.admin-more-menu a, .admin-more-menu button { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
-.admin-more-menu a:hover, .admin-more-menu button:hover, .admin-more-menu a:focus-visible, .admin-more-menu button:focus-visible { background: var(--primary-soft); }
-.admin-more-menu small { color: var(--muted); font-size: 12px; }
+.admin-menu-panel { position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; display: grid; width: min(300px, calc(100vw - 32px)); padding: 8px; border: 1px solid var(--border); border-radius: 14px; background: var(--card-bg); box-shadow: 0 18px 40px rgba(10, 20, 40, .18); }
+.admin-menu-panel h4 { margin: 10px 10px 4px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.admin-menu-panel h4:first-child { margin-top: 4px; }
+.admin-menu-panel a, .admin-menu-panel button { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 9px 10px; border: 0; border-radius: 8px; background: none; color: var(--text); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.admin-menu-panel a:hover, .admin-menu-panel button:hover, .admin-menu-panel a:focus-visible, .admin-menu-panel button:focus-visible { background: var(--primary-soft); }
+.admin-menu-panel small { color: var(--muted); font-size: 12px; }
 .admin-kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
 .admin-kpis article { display: grid; gap: 6px; align-content: start; }
 .admin-kpis span, .admin-label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
@@ -6558,3 +6558,76 @@ a.notification-item:hover { background: color-mix(in srgb, var(--primary) 8%, tr
 #adminAuditSection { scroll-margin-top: 16px; }
 @media (max-width: 1100px) { .admin-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); } .admin-charts, .admin-columns { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 480px) { .admin-kpis { grid-template-columns: minmax(0, 1fr); } .admin-shifts { grid-template-columns: minmax(0, 1fr); } .admin-toolbar { justify-content: space-between; } }
+
+/* Admin top bar: replaces the sidebar for admins. Links, shift switcher and logout live in its menu. */
+body.admin-topnav .sidebar { display: none !important; }
+body.admin-topnav .layout { display: block; background: none; }
+body.admin-topnav .main { width: 100%; max-width: 1440px; margin: 0 auto; padding-top: 26px; }
+.admin-topbar { position: sticky; top: 0; top: env(safe-area-inset-top, 0px); z-index: 60; display: flex; align-items: center; gap: 18px; min-height: 64px; padding-block: 10px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); border-bottom: 1px solid var(--border); background: var(--card-bg); background: color-mix(in srgb, var(--card-bg) 88%, transparent); backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px); }
+.admin-brand { display: inline-flex; align-items: center; gap: 10px; color: var(--text); font-size: 16px; font-weight: 800; text-decoration: none; white-space: nowrap; }
+.admin-brand span { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: var(--primary); color: #fff; font-size: 12px; font-weight: 800; }
+.admin-quick { display: flex; flex: 1 1 auto; gap: 4px; min-width: 0; }
+.admin-quick-link { padding: 8px 12px; border-radius: 9px; color: var(--muted); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.admin-quick-link:hover, .admin-quick-link:focus-visible { background: var(--primary-soft); color: var(--text); }
+.admin-quick-link.is-active { background: var(--primary-soft); color: var(--primary); }
+.admin-nav-menu { position: relative; margin-left: auto; }
+.admin-nav-menu > summary, .admin-shift-menu > summary { display: inline-flex; align-items: center; gap: 8px; list-style: none; cursor: pointer; }
+.admin-nav-menu > summary::-webkit-details-marker, .admin-shift-menu > summary::-webkit-details-marker { display: none; }
+.admin-nav-menu > summary::after, .admin-shift-menu > summary::after { content: "▾"; font-size: 12px; }
+.admin-nav-panel { width: min(320px, calc(100vw - 32px)); max-height: calc(100dvh - 90px); overflow-y: auto; }
+.admin-menu-panel a.is-active { background: var(--primary-soft); color: var(--primary); font-weight: 700; }
+.admin-nav-account .sidebar-account { margin: 0 0 4px; padding: 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--primary-soft); background: color-mix(in srgb, var(--primary-soft) 55%, transparent); color: var(--text); }
+.admin-nav-account .sidebar-user, .admin-nav-account .sidebar-user strong { color: var(--text); }
+.admin-nav-account .sidebar-user small, .admin-nav-account .sidebar-shift span { color: var(--muted); }
+.admin-nav-account .sidebar-shift select { border: 1px solid var(--border); background: var(--card-bg); color: var(--text); }
+.admin-nav-footer { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.admin-nav-footer .sidebar-logout { display: block !important; width: 100%; margin: 0; border: 1px solid var(--border); background: none; color: var(--text); }
+.admin-nav-footer .sidebar-logout:hover { background: var(--danger-soft); color: var(--danger); }
+@media (max-width: 820px) { .admin-quick { display: none; } .admin-topbar { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); } body.admin-topnav .main { padding-top: 18px; } }
+
+/* Shift card actions */
+.admin-shift-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 14px; border-top: 1px solid var(--border); }
+.admin-shift-actions > .btn { flex: 1 1 auto; }
+.admin-shift-menu { position: relative; flex: 1 1 auto; }
+.admin-shift-menu > summary { justify-content: center; width: 100%; }
+.admin-shift-menu .admin-menu-panel { right: 0; bottom: calc(100% + 6px); top: auto; }
+.admin-shift-menu h4 { display: flex; align-items: center; }
+
+/* Read-only schedule viewer */
+body.schedule-viewer-open { overflow: hidden; }
+.schedule-viewer-backdrop { position: fixed; inset: 0; z-index: 200; display: grid; place-items: center; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); background: rgba(10, 16, 30, .45); backdrop-filter: blur(3px); }
+.schedule-viewer { --c: var(--shift-color, var(--primary)); display: flex; flex-direction: column; width: min(1100px, 100%); max-height: 100%; overflow: hidden; border: 1px solid var(--border); border-top: 4px solid var(--c); border-radius: 18px; background: var(--card-bg); box-shadow: 0 30px 70px rgba(10, 20, 40, .3); color: var(--text); }
+.viewer-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 18px 20px 6px; }
+.viewer-head h3 { display: flex; align-items: center; margin: 0 0 4px; font-size: 19px; }
+.viewer-head small { color: var(--muted); font-size: 13px; }
+.viewer-close { width: 38px; height: 38px; flex: 0 0 auto; border: 1px solid var(--border); border-radius: 10px; background: none; color: var(--text); font-size: 22px; line-height: 1; cursor: pointer; }
+.viewer-close:hover { background: var(--primary-soft); }
+.viewer-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 10px; padding: 10px 20px 14px; border-bottom: 1px solid var(--border); }
+.viewer-weeks { display: flex; gap: 6px; }
+.viewer-weeks .btn { min-height: 40px; padding: 0 12px; }
+.viewer-body { overflow: auto; padding: 16px 20px 22px; }
+.viewer-days { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.viewer-days button { padding: 8px 12px; border: 1px solid var(--border); border-radius: 999px; background: none; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
+.viewer-days button[aria-selected="true"] { border-color: var(--c); background: var(--c); color: #fff; }
+.viewer-summary { margin: 0 0 14px; color: var(--muted); font-size: 13px; }
+.viewer-summary strong { color: var(--text); }
+.viewer-list { display: grid; margin-bottom: 18px; }
+.viewer-list h4 { margin: 0 0 6px; color: var(--muted); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.viewer-row { display: grid; grid-template-columns: minmax(120px, 220px) minmax(0, 1fr); gap: 12px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); }
+.viewer-task { font-weight: 700; }
+.viewer-cell { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.viewer-cell small, .viewer-table td small { display: block; width: 100%; color: var(--muted); font-size: 12px; }
+.viewer-person { font-weight: 600; }
+.viewer-empty { color: var(--muted); font-style: italic; }
+.viewer-table-scroll { overflow-x: auto; }
+.viewer-table { width: 100%; min-width: 640px; border-collapse: collapse; font-size: 13px; }
+.viewer-table th, .viewer-table td { padding: 9px 10px; border-bottom: 1px solid var(--border); text-align: left; vertical-align: top; }
+.viewer-table thead th { position: sticky; top: -16px; background: var(--card-bg); }
+.viewer-table thead button { padding: 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; cursor: pointer; }
+.viewer-table thead button:hover { color: var(--primary); }
+.viewer-table tbody th { white-space: nowrap; }
+.viewer-table .is-today { background: var(--primary-soft); background: color-mix(in srgb, var(--c) 8%, transparent); }
+.viewer-table thead .is-today button { color: var(--text); }
+@media (max-width: 560px) { .viewer-row { grid-template-columns: minmax(0, 1fr); gap: 2px; } .viewer-head, .viewer-toolbar, .viewer-body { padding-left: 16px; padding-right: 16px; } }
+.schedule-viewer-backdrop[hidden] { display: none; }
+.admin-shift-actions .btn { min-height: 42px; padding: 0 14px; font-size: 14px; font-weight: 700; }
