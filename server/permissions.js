@@ -6,6 +6,12 @@
 //                change shared machines and settings. May not change an admin's
 //                details, delete users,
 //                change roles, or edit competence, test results or assessments.
+// Höger hand   – the shift leader's assistant, who runs the shift when the leader
+//                is away. Like a shift leader, but only in their own shift: sees and
+//                changes only that shift's schedule, adds and manages operators
+//                there, records production and uses the chat. May not change the
+//                daily production target, shared machines or settings, and does
+//                not look at other shifts' schedules.
 // Operatör     – sees their own shift's schedule and break plan once an admin or
 //                shift leader has shared that week, edits their own profile
 //                (name, phone, status) and password.
@@ -13,7 +19,7 @@
 // Personal documents ("Att göra") belong to one admin or shift leader, and only
 // that user reads and writes them. Backups leave them out.
 
-const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", OPERATOR: "operator" });
+const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" });
 const ROLE_VALUES = Object.values(ROLES);
 
 const AVAILABILITY_VALUES = ["available", "sick", "vab", "vacation", "unavailable"];
@@ -59,10 +65,15 @@ const WEEKLY_SCHEDULE_PREFIXES = ["schedule", "trainingLeaders", "trainingLocati
 
 const isAdmin = user => user?.role === ROLES.ADMIN;
 const isLeader = user => user?.role === ROLES.LEADER;
+const isRightHand = user => user?.role === ROLES.RIGHT_HAND;
 const isAdminOrLeader = user => isAdmin(user) || isLeader(user);
-const leadsShift = (user, shiftId) => isLeader(user) && Boolean(user.shiftId) && user.shiftId === shiftId;
+// Everyone who plans a shift: admins, shift leaders and their right hands.
+const isShiftManager = user => isAdminOrLeader(user) || isRightHand(user);
+// Shift leaders and right hands must belong to a shift.
+const roleNeedsShift = role => role === ROLES.LEADER || role === ROLES.RIGHT_HAND;
+const leadsShift = (user, shiftId) => (isLeader(user) || isRightHand(user)) && Boolean(user.shiftId) && user.shiftId === shiftId;
 const canEditShift = (user, shiftId) => isAdmin(user) || leadsShift(user, shiftId);
-const ownsPersonalScope = (user, scope) => isAdminOrLeader(user) && Boolean(user.id) && personalScopeOwner(scope) === user.id;
+const ownsPersonalScope = (user, scope) => isShiftManager(user) && Boolean(user.id) && personalScopeOwner(scope) === user.id;
 
 function documentCategory(scope, key) {
   if (typeof key !== "string" || typeof scope !== "string") return null;
@@ -75,10 +86,11 @@ function documentCategory(scope, key) {
 function canReadDocument(user, scope, key) {
   switch (documentCategory(scope, key)) {
     case "config": return Boolean(user);
-    case "configPrivate":
-    case "competence": return isAdminOrLeader(user);
+    case "configPrivate": return isAdminOrLeader(user);
+    // Scheduling depends on competence, so everyone who plans a shift reads it.
+    case "competence": return isShiftManager(user);
     case "sensitive": return isAdmin(user);
-    // Shift leaders may look at every shift's schedule; operators only their own.
+    // Shift leaders may look at every shift's schedule; everyone else only their own.
     case "shiftPlan":
     case "shiftShare": return isAdminOrLeader(user) || (Boolean(user?.shiftId) && user.shiftId === scope);
     case "shiftWork": return canEditShift(user, scope);
@@ -89,7 +101,8 @@ function canReadDocument(user, scope, key) {
 
 function canWriteDocument(user, scope, key) {
   switch (documentCategory(scope, key)) {
-    case "config":
+    // Right hands record production, which may set a new factory record.
+    case "config": return isAdminOrLeader(user) || (isRightHand(user) && key === "productionSettings");
     case "configPrivate": return isAdminOrLeader(user);
     case "competence":
     case "sensitive": return isAdmin(user);
@@ -104,8 +117,32 @@ function canWriteDocument(user, scope, key) {
 // Operators see a week's schedule and break plan only after it has been shared.
 // Returns the week the document belongs to when the user needs that week shared, otherwise null.
 function weekRequiringShare(user, scope, key) {
-  if (isAdminOrLeader(user) || documentCategory(scope, key) !== "shiftPlan") return null;
+  if (isShiftManager(user) || documentCategory(scope, key) !== "shiftPlan") return null;
   return key.slice(key.indexOf(":") + 1);
+}
+
+// The daily production target lives in "productionSettings" next to the factory
+// record. Right hands save that document when a day beats the record, but only
+// admins and shift leaders may change the target in it.
+const DEFAULT_DAILY_TARGET = 160;
+
+function canChangeProductionTarget(user) {
+  return isAdminOrLeader(user);
+}
+
+function productionTargets(settings) {
+  const changes = settings?.targetChanges && typeof settings.targetChanges === "object" ? settings.targetChanges : {};
+  return JSON.stringify({
+    dailyTarget: Number(settings?.dailyTarget) || DEFAULT_DAILY_TARGET,
+    targetChanges: Object.entries(changes)
+      .filter(([date, target]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Number(target)) && Number(target) >= 0)
+      .map(([date, target]) => [date, Number(target)])
+      .sort(([first], [second]) => first.localeCompare(second))
+  });
+}
+
+function changesProductionTarget(before, after) {
+  return productionTargets(before) !== productionTargets(after);
 }
 
 // Audit events belong to global or a shift; personal lists have no history.
@@ -117,7 +154,7 @@ function canReadAuditScope(user, scope) {
 // People and accounts.
 
 function canSeeAllPeople(user) {
-  return isAdminOrLeader(user);
+  return isShiftManager(user);
 }
 
 function canCreatePerson(user, shiftId) {
@@ -128,7 +165,11 @@ function canCreatePerson(user, shiftId) {
 function editablePersonFields(user, person) {
   if (isAdmin(user)) return ["name", "company", "phone", "email", "availability", "shiftId"];
   // Shift leaders manage the staff in their shift, but never an admin's details.
-  if (leadsShift(user, person.shiftId) && person.account?.role !== ROLES.ADMIN) return ["name", "company", "phone", "email", "availability"];
+  // Right hands manage the operators and the staff without a login.
+  const managedRoles = isLeader(user) ? [ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR] : [ROLES.OPERATOR];
+  if (leadsShift(user, person.shiftId) && (!person.account || managedRoles.includes(person.account.role))) {
+    return ["name", "company", "phone", "email", "availability"];
+  }
   if (user?.personId === person.id) return ["name", "phone", "email", "availability"];
   return [];
 }
@@ -160,7 +201,7 @@ function canChangeRole(user) {
 
 // The chat is shared by everyone who plans the shifts.
 function canUseChat(user) {
-  return isAdminOrLeader(user);
+  return isShiftManager(user);
 }
 
 // Authors remove their own chat messages; admins can remove any.
@@ -185,8 +226,13 @@ module.exports = {
   personalScopeOwner,
   isAdmin,
   isLeader,
+  isRightHand,
   isAdminOrLeader,
+  isShiftManager,
+  roleNeedsShift,
   canEditShift,
+  canChangeProductionTarget,
+  changesProductionTarget,
   documentCategory,
   sharedFlagKey,
   weekRequiringShare,

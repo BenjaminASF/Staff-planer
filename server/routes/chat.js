@@ -52,7 +52,7 @@ function parseMessageId(value) {
 function chatRoutes({ pool }) {
   const router = express.Router();
   router.use(requireUser, (req, res, next) => {
-    if (!canUseChat(req.user)) throw new HttpError(403, "Chatten är bara för admin och skiftledare.");
+    if (!canUseChat(req.user)) throw new HttpError(403, "Chatten är bara för admin, skiftledare och höger hand.");
     next();
   });
 

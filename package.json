@@ -2,7 +2,7 @@
   "name": "staff-planner",
   "version": "2.0.0",
   "private": true,
-  "description": "Staff Planner - schemaplanering med roller (Admin, Skiftledare, Operatör).",
+  "description": "Staff Planner - schemaplanering med roller (Admin, Skiftledare, Höger hand, Operatör).",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",

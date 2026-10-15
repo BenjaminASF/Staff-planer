@@ -6,25 +6,26 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 
 ## Roller
 
-| | Admin | Skiftledare | Operatör |
-|---|:---:|:---:|:---:|
-| Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ (när veckan är delad) |
-| Ändra sin egen profil (namn, telefon, e-post, status, lösenord) | ✓ | ✓ | ✓ |
-| Sätta statusen Inte tillgänglig | ✓ | ✓ | |
-| Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | |
-| Ändra schema, rast och produktion | Alla skift | Eget skift | |
-| Egen att göra-lista (bara man själv ser den) | ✓ | ✓ | |
-| Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | |
-| Lägga till personal och skapa operatörskonton | Alla skift | Eget skift | |
-| Återställa lösenord | Alla | Operatörer i eget skift | |
-| Ändra maskiner, avdelningar och inställningar (gäller alla skift) | ✓ | ✓ | |
-| Kompetens, testresultat och bedömningar | ✓ | | |
-| Hantera alla profiler: namn, telefon, status, skift, användarnamn, roll och lösenord | ✓ | | |
-| Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | |
-| Ta bort användare från sidan Användare | ✓ | | |
-| Chatt med text och bilder | ✓ | ✓ | |
-| Ta bort personal och användare, ändra roller | ✓ | | |
-| Skapa och ta bort skift, backup och import | ✓ | | |
+| | Admin | Skiftledare | Höger hand | Operatör |
+|---|:---:|:---:|:---:|:---:|
+| Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ | ✓ (när veckan är delad) |
+| Ändra sin egen profil (namn, telefon, e-post, status, lösenord) | ✓ | ✓ | ✓ | ✓ |
+| Sätta statusen Inte tillgänglig | ✓ | ✓ | ✓ | |
+| Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | |
+| Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | |
+| Ändra det dagliga produktionsmålet | ✓ | ✓ | | |
+| Egen att göra-lista (bara man själv ser den) | ✓ | ✓ | ✓ | |
+| Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | Eget skift | |
+| Lägga till personal och skapa operatörskonton | Alla skift | Eget skift | Eget skift | |
+| Återställa lösenord | Alla | Operatörer i eget skift | Operatörer i eget skift | |
+| Ändra maskiner, avdelningar och inställningar (gäller alla skift) | ✓ | ✓ | | |
+| Kompetens, testresultat och bedömningar | ✓ | | | |
+| Hantera alla profiler: namn, telefon, status, skift, användarnamn, roll och lösenord | ✓ | | | |
+| Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | Eget skift | |
+| Ta bort användare från sidan Användare | ✓ | | | |
+| Chatt med text och bilder | ✓ | ✓ | ✓ | |
+| Ta bort personal och användare, ändra roller | ✓ | | | |
+| Skapa och ta bort skift, backup och import | ✓ | | | |
 
 Operatörer ser en veckas schema och rastplan först när admin eller skiftledaren har klickat på **Dela schema** för den veckan. Delningen kan tas tillbaka med **Sluta dela**.
 
@@ -43,7 +44,9 @@ Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas
 
 Skiftledare kan aldrig ändra en admins uppgifter (namn, företag, telefon, status eller inloggning), inte ens om admin hör till samma skift.
 
-Skiftledare kan läsa kompetens eftersom autoschemat och schemats varningar bygger på den.
+**Höger hand** är skiftledarens assistent och tar över ansvaret när skiftledaren inte är på plats. Höger hand arbetar bara i sitt eget skift: ändrar schemat, lägger till operatörer, läser och skriver i chatten och registrerar dagens produktion, men kan inte ändra det dagliga målet eller maskiner och inställningar som gäller alla skift. Höger hand kan ändra operatörernas uppgifter i skiftet, men inte skiftledarens eller adminens.
+
+Skiftledare och höger hand kan läsa kompetens eftersom autoschemat och schemats varningar bygger på den.
 
 Alla regler finns samlade i [`server/permissions.js`](server/permissions.js) och kontrolleras på servern. Gränssnittet döljer bara det man inte har behörighet till.
 

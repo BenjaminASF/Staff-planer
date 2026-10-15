@@ -3,7 +3,7 @@ const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
   isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScope, personalScopeOwner,
-  sharedFlagKey, weekRequiringShare
+  sharedFlagKey, weekRequiringShare, canChangeProductionTarget, changesProductionTarget
 } = require("../permissions");
 const {
   readDocuments, writeDocument, mergeIntoPersonalList, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot,
@@ -69,6 +69,12 @@ function documentRoutes({ pool, mailer, appUrl }) {
     await assertScopeExists(pool, scope);
     if (!req.body || !("value" in req.body)) throw new HttpError(400, "Värde saknas.");
     const baseVersion = Number(req.body.baseVersion) || 0;
+    if (scope === "global" && key === "productionSettings" && !canChangeProductionTarget(req.user)) {
+      const current = (await readDocuments(pool, scope, [key]))[key]?.value;
+      if (changesProductionTarget(current, req.body.value)) {
+        throw new HttpError(403, "Endast skiftledare och admin kan ändra det dagliga målet.");
+      }
+    }
     const sharedWeek = sharedWeekKey(key);
     const wasShared = sharedWeek ? (await readDocuments(pool, scope, [key]))[key]?.value?.shared === true : false;
     let saved;
