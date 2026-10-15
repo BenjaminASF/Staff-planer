@@ -80,16 +80,31 @@ describe("live updates", () => {
     assert.equal((await open(anonymous)).status, 401);
   });
 
-  test("a saved document reaches everyone who may read it, with its version", async () => {
+  test("a saved document reaches everyone who may read it, with its version and who saved it", async () => {
     const adminStream = await open(admin);
-    const operatorStream = await open(operator);
     await settle();
     const saved = await leader.put(`/api/documents/${shift.id}/breakPlan:2026-10-12`, { value: { mon: {} }, baseVersion: 0 });
     assert.equal(saved.status, 200);
     const isBreakPlan = event => event.type === "change" && event.data.key === "breakPlan:2026-10-12";
     const received = await adminStream.waitFor(isBreakPlan);
-    assert.deepEqual(received.data, { type: "document", scope: shift.id, key: "breakPlan:2026-10-12", version: saved.data.version });
-    await operatorStream.waitFor(isBreakPlan);
+    assert.deepEqual(received.data, { type: "document", scope: shift.id, key: "breakPlan:2026-10-12", version: saved.data.version, by: leaderUser.id });
+  });
+
+  test("operators hear about a week's schedule only once it is shared", async () => {
+    const week = "2026-10-19";
+    const operatorStream = await open(operator);
+    const leaderStream = await open(leader);
+    await settle();
+    const first = await leader.put(`/api/documents/${shift.id}/schedule:${week}`, { value: { mon: {} }, baseVersion: 0 });
+    const isSchedule = event => event.type === "change" && event.data.key === `schedule:${week}`;
+    await leaderStream.waitFor(isSchedule);
+    await settle();
+    assert.ok(!operatorStream.events.some(isSchedule), "an unshared week stays hidden");
+
+    await leader.put(`/api/documents/${shift.id}/scheduleShared:${week}`, { value: { shared: true }, baseVersion: 0 });
+    await operatorStream.waitFor(event => event.data.key === `scheduleShared:${week}`);
+    await leader.put(`/api/documents/${shift.id}/schedule:${week}`, { value: { tue: {} }, baseVersion: first.data.version });
+    await operatorStream.waitFor(isSchedule);
   });
 
   test("changes others may not read are not sent to them", async () => {

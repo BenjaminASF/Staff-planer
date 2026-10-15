@@ -1,4 +1,5 @@
-const { canReadDocument, canUseChat } = require("./permissions");
+const { canReadDocument, canUseChat, weekRequiringShare, sharedFlagKey } = require("./permissions");
+const { readDocuments } = require("./store");
 
 const CHANNEL = "app_changes";
 const HEARTBEAT_MS = 25 * 1000;
@@ -27,10 +28,30 @@ function createRealtimeHub(pool) {
     subscriber.res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
   }
 
-  function broadcast(change) {
-    for (const subscriber of subscribers) {
-      if (canReceive(subscriber.user, change)) send(subscriber, "change", change);
+  // Operators only hear about a week's schedule once it has been shared with them.
+  // The shared flag is looked up once per change, and only when someone needs it.
+  async function deliver(change) {
+    let shared;
+    for (const subscriber of [...subscribers]) {
+      if (!subscribers.has(subscriber) || !canReceive(subscriber.user, change)) continue;
+      const week = change.type === "document" ? weekRequiringShare(subscriber.user, change.scope, change.key) : null;
+      if (week) {
+        shared ??= await readDocuments(pool, change.scope, [sharedFlagKey(week)])
+          .then(flags => flags[sharedFlagKey(week)]?.value?.shared === true)
+          .catch(error => {
+            console.warn("Realtime could not check whether the week is shared:", error.message);
+            return false;
+          });
+        if (!shared || !subscribers.has(subscriber)) continue;
+      }
+      send(subscriber, "change", change);
     }
+  }
+
+  // Changes are delivered one at a time so pages get them in order.
+  let delivery = Promise.resolve();
+  function broadcast(change) {
+    delivery = delivery.then(() => deliver(change)).catch(error => console.warn("Realtime delivery failed:", error.message));
   }
 
   function handleConnectionLost(error) {
