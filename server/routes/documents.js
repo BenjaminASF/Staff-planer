@@ -3,8 +3,9 @@ const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
   isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScope, personalScopeOwner,
-  sharedFlagKey, weekRequiringShare, canChangeProductionTarget, changesProductionTarget
+  sharedFlagKey, weekRequiringShare, canChangeProductionTarget, changesProductionTarget, evaluatesEveryone
 } = require("../permissions");
+const { isPersonScoped, evaluatedPersonIds, onlyFor, mergeFor } = require("../evaluations");
 const {
   readDocuments, writeDocument, mergeIntoPersonalList, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot,
   addAuditEvent
@@ -50,7 +51,14 @@ function documentRoutes({ pool, mailer, appUrl }) {
       });
       readable = readable.filter(key => !unshared.includes(key));
     }
-    res.json({ documents: await readDocuments(pool, scope, readable), forbidden, unshared });
+    const documents = await readDocuments(pool, scope, readable);
+    // Shift leaders see test results and assessments only for the people they evaluate.
+    const evaluations = Object.keys(documents).filter(key => documentCategory(scope, key) === "evaluation");
+    if (evaluations.length && !evaluatesEveryone(req.user)) {
+      const personIds = await evaluatedPersonIds(pool, req.user);
+      evaluations.forEach(key => { documents[key].value = onlyFor(key, documents[key].value, personIds); });
+    }
+    res.json({ documents, forbidden, unshared });
   });
 
   // Saves one document. baseVersion is the version the client last read (0 if it did not exist).
@@ -75,17 +83,26 @@ function documentRoutes({ pool, mailer, appUrl }) {
         throw new HttpError(403, "Endast skiftledare och admin kan ändra det dagliga målet.");
       }
     }
+    let { value } = req.body;
+    if (scope === "global" && isPersonScoped(key) && !evaluatesEveryone(req.user)) {
+      const [personIds, stored] = await Promise.all([evaluatedPersonIds(pool, req.user), readDocuments(pool, scope, [key])]);
+      value = mergeFor(key, stored[key]?.value, value, personIds);
+      if (!value) throw new HttpError(403, "Du kan bara testa och bedöma operatörerna i ditt eget skift.");
+    }
     const sharedWeek = sharedWeekKey(key);
     const wasShared = sharedWeek ? (await readDocuments(pool, scope, [key]))[key]?.value?.shared === true : false;
     let saved;
     try {
-      saved = await writeDocument(pool, { scope, key, value: req.body.value, baseVersion, userId: req.user.id });
+      saved = await writeDocument(pool, { scope, key, value, baseVersion, userId: req.user.id });
     } catch (error) {
       if (error.status === 413) throw new HttpError(413, "Datan är för stor för att sparas.");
       throw error;
     }
     if (!saved) {
       const current = (await readDocuments(pool, scope, [key]))[key] || null;
+      if (current && documentCategory(scope, key) === "evaluation" && !evaluatesEveryone(req.user)) {
+        current.value = onlyFor(key, current.value, await evaluatedPersonIds(pool, req.user));
+      }
       throw new HttpError(409, "Någon annan har ändrat samma sak samtidigt. Sidan uppdateras med den senaste versionen.", { current });
     }
     // Sharing a week tells the shift's operators by e-mail. Saving it again while shared does not.

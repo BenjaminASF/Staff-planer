@@ -162,15 +162,13 @@ describe("roles and permissions", () => {
     assert.equal((await leader.put(`/api/documents/${dayShift.id}/breakPlan:${WEEK}`, { value: {}, baseVersion: 0 })).status, 200);
   });
 
-  test("shift leader changes shared settings but not competence or assessments", async () => {
+  test("shift leader changes shared settings and reads evaluations, but not safety snapshots", async () => {
     assert.equal((await leader.put("/api/documents/global/appSettings", { value: { organizationName: "Fabriken" }, baseVersion: 0 })).status, 200);
     assert.equal((await leader.put("/api/documents/global/workItems", { value: [], baseVersion: 0 })).status, 200);
-    assert.equal((await leader.put("/api/documents/global/machineSkills", { value: {}, baseVersion: 0 })).status, 403);
-    assert.equal((await leader.put("/api/documents/global/assessments", { value: [], baseVersion: 0 })).status, 403);
-    assert.equal((await leader.put("/api/documents/global/testResults", { value: {}, baseVersion: 0 })).status, 403);
+    assert.equal((await leader.put("/api/documents/global/safetySnapshots", { value: [], baseVersion: 0 })).status, 403);
 
     const reads = await leader.get("/api/documents?scope=global&keys=appSettings,machineSkills,machineRestrictions,assessments,testResults,safetySnapshots");
-    assert.deepEqual(reads.data.forbidden.sort(), ["assessments", "safetySnapshots", "testResults"]);
+    assert.deepEqual(reads.data.forbidden, ["safetySnapshots"]);
   });
 
   test("operator only sees their own shift and edits only their own profile", async () => {

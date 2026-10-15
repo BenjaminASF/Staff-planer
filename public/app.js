@@ -133,9 +133,9 @@ const PAGE_ACCESS = {
   "rast.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
   "personal.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "anvandare.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
-  "testresultat.html": [ROLES.ADMIN],
-  "maskiner.html": [ROLES.ADMIN],
-  "bedomning.html": [ROLES.ADMIN],
+  "testresultat.html": [ROLES.ADMIN, ROLES.LEADER],
+  "maskiner.html": [ROLES.ADMIN, ROLES.LEADER],
+  "bedomning.html": [ROLES.ADMIN, ROLES.LEADER],
   "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
@@ -340,6 +340,9 @@ const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND
 // Machines, departments and settings are shared by all shifts.
 const canChangeSharedSettings = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
 const canChangeProductionTarget = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+// Admins test and assess everyone; shift leaders the operators in their own shift.
+const canEvaluate = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+const EVALUATED_BY_LEADERS = [ROLES.OPERATOR, ROLES.RIGHT_HAND];
 
 function getCurrentPage() {
   return location.pathname.split("/").pop() || "index.html";
@@ -1161,6 +1164,15 @@ async function getPeople() {
   return (await getAllPeople()).filter(person => person.shiftId === shiftId);
 }
 
+// The people on the test, competence and assessment pages. Shift leaders get the
+// operators in their own shift, plus its right hands and staff without a login.
+async function getEvaluatedPeople() {
+  const people = await getPeople();
+  if (isAdmin()) return people;
+  if (!isShiftLeader()) return [];
+  return people.filter(person => !person.account || EVALUATED_BY_LEADERS.includes(person.account.role));
+}
+
 async function createPerson(data) {
   const { person } = await apiRequest("POST", "/people", data);
   peopleCache = null;
@@ -1665,7 +1677,7 @@ async function renderSchedulePrioritySelector(scheduleRoot) {
 const isPlainObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
 async function getAssessments() {
-  if (!isAdmin()) return [];
+  if (!canEvaluate()) return [];
   const assessments = await getGlobalDocument("assessments", []);
   return Array.isArray(assessments) ? assessments : [];
 }
@@ -1695,9 +1707,10 @@ async function getDepartmentsFor(destination) {
   });
 }
 
-// Test results and assessments are only visible to admins.
+// Test results and assessments are visible to admins, and to shift leaders for
+// the people they evaluate (the server leaves everyone else out).
 async function getTestResults() {
-  if (!isAdmin()) return {};
+  if (!canEvaluate()) return {};
   const results = await getGlobalDocument("testResults", {});
   return isPlainObject(results) ? results : {};
 }
@@ -2481,7 +2494,7 @@ function renderHelpPage() {
       ["Bygg arbetsplatser", "Lägg till maskiner, avdelningar, utbildningar och extraplatser. De gäller alla skift och kan pausas och ordnas."],
       ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
       ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
-      ["Roller", "Admin kan allt. Skiftledare ändrar sitt eget skift och ser andra skift. Höger hand hjälper skiftledaren och sköter sitt eget skift, men ändrar inte det dagliga målet. Operatörer ser sitt schema och ändrar sin profil."],
+      ["Roller", "Admin kan allt. Skiftledare ändrar sitt eget skift och ser andra skift. Skiftledare testar och bedömer också operatörerna i sitt skift. Höger hand hjälper skiftledaren och sköter sitt eget skift, men ändrar inte det dagliga målet. Operatörer ser sitt schema och ändrar sin profil."],
       ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen."]
     ];
   root.innerHTML = `<section class="card help-intro"><div><h3>Kom igång</h3><p>All data sparas på servern, så alla ser samma schema från sina egna enheter.</p></div><a class="btn primary" href="${canChangeSharedSettings() ? "installningar.html" : "profil.html"}">${canChangeSharedSettings() ? "Öppna inställningar" : "Öppna min profil"}</a></section><div class="help-grid">${steps.map(([title, text], index) => `<article class="card"><span>${index + 1}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></article>`).join("")}</div><section class="card help-feedback"><div><h3>Förslag eller problem?</h3><p>Skicka feedback till den adress som angetts i Inställningar.</p></div>${appSettings.feedbackEmail ? `<a class="btn" href="mailto:${escapeHtml(appSettings.feedbackEmail)}?subject=Staff%20Planner%20feedback">Skicka feedback</a>` : isOperator() ? "" : '<a class="btn" href="installningar.html">Ange feedbackadress</a>'}</section>`;
@@ -3415,7 +3428,7 @@ function createAssessmentForm(person, onCancel, assessment = null) {
 async function renderAssessments() {
   const root = document.getElementById("assessmentPage");
   if (!root) return;
-  const people = await getPeople();
+  const people = await getEvaluatedPeople();
   const assessments = await getAssessments();
   if (!selectedAssessmentPersonId && people.length) selectedAssessmentPersonId = people[0].id;
   const selectedPerson = people.find(person => person.id === selectedAssessmentPersonId);
@@ -4468,12 +4481,14 @@ async function renderTestResults() {
   if (!root) return;
 
   const [allPeople, departments, results] = await Promise.all([
-    getPeople(),
+    getEvaluatedPeople(),
     getDepartmentsFor("showInTestResults"),
     getTestResults()
   ]);
   const testQuery = (document.getElementById("testSearch")?.value || "").trim().toLocaleLowerCase();
   const people = allPeople.filter(person => !testQuery || `${person.name} ${person.company || ""}`.toLocaleLowerCase().includes(testQuery));
+  // Adding or removing a department changes every shift's results, so only admins do it.
+  if (!isAdmin()) document.querySelector(".department-manager")?.remove();
   const form = document.getElementById("departmentForm");
   const input = document.getElementById("departmentNameInput");
   const message = document.getElementById("departmentMessage");
@@ -4785,7 +4800,7 @@ async function renderMachineSkills() {
   if (!root) return;
 
   const [allPeople, departments, skills, timestamps, restrictions, details] = await Promise.all([
-    getPeople(),
+    getEvaluatedPeople(),
     getDepartmentsFor("showInCompetency"),
     getMachineSkills(),
     getMachineSkillUpdatedAt(),

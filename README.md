@@ -19,7 +19,7 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 | Lägga till personal och skapa operatörskonton | Alla skift | Eget skift | Eget skift | |
 | Återställa lösenord | Alla | Operatörer i eget skift | Operatörer i eget skift | |
 | Ändra maskiner, avdelningar och inställningar (gäller alla skift) | ✓ | ✓ | | |
-| Kompetens, testresultat och bedömningar | ✓ | | | |
+| Testresultat, kompetens och bedömningar | Alla | Operatörer i eget skift | | |
 | Hantera alla profiler: namn, telefon, status, skift, användarnamn, roll och lösenord | ✓ | | | |
 | Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | Eget skift | |
 | Ta bort användare från sidan Användare | ✓ | | | |
@@ -48,7 +48,9 @@ Skiftledare kan aldrig ändra en admins uppgifter (namn, företag, telefon, stat
 
 **Att göra** är privat. Alla roller utom operatörer har en egen lista, även roller som läggs till senare, och ingen annan kan se den, inte ens admin. Med **Dela** på en uppgift väljer man exakt vilka personer som ska se just den uppgiften. De ser den under **Delade med mig**, med namnet på den som delade den, men kan inte ändra den. Resten av listan förblir privat, och delningen kan tas bort när som helst.
 
-Skiftledare och höger hand kan läsa kompetens eftersom autoschemat och schemats varningar bygger på den.
+Skiftledare genomför tester och bedömer kompetens för operatörerna i sitt eget skift, och för skiftets Höger hand och personal utan inloggning. De ser bara testresultat och bedömningar för de personerna, och kan inte ändra något för andra skift, andra skiftledare eller admin. Att lägga till eller ta bort avdelningar på sidan Testresultat är fortfarande bara för admin, eftersom det ändrar resultaten i alla skift.
+
+Skiftledare och höger hand kan läsa kompetens för alla eftersom autoschemat och schemats varningar bygger på den.
 
 Alla regler finns samlade i [`server/permissions.js`](server/permissions.js) och kontrolleras på servern. Gränssnittet döljer bara det man inte har behörighet till.
 
