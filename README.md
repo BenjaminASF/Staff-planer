@@ -30,6 +30,18 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Ta bort personal och användare, ändra roller | ✓ | | | |
 | Skapa och ta bort skift, backup och import | ✓ | | | |
 
+### Produktionsöversikt för admin
+
+Admin hamnar på **Översikt** efter inloggningen. Sidan visar alla skift sida vid sida:
+
+- Produktion idag och under månaden, jämfört med det dagliga målet.
+- Svinn under månaden, i kg och kg per 100 box.
+- Antal operatörer på plats och vem som är sjuk, på VAB, har semester eller inte är tillgänglig.
+- Hur många linjer varje skift kan köra samtidigt. Det räknas fram från de tillgängliga operatörerna och deras kompetens, med samma regler som autoschemat (avdelningens kompetens, krav på maskinen och GD-begränsning). För en linje som inte går att bemanna står det vad som saknas.
+- Kompetensen per skift jämfört med hur många som behövs för att köra alla linjer.
+
+Backup, dagens ändringar och länkar till inställningar, användare och personal ligger under **Fler inställningar**. Skiftledare och höger hand ser samma översikt som tidigare, för sitt eget skift.
+
 Operatörer ser en veckas schema och rastplan först när admin eller skiftledaren har klickat på **Dela schema** för den veckan. Delningen kan tas tillbaka med **Sluta dela**.
 
 ### Mejl när schemat delas
@@ -115,7 +127,7 @@ Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och 
 
 ### Backup
 
-Admin kan exportera och importera all data under **Inställningar** eller **Översikt**. E-postadresserna ingår. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
+Admin kan exportera och importera all data under **Inställningar** eller **Översikt → Fler inställningar**. E-postadresserna ingår. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
 
 ## Utveckling lokalt
 
