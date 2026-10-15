@@ -22,10 +22,12 @@ async function main() {
   }
 
   const port = Number(process.env.PORT) || 3000;
-  const server = createApp({ pool }).listen(port, () => console.log(`Staff Planner listening on port ${port}`));
+  const app = createApp({ pool });
+  const server = app.listen(port, () => console.log(`Staff Planner listening on port ${port}`));
 
   const shutdown = () => {
     server.close(() => pool.end().finally(() => process.exit(0)));
+    void app.locals.realtime.close();
     setTimeout(() => process.exit(0), 10_000).unref();
   };
   process.on("SIGTERM", shutdown);

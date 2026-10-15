@@ -1,0 +1,114 @@
+const { describe, test, before, after } = require("node:test");
+const assert = require("node:assert/strict");
+const { startTestServer, SETUP_CODE } = require("./helpers");
+
+const PASSWORD = "losenord123";
+
+// Opens /api/events for a client and collects the events it receives.
+async function openStream(server, client) {
+  const controller = new AbortController();
+  const response = await fetch(`${server.baseUrl}/api/events`, { headers: { cookie: client.cookie }, signal: controller.signal });
+  const events = [];
+  const waiters = [];
+  if (response.ok) {
+    void (async () => {
+      const decoder = new TextDecoder();
+      let buffer = "";
+      try {
+        for await (const chunk of response.body) {
+          buffer += decoder.decode(chunk, { stream: true });
+          let end;
+          while ((end = buffer.indexOf("\n\n")) >= 0) {
+            const block = buffer.slice(0, end);
+            buffer = buffer.slice(end + 2);
+            const type = block.match(/^event: (.*)$/m)?.[1];
+            const data = block.match(/^data: (.*)$/m)?.[1];
+            if (!type) continue;
+            events.push({ type, data: JSON.parse(data) });
+            waiters.splice(0).forEach(wake => wake());
+          }
+        }
+      } catch { /* aborted */ }
+    })();
+  }
+  const waitFor = async (predicate, timeoutMs = 3000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (!events.some(predicate)) {
+      if (Date.now() > deadline) throw new Error(`Event not received; got ${JSON.stringify(events)}`);
+      await new Promise(resolve => { waiters.push(resolve); setTimeout(resolve, 50); });
+    }
+    return events.find(predicate);
+  };
+  return { status: response.status, events, waitFor, close: () => controller.abort() };
+}
+
+const settle = () => new Promise(resolve => setTimeout(resolve, 300));
+
+describe("live updates", () => {
+  let server;
+  let admin, leader, operator, anonymous;
+  let leaderUser, shift;
+  const streams = [];
+
+  before(async () => {
+    server = await startTestServer();
+    admin = server.client();
+    leader = server.client();
+    operator = server.client();
+    anonymous = server.client();
+    await admin.post("/api/setup", { setupCode: SETUP_CODE, name: "Ada Admin", username: "ada", password: PASSWORD });
+    shift = (await admin.get("/api/shifts")).data.shifts[0];
+    await admin.post("/api/people", { name: "Lisa Ledare", shiftId: shift.id, account: { username: "lisa", password: PASSWORD, role: "shift_leader", mustChangePassword: false } });
+    await admin.post("/api/people", { name: "Olle Operatör", shiftId: shift.id, account: { username: "olle", password: PASSWORD, role: "operator", mustChangePassword: false } });
+    leaderUser = (await leader.login("lisa", PASSWORD)).user;
+    await operator.login("olle", PASSWORD);
+  });
+
+  after(async () => {
+    streams.forEach(stream => stream.close());
+    await server?.close();
+  });
+
+  const open = async client => {
+    const stream = await openStream(server, client);
+    streams.push(stream);
+    if (stream.status === 200) await stream.waitFor(event => event.type === "ready");
+    return stream;
+  };
+
+  test("only signed-in users get a stream", async () => {
+    assert.equal((await open(anonymous)).status, 401);
+  });
+
+  test("a saved document reaches everyone who may read it, with its version", async () => {
+    const adminStream = await open(admin);
+    const operatorStream = await open(operator);
+    await settle();
+    const saved = await leader.put(`/api/documents/${shift.id}/breakPlan:2026-10-12`, { value: { mon: {} }, baseVersion: 0 });
+    assert.equal(saved.status, 200);
+    const isBreakPlan = event => event.type === "change" && event.data.key === "breakPlan:2026-10-12";
+    const received = await adminStream.waitFor(isBreakPlan);
+    assert.deepEqual(received.data, { type: "document", scope: shift.id, key: "breakPlan:2026-10-12", version: saved.data.version });
+    await operatorStream.waitFor(isBreakPlan);
+  });
+
+  test("changes others may not read are not sent to them", async () => {
+    const adminStream = await open(admin);
+    const operatorStream = await open(operator);
+    await settle();
+    await leader.put(`/api/documents/user:${leaderUser.id}/todos`, { value: [], baseVersion: 0 });
+    await admin.post("/api/chat/messages", { text: "Hej" });
+    await admin.post("/api/shifts", { name: "Natt" });
+    await operatorStream.waitFor(event => event.data.type === "shifts");
+    await adminStream.waitFor(event => event.data.type === "chat");
+    assert.ok(!adminStream.events.some(event => event.data.key === "todos"), "nobody else learns about a personal list");
+    assert.ok(!operatorStream.events.some(event => event.data.type === "chat"), "chat is for admins and shift leaders");
+  });
+
+  test("staff changes are announced", async () => {
+    const leaderStream = await open(leader);
+    await settle();
+    await admin.post("/api/people", { name: "Nina Ny", shiftId: shift.id });
+    await leaderStream.waitFor(event => event.data.type === "people");
+  });
+});
