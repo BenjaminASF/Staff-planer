@@ -3465,24 +3465,158 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   });
 }
 
+const READONLY_SCHEDULE_VIEW_KEY = "staff_schedule_view";
+let readOnlyScheduleDay = "";
+let readOnlyScheduleDayWeek = "";
+
+function getReadOnlyScheduleView() {
+  try {
+    const stored = localStorage.getItem(READONLY_SCHEDULE_VIEW_KEY);
+    if (stored === "day" || stored === "week") return stored;
+  } catch { /* Private mode: use the default below. */ }
+  return window.matchMedia?.("(max-width: 640px)").matches ? "day" : "week";
+}
+
+function setReadOnlyScheduleView(view) {
+  try { localStorage.setItem(READONLY_SCHEDULE_VIEW_KEY, view); } catch { /* Private mode: keep it for this render only. */ }
+}
+
+function getTodayScheduleDay() {
+  if (!isViewingCurrentWeek()) return "";
+  const today = ALL_DAYS[new Date().getDay() - 1] || "";
+  return DAYS.includes(today) ? today : "";
+}
+
+function getReadOnlyScheduleDay() {
+  const week = getSelectedWeekKey();
+  if (readOnlyScheduleDayWeek !== week || !DAYS.includes(readOnlyScheduleDay)) {
+    readOnlyScheduleDayWeek = week;
+    readOnlyScheduleDay = getTodayScheduleDay() || DAYS[0] || "";
+  }
+  return readOnlyScheduleDay;
+}
+
+function formatScheduleName(personId, nameById, ownId, tag = "strong") {
+  const name = escapeHtml(nameById[personId] || "—");
+  if (ownId && personId === ownId) return `<${tag} class="mine-name">${name}<span class="mine-badge">Du</span></${tag}>`;
+  return `<${tag}>${name}</${tag}>`;
+}
+
+// Content of one task/day slot, shared by the week grid and the day list.
+function describeReadOnlySlot(task, day, { nameById, ownId, schedule, trainingLeaders, trainingLocations, extraPersonLocations }) {
+  const personId = schedule?.[task]?.[day] || "";
+  const lines = [];
+  const involved = [personId];
+  if (isTrainingTaskName(task)) {
+    if (personId) {
+      const leaderId = trainingLeaders?.[task]?.[day] || "";
+      involved.push(leaderId);
+      lines.push(formatScheduleName(personId, nameById, ownId));
+      lines.push(`<small>Handledare: ${leaderId ? formatScheduleName(leaderId, nameById, ownId, "span") : "—"}</small>`);
+      lines.push(`<small>Plats: ${escapeHtml(trainingLocations?.[task]?.[day] || "—")}</small>`);
+    }
+  } else {
+    const training = TASKS.filter(isTrainingTaskName)
+      .find(item => schedule?.[item]?.[day] && trainingLocations?.[item]?.[day] === task);
+    if (training) {
+      involved.push(schedule[training][day]);
+      lines.push(`<strong>Utbildning</strong><small>${formatScheduleName(schedule[training][day], nameById, ownId, "span")}</small>`);
+    } else if (personId) {
+      lines.push(formatScheduleName(personId, nameById, ownId));
+      if (isExtraPersonTask(task)) lines.push(`<small>${escapeHtml(extraPersonLocations?.[task]?.[day] || "Ingen uppgift vald")}</small>`);
+    }
+  }
+  return { html: lines.join(""), mine: Boolean(ownId) && involved.includes(ownId) };
+}
+
+function renderReadOnlyViewBar(root, view, selectedDay, rerender) {
+  const card = root.parentElement;
+  card?.querySelector(".schedule-view-bar")?.remove();
+  if (!card) return;
+  const dates = getDatesForWeek();
+  const today = getTodayScheduleDay();
+  const bar = document.createElement("div");
+  bar.className = "schedule-view-bar";
+  bar.innerHTML = `
+    <div class="schedule-view-toggle" role="group" aria-label="Visa schema för">
+      <button type="button" data-view="day" aria-pressed="${view === "day"}">Dag</button>
+      <button type="button" data-view="week" aria-pressed="${view === "week"}">Vecka</button>
+    </div>
+    <div class="schedule-day-picker${view === "day" ? "" : " hidden"}" role="group" aria-label="Välj dag">
+      ${DAYS.map((day, index) => `<button type="button" data-day="${escapeHtml(day)}" aria-pressed="${day === selectedDay}" class="${day === today ? "is-today" : ""}"><span>${escapeHtml(day.slice(0, 3))}</span><small>${escapeHtml(dates[index])}</small></button>`).join("")}
+    </div>`;
+  bar.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => {
+    setReadOnlyScheduleView(button.dataset.view);
+    rerender();
+  }));
+  bar.querySelectorAll("[data-day]").forEach(button => button.addEventListener("click", () => {
+    readOnlyScheduleDay = button.dataset.day;
+    rerender();
+  }));
+  card.insertBefore(bar, root);
+}
+
 // Read-only week for operators and for shift leaders looking at another shift.
-function renderReadOnlySchedule(root, { people, schedule, trainingLeaders, trainingLocations, extraPersonLocations }) {
+function renderReadOnlySchedule(root, data) {
+  const { people, schedule, trainingLocations } = data;
   const card = root.parentElement;
   document.getElementById("autoScheduleBtn")?.classList.add("hidden");
   document.getElementById("autoScheduleMessage")?.classList.add("hidden");
   card?.querySelectorAll(".schedule-tools, .schedule-priority-panel, .availability-summary, .unassigned-summary, .schedule-history-notice").forEach(element => element.remove());
   renderTrainingScheduleSummary(root, people, schedule, trainingLocations);
-  renderMyWeekSummary(root, { schedule, trainingLeaders, trainingLocations, extraPersonLocations });
 
-  const nameById = Object.fromEntries(people.map(person => [person.id, person.name]));
-  const ownId = currentPerson?.id || "";
-  const dates = getDatesForWeek();
+  const rerender = () => renderReadOnlySchedule(root, data);
+  const view = getReadOnlyScheduleView();
+  const selectedDay = getReadOnlyScheduleDay();
+  renderMyWeekSummary(root, data, day => {
+    readOnlyScheduleDay = day;
+    setReadOnlyScheduleView("day");
+    rerender();
+    root.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  renderReadOnlyViewBar(root, view, selectedDay, rerender);
+
+  const context = {
+    ...data,
+    nameById: Object.fromEntries(people.map(person => [person.id, person.name])),
+    ownId: currentPerson?.id || ""
+  };
   root.classList.add("schedule-readonly");
+  root.classList.toggle("schedule-day-view", view === "day");
   root.innerHTML = "";
+
+  if (view === "day") {
+    const dates = getDatesForWeek();
+    const slots = TASKS.map(task => ({ task, ...describeReadOnlySlot(task, selectedDay, context) }));
+    const mine = slots.filter(slot => slot.mine);
+    const heading = document.createElement("div");
+    heading.className = "day-view-heading";
+    heading.innerHTML = `<strong>${escapeHtml(selectedDay)}</strong><small>${escapeHtml(dates[DAYS.indexOf(selectedDay)] || "")}</small>`;
+    root.appendChild(heading);
+    if (context.ownId) {
+      const own = document.createElement("div");
+      own.className = `day-view-own${mine.length ? " is-mine" : ""}`;
+      own.innerHTML = mine.length
+        ? `<small>Du jobbar här</small><strong>${mine.map(slot => escapeHtml(slot.task)).join(", ")}</strong>`
+        : "<small>Din placering</small><strong>Ingen placering den här dagen</strong>";
+      root.appendChild(own);
+    }
+    slots.forEach(slot => {
+      const row = document.createElement("div");
+      const typeClass = isTrainingTaskName(slot.task) ? " utbildning" : isExtraPersonTask(slot.task) ? " extra-person-cell" : "";
+      row.className = `day-view-row${typeClass}${slot.mine ? " is-mine" : ""}`;
+      row.innerHTML = `<span class="day-view-task">${escapeHtml(slot.task)}</span><div class="day-view-people">${slot.html || '<span class="readonly-empty">—</span>'}</div>`;
+      root.appendChild(row);
+    });
+    return;
+  }
+
+  const dates = getDatesForWeek();
+  const today = getTodayScheduleDay();
   root.appendChild(makeCell("Uppgift", "header task"));
   DAYS.forEach((day, index) => {
     const header = document.createElement("div");
-    header.className = "cell header day-header";
+    header.className = `cell header day-header${day === today ? " is-today" : ""}`;
     header.innerHTML = `<span class="day-name-full">${day}</span><span class="day-name-short">${day.slice(0, 2)}</span><small>${dates[index]}</small>`;
     root.appendChild(header);
   });
@@ -3497,30 +3631,9 @@ function renderReadOnlySchedule(root, { people, schedule, trainingLeaders, train
     DAYS.forEach(day => {
       const cell = document.createElement("div");
       cell.className = isTrainingTask ? "cell utbildning readonly-cell" : isExtraTask ? "cell extra-person-cell readonly-cell" : "cell readonly-cell";
-      const personId = schedule?.[task]?.[day] || "";
-      const lines = [];
-      const involved = [personId];
-      if (isTrainingTask) {
-        if (personId) {
-          const leaderId = trainingLeaders?.[task]?.[day] || "";
-          involved.push(leaderId);
-          lines.push(`<strong>${escapeHtml(nameById[personId] || "—")}</strong>`);
-          lines.push(`<small>Handledare: ${escapeHtml(nameById[leaderId] || "—")}</small>`);
-          lines.push(`<small>Plats: ${escapeHtml(trainingLocations?.[task]?.[day] || "—")}</small>`);
-        }
-      } else {
-        const training = TASKS.filter(isTrainingTaskName)
-          .find(item => schedule?.[item]?.[day] && trainingLocations?.[item]?.[day] === task);
-        if (training) {
-          involved.push(schedule[training][day]);
-          lines.push(`<strong>Utbildning</strong><small>${escapeHtml(nameById[schedule[training][day]] || "")}</small>`);
-        } else if (personId) {
-          lines.push(`<strong>${escapeHtml(nameById[personId] || "—")}</strong>`);
-          if (isExtraTask) lines.push(`<small>${escapeHtml(extraPersonLocations?.[task]?.[day] || "Ingen uppgift vald")}</small>`);
-        }
-      }
-      cell.innerHTML = lines.join("") || '<span class="readonly-empty">—</span>';
-      if (ownId && involved.includes(ownId)) {
+      const slot = describeReadOnlySlot(task, day, context);
+      cell.innerHTML = slot.html || '<span class="readonly-empty">—</span>';
+      if (slot.mine) {
         cell.classList.add("is-mine");
         cell.title = "Du";
       }
@@ -3530,12 +3643,13 @@ function renderReadOnlySchedule(root, { people, schedule, trainingLeaders, train
 }
 
 // "Min vecka": where the signed-in person works each day.
-function renderMyWeekSummary(root, { schedule, trainingLeaders, trainingLocations, extraPersonLocations }) {
+function renderMyWeekSummary(root, { schedule, trainingLeaders, trainingLocations, extraPersonLocations }, onSelectDay = null) {
   const card = root.parentElement;
   card?.querySelector(".my-week-summary")?.remove();
   const ownId = currentPerson?.id;
   if (!card || !ownId || currentPerson.shiftId !== getShiftScope()) return;
   const dates = getDatesForWeek();
+  const today = getTodayScheduleDay();
   const days = DAYS.map((day, index) => {
     const task = TASKS.find(item => schedule?.[item]?.[day] === ownId);
     const leading = TASKS.filter(isTrainingTaskName).find(item => trainingLeaders?.[item]?.[day] === ownId);
@@ -3546,9 +3660,11 @@ function renderMyWeekSummary(root, { schedule, trainingLeaders, trainingLocation
     else if (leading) text = `Handledare · ${trainingLocations?.[leading]?.[day] || leading}`;
     return { day, date: dates[index], text, placed: Boolean(task || leading) };
   });
+  const tag = onSelectDay ? "button" : "article";
   const summary = document.createElement("section");
   summary.className = "my-week-summary";
-  summary.innerHTML = `<div class="my-week-heading"><strong>Min vecka</strong><span>${escapeHtml(currentPerson.name)}</span></div><div class="my-week-days">${days.map(entry => `<article class="${entry.placed ? "is-placed" : ""}"><small>${escapeHtml(entry.day)} ${escapeHtml(entry.date)}</small><strong>${escapeHtml(entry.text)}</strong></article>`).join("")}</div>`;
+  summary.innerHTML = `<div class="my-week-heading"><strong>Min vecka</strong><span>${escapeHtml(currentPerson.name)}</span></div><div class="my-week-days">${days.map(entry => `<${tag} ${tag === "button" ? `type="button" data-day="${escapeHtml(entry.day)}" ` : ""}class="${entry.placed ? "is-placed" : ""}${entry.day === today ? " is-today" : ""}"><small>${escapeHtml(entry.day)} ${escapeHtml(entry.date)}${entry.day === today ? " · Idag" : ""}</small><strong>${escapeHtml(entry.text)}</strong></${tag}>`).join("")}</div>`;
+  if (onSelectDay) summary.querySelectorAll("[data-day]").forEach(button => button.addEventListener("click", () => onSelectDay(button.dataset.day)));
   card.insertBefore(summary, card.firstChild);
 }
 
@@ -3570,6 +3686,8 @@ async function renderSchedule() {
     ]);
   const dates = getDatesForWeek();
   void updateShareScheduleButton();
+  root.classList.remove("schedule-readonly", "schedule-day-view");
+  root.parentElement?.querySelectorAll(".schedule-view-bar, .my-week-summary").forEach(element => element.remove());
 
   if (isOperator() && !(await getScheduleShare())) {
     document.getElementById("autoScheduleBtn")?.classList.add("hidden");
