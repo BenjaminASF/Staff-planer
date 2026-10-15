@@ -39,7 +39,7 @@ Mejlen skickas via [Resend](https://resend.com), eftersom Railway blockerar vanl
 
 Utan `RESEND_API_KEY` och `MAIL_FROM` skickas inga mejl, och allt annat fungerar som vanligt.
 
-Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas för hela månaden, och den 10:e i nästa månad tas förra månadens dagar bort automatiskt. Fabriksrekordet och det dagliga målet finns kvar.
+Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas för hela månaden, och den 10:e i nästa månad tas förra månadens dagar bort automatiskt. Fabriksrekordet och det dagliga målet finns kvar. När admin eller skiftledaren ändrar det dagliga målet gäller det nya målet från det valda datumet och framåt; tidigare dagar behåller sitt mål. Högst upp på sidan visas hur mycket skiftet har producerat totalt under månaden, och siffran uppdateras direkt när dagens resultat skrivs in.
 
 Skiftledare kan aldrig ändra en admins uppgifter (namn, företag, telefon, status eller inloggning), inte ens om admin hör till samma skift.
 
