@@ -5927,6 +5927,7 @@ async function renderAdminDashboard(root) {
     root.dataset.adminBound = "true";
     // "toggle" does not bubble, so it is caught on the way down.
     root.addEventListener("toggle", event => {
+      if (event.target.matches?.(".admin-shift-menu[open]")) placeShiftMenu(event.target);
       const key = event.target.dataset?.adminSection;
       if (key) event.target.open ? adminOpenSections.add(key) : adminOpenSections.delete(key);
     }, true);
@@ -5942,6 +5943,23 @@ async function renderAdminDashboard(root) {
   setupDataTools();
   bindAuditUndo(root, events);
   void renderProductionSummary();
+}
+
+// A shift card's "Fler inställningar" opens upwards, or downwards when there is more room there,
+// and never taller than the room it has. On phones it is a sheet at the bottom (see style.css).
+function placeShiftMenu(menu) {
+  const panel = menu.querySelector(".admin-menu-panel");
+  if (!panel) return;
+  menu.classList.remove("opens-down");
+  panel.style.maxHeight = "";
+  if (window.matchMedia("(max-width: 640px)").matches) return;
+  const button = menu.querySelector("summary").getBoundingClientRect();
+  const topBar = document.querySelector(".admin-topbar")?.getBoundingClientRect().bottom || 0;
+  const above = button.top - Math.max(topBar, 0) - 18;
+  const below = window.innerHeight - button.bottom - 18;
+  const down = panel.scrollHeight > above && below > above;
+  menu.classList.toggle("opens-down", down);
+  panel.style.maxHeight = `${Math.max(160, Math.min(460, down ? below : above))}px`;
 }
 
 // "Box idag" on a shift card: boxes and waste per machine, with the GD operator who ran it.
