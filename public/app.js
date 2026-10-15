@@ -5365,6 +5365,8 @@ async function renderProduction() {
 // Admin's production overview: every shift side by side.
 let adminDashboardPeriod = "today";
 let adminAuditOpen = false;
+// The date the line overview reads the schedule for; empty means today.
+let adminLinesDate = "";
 
 // Drop-down menus (<details data-popover>) close on a click outside them or on Escape.
 document.addEventListener("click", event => {
@@ -5404,15 +5406,21 @@ function getWorkplaceStaffCount(workplace) {
   return Math.max(1, Number(customWorkItems.find(item => item.name === workplace)?.staffCount) || 1);
 }
 
-// The same rules as the weekly schedule: the department skill, any skills the work item requires, and no GD restriction.
-function canStaffWorkplace(personId, workplace, skills, restrictions) {
+// What keeps a person from a work place, with the same rules as the weekly schedule:
+// the department skill, any skills the work item requires, and no GD restriction.
+function workplaceSkillGaps(personId, workplace, skills, restrictions) {
   const department = getTaskDepartment(workplace);
-  if (!department) return false;
   const personSkills = Array.isArray(skills[personId]) ? skills[personId] : [];
   const required = customWorkItems.find(item => item.name === workplace)?.requiredSkills || [];
   const personRestrictions = Array.isArray(restrictions[personId]) ? restrictions[personId] : [];
-  return personSkills.includes(department) && required.every(skill => personSkills.includes(skill))
-    && !(department === "GD" && personRestrictions.includes("GD"));
+  const gaps = [...new Set([department, ...required])].filter(skill => skill && !personSkills.includes(skill))
+    .map(skill => `saknar kompetens ${skill}`);
+  if (department === "GD" && personRestrictions.includes("GD")) gaps.push("har GD-begränsning");
+  return gaps;
+}
+
+function canStaffWorkplace(personId, workplace, skills, restrictions) {
+  return Boolean(getTaskDepartment(workplace)) && !workplaceSkillGaps(personId, workplace, skills, restrictions).length;
 }
 
 // Whether every place in the workplaces can get its own person at the same time (bipartite matching).
@@ -5444,15 +5452,104 @@ function getRunnableLines(personIds, skills, restrictions) {
     const workplaces = [...new Set(chosen.flatMap(getLineWorkplaces))];
     if (canStaffWorkplaces(workplaces, personIds, skills, restrictions)) best = chosen;
   }
-  return lines.map(lineId => {
-    const runnable = best.includes(lineId);
-    // Departments with fewer qualified people than this line and the runnable ones need together.
-    const missing = runnable ? [] : Object.entries(getDepartmentNeed([...best, lineId]))
-      .filter(([department, count]) => personIds.filter(personId => (skills[personId] || []).includes(department)
-        && !(department === "GD" && (restrictions[personId] || []).includes("GD"))).length < count)
-      .map(([department]) => department);
-    return { id: lineId, label: BREAK_LINE_LABELS[lineId] || lineId, runnable, missing };
+  return lines.map(lineId => ({ id: lineId, label: BREAK_LINE_LABELS[lineId] || lineId, runnable: best.includes(lineId) }));
+}
+
+// Rules the line overview cannot do without: the places on each line (Inställningar → Rastlinjer),
+// the competence each place needs, and one person per place, since the schedule has one per place.
+function getLineRuleGaps(lineId) {
+  const workplaces = getLineWorkplaces(lineId);
+  if (!workplaces.length) return ["Inga arbetsplatser i schemat är kopplade till linjen (Inställningar → Rastlinjer)."];
+  return workplaces.flatMap(workplace => [
+    ...getTaskDepartment(workplace) ? [] : [`${workplace}: ingen kompetens är kopplad till platsen.`],
+    ...getWorkplaceStaffCount(workplace) > 1 ? [`${workplace}: kräver ${getWorkplaceStaffCount(workplace)} personer, men schemat har en plats per arbetsplats.`] : []
+  ]);
+}
+
+// The schedule's weekday and week for a date, or no day when the date is not a work day.
+function getScheduleDayForDate(dateKey) {
+  const [year, month, dayOfMonth] = dateKey.split("-").map(Number);
+  const date = new Date(year, month - 1, dayOfMonth);
+  const day = ALL_DAYS[date.getDay() - 1];
+  date.setDate(date.getDate() - (date.getDay() + 6) % 7);
+  return { day: DAYS.includes(day) ? day : "", weekKey: formatDateKey(date) };
+}
+
+// Which lines the schedule mans on one day. A line is manned when every place on it has a scheduled
+// person who is available and has the competence. A person counts on one line only; a place that
+// belongs to several lines (Logimark on line 2 and 3) is shared by them, as set in the settings.
+function getScheduledLines({ schedule, day, peopleById, skills, restrictions, record }) {
+  const placed = workplace => (day && schedule?.[workplace]?.[day]) || "";
+  const nameOf = personId => peopleById.get(personId)?.name || "Borttagen person";
+  const lines = Object.keys(BREAK_LINE_WORKPLACES).map(lineId => {
+    const workplaces = getLineWorkplaces(lineId);
+    const ruleGaps = getLineRuleGaps(lineId);
+    const issues = ruleGaps.length ? [] : workplaces.flatMap(workplace => {
+      const personId = placed(workplace);
+      const person = peopleById.get(personId);
+      if (!personId) return [`${workplace}: ingen schemalagd`];
+      if (!person) return [`${workplace}: den schemalagda personen finns inte längre`];
+      const status = getPersonAvailability(person);
+      if (status !== "available") return [`${workplace}: ${person.name} är ${getAvailabilityLabel(status).toLocaleLowerCase("sv-SE")}`];
+      const gaps = workplaceSkillGaps(personId, workplace, skills, restrictions);
+      return gaps.length ? [`${workplace}: ${person.name} ${gaps.join(" och ")}`] : [];
+    });
+    const seen = new Map();
+    workplaces.forEach(workplace => {
+      const personId = placed(workplace);
+      if (!personId) return;
+      if (seen.has(personId)) issues.push(`${nameOf(personId)} är schemalagd på både ${seen.get(personId)} och ${workplace}`);
+      else seen.set(personId, workplace);
+    });
+    const machine = workplaces.find(workplace => appSettings.productionMachines.includes(workplace));
+    return {
+      id: lineId, label: BREAK_LINE_LABELS[lineId] || lineId, workplaces, ruleGaps, issues,
+      production: machine && record ? Number(record.machines?.[machine]?.result) > 0 : null
+    };
   });
+  // The largest set of ready lines where no person stands on two places. Earlier lines win a tie.
+  const ready = lines.filter(line => !line.ruleGaps.length && !line.issues.length);
+  const placesOf = chosen => [...new Set(chosen.flatMap(line => line.workplaces))];
+  let best = [];
+  for (let mask = 1; mask < 2 ** ready.length; mask += 1) {
+    const chosen = ready.filter((_, index) => mask & (2 ** index));
+    if (chosen.length <= best.length) continue;
+    const people = placesOf(chosen).map(placed);
+    if (new Set(people).size === people.length) best = chosen;
+  }
+  const counted = new Map(placesOf(best).map(workplace => [placed(workplace), workplace]));
+  return lines.map(line => {
+    const staffed = best.includes(line);
+    if (!staffed && ready.includes(line)) line.workplaces.forEach(workplace => {
+      const other = counted.get(placed(workplace));
+      if (other && other !== workplace) {
+        const otherLine = best.find(item => item.workplaces.includes(other));
+        line.issues.push(`${workplace}: ${nameOf(placed(workplace))} räknas redan på ${otherLine.label} (${other})`);
+      }
+    });
+    return { ...line, staffed };
+  });
+}
+
+// Whether the shift's available people and their competence are enough for every line at once, and if not, what is missing.
+function getLineCapacity(available, skills, restrictions) {
+  const lineIds = Object.keys(BREAK_LINE_WORKPLACES);
+  const ruleGaps = lineIds.some(lineId => getLineRuleGaps(lineId).length);
+  if (ruleGaps || !lineIds.length) return { canRunAll: null, runnable: 0, reasons: [] };
+  const personIds = available.map(person => person.id);
+  const runnable = getRunnableLines(personIds, skills, restrictions).filter(line => line.runnable).length;
+  if (runnable === lineIds.length) return { canRunAll: true, runnable, reasons: [] };
+  const need = getDepartmentNeed(lineIds);
+  const places = Object.values(need).reduce((sum, count) => sum + count, 0);
+  const reasons = [`Tillgänglig personal räcker till ${runnable} av ${lineIds.length} linjer samtidigt.`];
+  if (personIds.length < places) reasons.push(`Personal: ${places} behövs, ${personIds.length} tillgängliga.`);
+  Object.entries(need).forEach(([department, count]) => {
+    const qualified = personIds.filter(personId => (skills[personId] || []).includes(department)
+      && !(department === "GD" && (restrictions[personId] || []).includes("GD"))).length;
+    if (qualified < count) reasons.push(`Kompetens ${department}: ${count} behövs, ${qualified} tillgängliga har den.`);
+  });
+  if (reasons.length === 1) reasons.push("Det finns nog med behöriga, men samma personer behövs på flera platser samtidigt.");
+  return { canRunAll: false, runnable, reasons };
 }
 
 // How many people of each department the lines need at the same time.
@@ -5479,10 +5576,14 @@ function bindAuditUndo(root, events) {
 async function getAdminDashboardData() {
   const today = formatDateKey(new Date());
   const monthStart = `${today.slice(0, 8)}01`;
-  const [allPeople, departments, skills, restrictions, settings, events, recordsByShift] = await Promise.all([
+  const linesDate = adminLinesDate || today;
+  const { day: linesDay, weekKey } = getScheduleDayForDate(linesDate);
+  const [allPeople, departments, skills, restrictions, settings, events, recordsByShift, schedules] = await Promise.all([
     getAllPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getMachineRestrictions(),
-    getProductionSettings(), getAuditLog(), Promise.all(shifts.map(shift => getProductionRecords(shift.id)))
+    getProductionSettings(), getAuditLog(), Promise.all(shifts.map(shift => getProductionRecords(shift.id))),
+    Promise.all(shifts.map(shift => getDocument(shift.id, `schedule:${weekKey}`, null)))
   ]);
+  const peopleById = new Map(allPeople.map(person => [person.id, person]));
   const need = getDepartmentNeed(Object.keys(BREAK_LINE_WORKPLACES));
   const shiftData = shifts.map((shift, index) => {
     const staff = allPeople.filter(person => person.shiftId === shift.id);
@@ -5509,25 +5610,74 @@ async function getAdminDashboardData() {
         available: available.filter(person => (skills[person.id] || []).includes(department)).length,
         total: operators.filter(person => (skills[person.id] || []).includes(department)).length
       })),
-      lines: getRunnableLines(available.map(person => person.id), skills, restrictions)
+      hasSchedule: Boolean(linesDay) && TASKS.some(task => schedules[index]?.[task]?.[linesDay]),
+      lines: getScheduledLines({
+        schedule: schedules[index], day: linesDay, peopleById, skills, restrictions,
+        record: recordsByShift[index][linesDate] || null
+      }),
+      capacity: getLineCapacity(available, skills, restrictions)
     };
   });
-  return { today, settings, events, shiftData, departments, need };
+  return { today, linesDate, linesDay, settings, events, shiftData, departments, need };
 }
 
 const shiftColorClass = shift => shift.color ? ` shift-color-${shift.color}` : "";
 const competenceState = (available, need) => !need ? "" : available > need ? "good" : available === need ? "warn" : "bad";
 
-// One short line on why some lines cannot run.
-function lineShortageText(availableCount, missingLines) {
-  if (!availableCount) return "Ingen operatör på plats.";
-  const departments = [...new Set(missingLines.flatMap(line => line.missing))];
-  return departments.length ? `Saknar personal för ${departments.join(", ")}.` : "För få behöriga för att köra alla linjer samtidigt.";
+const formatLinesDate = (dateKey, today) => dateKey === today ? "idag"
+  : new Date(`${dateKey}T12:00:00`).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "numeric" });
+
+// The lines the schedule mans on the chosen date, and whether the shift could man them all.
+function adminLinesHtml(data, { today, linesDate, linesDay }) {
+  const { lines, capacity, hasSchedule, available } = data;
+  if (!lines.length) return "";
+  const staffed = lines.filter(line => line.staffed).length;
+  const lineText = line => line.ruleGaps.length ? "Regel saknas" : line.staffed ? "Bemannad" : "Ej bemannad";
+  const productionText = line => line.production === null ? "" : line.production ? "I produktion" : "Ingen produktion rapporterad";
+  const lineTitle = line => [lineText(line), productionText(line), ...line.ruleGaps, ...line.issues].filter(Boolean).join("\n");
+  const problems = lines.filter(line => !line.staffed && (line.issues.length || line.ruleGaps.length));
+  const answer = capacity.canRunAll === null ? ["warn", "Kan inte avgöras"] : capacity.canRunAll ? ["good", "Ja"] : ["bad", "Nej"];
+  const notes = [
+    capacity.canRunAll === null ? "Regler för linjerna saknas, se Regler för linjebemanning nedan." : "",
+    linesDay && capacity.canRunAll && staffed < lines.length ? `Personalen räcker till alla ${lines.length} linjer, men schemat bemannar ${staffed}.` : "",
+    ...capacity.reasons
+  ].filter(Boolean);
+  return `<div class="admin-lines-block">
+      <div class="admin-label">Linjer enligt schemat ${escapeHtml(formatLinesDate(linesDate, today))}</div>
+      ${!linesDay ? '<p class="admin-muted">Ingen arbetsdag enligt inställningarna.</p>' : !hasSchedule ? '<p class="admin-reason">Inget schema är lagt för dagen.</p>' : ""}
+      <div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.ruleGaps.length ? "rule" : line.staffed ? "ok" : "no"}" title="${escapeHtml(lineTitle(line))}">${escapeHtml(line.label)}<small>${lineText(line)}</small>${productionText(line) ? `<span class="admin-line-production${line.production ? " on" : ""}">${line.production ? "I produktion" : "Ej i produktion"}</span>` : ""}</div>`).join("")}</div>
+      ${hasSchedule && problems.length ? `<ul class="admin-line-issues">${problems.map(line => `<li><strong>${escapeHtml(line.label)}:</strong> ${escapeHtml([...line.ruleGaps, ...line.issues].join(" · "))}</li>`).join("")}</ul>` : ""}
+      <div class="admin-capacity">
+        <div class="admin-row"><span>Kapacitet</span><strong>${staffed} av ${lines.length} linjer bemannade</strong></div>
+        <div class="admin-row"><span>Kan köra alla ${lines.length} linjer samtidigt</span><span class="admin-pill ${answer[0]}" title="Räknat på skiftets ${available.length} tillgängliga operatörer och deras kompetens">${answer[1]}</span></div>
+        ${notes.length ? `<ul class="admin-capacity-reasons">${notes.map(note => `<li>${escapeHtml(note)}</li>`).join("")}</ul>` : ""}
+      </div>
+    </div>`;
 }
 
-function adminShiftCardHtml(data) {
+// The rules the line overview counts with, and the ones that are missing.
+function adminLineRulesHtml() {
+  const lineIds = Object.keys(BREAK_LINE_WORKPLACES);
+  const gaps = lineIds.flatMap(lineId => getLineRuleGaps(lineId).map(gap => `${BREAK_LINE_LABELS[lineId] || lineId}: ${gap}`));
+  const shared = [...new Set(lineIds.flatMap(getLineWorkplaces))]
+    .filter(workplace => lineIds.filter(lineId => getLineWorkplaces(lineId).includes(workplace)).length > 1);
+  const placeHtml = workplace => {
+    const department = getTaskDepartment(workplace);
+    const required = customWorkItems.find(item => item.name === workplace)?.requiredSkills || [];
+    const skillsText = department ? [...new Set([department, ...required])].join(" + ") : "kompetens saknas";
+    return `<li><strong>${escapeHtml(workplace)}</strong> · ${getWorkplaceStaffCount(workplace)} person · ${escapeHtml(skillsText)}</li>`;
+  };
+  return `<details class="card admin-rules"${gaps.length ? " open" : ""}>
+    <summary><h3>Regler för linjebemanning</h3>${gaps.length ? `<span class="admin-pill warn">${gaps.length} ${gaps.length === 1 ? "regel behöver" : "regler behöver"} definieras</span>` : '<span class="admin-muted">Från inställningar och kompetens</span>'}</summary>
+    ${gaps.length ? `<div class="admin-rules-gaps"><strong>Behöver definieras innan linjerna kan räknas:</strong><ul>${gaps.map(gap => `<li>${escapeHtml(gap)}</li>`).join("")}</ul></div>` : ""}
+    <p class="admin-sub">En linje är bemannad när varje plats på linjen har en schemalagd operatör som är Tillgänglig och har platsens kompetens, utan GD-begränsning på GD. En operatör räknas bara på en linje. I produktion betyder att produktion är rapporterad för linjens maskin den dagen. Om skiftet kan köra alla linjer räknas fram från alla tillgängliga operatörer och deras kompetens.${shared.length ? ` ${shared.join(", ")} hör till flera linjer och delas av dem.` : ""} Platserna per linje ändras under Inställningar → Rastlinjer, och kompetenskraven under Kompetens.</p>
+    <div class="admin-rules-lines">${lineIds.map(lineId => `<div><h4>${escapeHtml(BREAK_LINE_LABELS[lineId] || lineId)}</h4><ul>${getLineWorkplaces(lineId).map(placeHtml).join("") || "<li>Inga platser</li>"}</ul></div>`).join("")}</div>
+  </details>`;
+}
+
+function adminShiftCardHtml(data, context) {
   const { shift, leaders, operators, available, absent, lines } = data;
-  const runnable = lines.filter(line => line.runnable).length;
+  const runnable = lines.filter(line => line.staffed).length;
   const lineState = !lines.length ? "" : runnable === lines.length ? "good" : runnable > 0 ? "warn" : "bad";
   const isToday = adminDashboardPeriod === "today";
   const produced = isToday ? data.today : data.month;
@@ -5536,11 +5686,10 @@ function adminShiftCardHtml(data) {
   const notReported = isToday && !data.reportedToday;
   const absentOperators = operators.length - available.length;
   const maxCompetence = Math.max(1, ...data.competence.map(item => item.total));
-  const missing = lines.filter(line => !line.runnable);
   return `<article class="card admin-shift-card${shiftColorClass(shift)}">
     <div class="admin-shift-head">
       <div><h3>${shiftColorDot(shift.id)}Skift ${escapeHtml(shift.name)}</h3><small>${leaders.length ? `Skiftledare: ${leaders.map(person => escapeHtml(person.name)).join(", ")}` : "Ingen skiftledare"}</small></div>
-      ${lines.length ? `<span class="admin-pill ${lineState}">${runnable} av ${lines.length} linjer</span>` : ""}
+      ${lines.length ? `<span class="admin-pill ${lineState}" title="Linjer bemannade enligt schemat">${runnable} av ${lines.length} linjer</span>` : ""}
     </div>
     <div class="admin-shift-figures">
       <div><span>${isToday ? "Idag" : "Månaden"}</span><strong>${notReported ? "–" : formatNumber(produced)}</strong><small>box</small></div>
@@ -5551,11 +5700,7 @@ function adminShiftCardHtml(data) {
       <div class="admin-row"><span>${isToday ? `Mot dagens mål ${formatNumber(target)} box` : `Mot målet för ${data.days.length} rapporterade dagar`}</span><strong>${notReported ? "Ej rapporterat" : target ? `${Math.round(progress * 100)} %` : "–"}</strong></div>
       <div class="admin-bar"><i style="width:${Math.min(100, progress * 100)}%"></i></div>
     </div>
-    ${lines.length ? `<div>
-      <div class="admin-label">Linjer som kan köras idag</div>
-      <div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.runnable ? "ok" : "no"}" title="${escapeHtml(line.runnable ? "Kan bemannas" : line.missing.length ? `Saknar personal för ${line.missing.join(", ")}` : "För få behöriga samtidigt")}">${escapeHtml(line.label)}<small>${line.runnable ? "Bemannad" : "Saknas"}</small></div>`).join("")}</div>
-      ${missing.length ? `<p class="admin-reason">${escapeHtml(lineShortageText(available.length, missing))}</p>` : ""}
-    </div>` : ""}
+    ${adminLinesHtml(data, context)}
     <div>
       <div class="admin-label">Kompetens, tillgängliga idag</div>
       <div class="admin-competence">${data.competence.map(item => `<span>${escapeHtml(item.department)}</span><div class="admin-bar"><i style="width:${item.available / maxCompetence * 100}%"></i></div><strong>${item.available}<small> / ${item.total}</small></strong>`).join("") || '<span class="admin-muted">Inga avdelningar</span>'}</div>
@@ -5658,6 +5803,7 @@ async function renderAdminDashboard(root) {
   const moreLink = (href, label, detail = "") => `<a href="${href}">${label}${detail ? `<small>${detail}</small>` : ""}</a>`;
   root.innerHTML = `
     <div class="admin-toolbar">
+      <label class="admin-date">Linjer för <input type="date" id="adminLinesDate" value="${escapeHtml(data.linesDate)}" required></label>
       <div class="admin-period" role="group" aria-label="Period för skiftens produktion">
         <button type="button" data-period="today" aria-pressed="${adminDashboardPeriod === "today"}">Idag</button>
         <button type="button" data-period="month" aria-pressed="${adminDashboardPeriod === "month"}">Månaden</button>
@@ -5687,7 +5833,8 @@ async function renderAdminDashboard(root) {
       <article class="card"><span>Svinn i ${escapeHtml(month)}</span><strong>${formatNumber(waste, 1)} <small>kg</small></strong><p>${waste ? "Alla skift tillsammans" : "Inget svinn registrerat"}</p></article>
       <article class="card"><span>Bemanning idag</span><strong>${available} <small>/ ${operators} operatörer på plats</small></strong><p>${absent.length ? `<b class="admin-bad">${absent.length} frånvarande</b> · ${absentCounts.join(", ")}` : "Alla är på plats"}</p></article>
     </section>
-    <section class="admin-shifts" aria-label="Skiften">${shiftData.map(adminShiftCardHtml).join("") || '<div class="card empty-state">Inga skift finns ännu. Skapa skift under Inställningar.</div>'}</section>
+    <section class="admin-shifts" aria-label="Skiften">${shiftData.map(item => adminShiftCardHtml(item, data)).join("") || '<div class="card empty-state">Inga skift finns ännu. Skapa skift under Inställningar.</div>'}</section>
+    <section id="adminLineRules">${adminLineRulesHtml()}</section>
     <section class="admin-charts">
       <div class="card"><h3>Produktion per dag, ${escapeHtml(month)}</h3><p class="admin-sub">Box per skift och dag.${currentTargets.length === 1 && currentTargets[0] ? ` Streckad linje = dagligt mål ${formatNumber(currentTargets[0])} box.` : currentTargets.length > 1 ? " Streckade linjer = varje skifts dagliga mål." : ""}</p>
         <div class="admin-legend">${shiftData.map(item => `<span>${shiftColorDot(item.shift.id)}${escapeHtml(item.shift.name)} · ${formatNumber(item.month)} box</span>`).join("")}</div>
@@ -5703,8 +5850,16 @@ async function renderAdminDashboard(root) {
   root.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => {
     adminDashboardPeriod = button.dataset.period;
     root.querySelectorAll("[data-period]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
-    root.querySelector(".admin-shifts").innerHTML = shiftData.map(adminShiftCardHtml).join("");
+    root.querySelector(".admin-shifts").innerHTML = data.shiftData.map(item => adminShiftCardHtml(item, data)).join("");
   }));
+  root.querySelector("#adminLinesDate").addEventListener("change", async event => {
+    if (!event.target.value) return;
+    adminLinesDate = event.target.value === today ? "" : event.target.value;
+    const next = await getAdminDashboardData();
+    if (next.linesDate !== event.target.value) return;
+    Object.assign(data, next);
+    root.querySelector(".admin-shifts").innerHTML = next.shiftData.map(item => adminShiftCardHtml(item, next)).join("");
+  });
   const more = root.querySelector(".admin-more");
   root.querySelector("#adminAuditToggle").addEventListener("click", () => {
     adminAuditOpen = !adminAuditOpen;

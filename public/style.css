@@ -6473,6 +6473,25 @@ a.notification-item:hover { background: color-mix(in srgb, var(--primary) 8%, tr
 .admin-line.ok { background: var(--ok-soft); color: var(--ok); }
 .admin-line.no { background: var(--bad-soft); color: var(--bad); }
 .admin-reason { margin: 8px 0 0; color: var(--bad); font-size: 12px; line-height: 1.5; }
+.admin-line.rule { background: var(--warn-soft); color: var(--warn); }
+.admin-line-production { display: block; margin-top: 5px; padding-top: 4px; border-top: 1px solid currentColor; border-top-color: color-mix(in srgb, currentColor 25%, transparent); color: var(--muted); font-size: 10px; font-weight: 600; }
+.admin-line-production.on { color: inherit; }
+.admin-line-production.on::before { content: "● "; }
+.admin-lines-block .admin-reason, .admin-lines-block > .admin-muted { margin: 0 0 8px; }
+.admin-line-issues, .admin-capacity-reasons, .admin-rules ul { margin: 8px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.5; }
+.admin-line-issues { color: var(--bad); }
+.admin-capacity { margin-top: 12px; padding: 10px; border-radius: 10px; background: var(--track); background: color-mix(in srgb, var(--track) 60%, transparent); }
+.admin-capacity .admin-row:last-of-type { margin-bottom: 0; }
+.admin-capacity-reasons { color: var(--muted); }
+.admin-date { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; color: var(--muted); font-size: 13px; font-weight: 650; }
+.admin-date input { min-height: 40px; padding: 0 10px; border: 1px solid var(--border); border-radius: 11px; background: var(--card-bg); color: var(--text); font: inherit; }
+.admin-rules > summary { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; cursor: pointer; }
+.admin-rules > summary h3 { margin: 0 !important; }
+.admin-rules[open] > summary { margin-bottom: 12px; }
+.admin-rules-gaps { margin-bottom: 14px; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+.admin-rules-lines { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.admin-rules-lines h4 { margin: 0; font-size: 13px; }
+.admin-rules-lines ul { color: var(--muted); }
 .admin-competence { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 7px 10px; font-size: 13px; }
 .admin-competence .admin-bar { height: 6px; }
 .admin-competence strong { font-variant-numeric: tabular-nums; }
