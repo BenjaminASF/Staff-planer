@@ -6607,7 +6607,17 @@ body.admin-topnav .main { width: 100%; max-width: 1440px; margin: 0 auto; paddin
 .admin-shift-actions > .btn { flex: 1 1 auto; }
 .admin-shift-menu { position: relative; flex: 1 1 auto; }
 .admin-shift-menu > summary { justify-content: center; width: 100%; }
-.admin-shift-menu .admin-menu-panel { right: 0; bottom: calc(100% + 6px); top: auto; }
+.admin-shift-menu .admin-menu-panel { right: 0; bottom: calc(100% + 6px); top: auto; max-height: min(460px, calc(100vh - 120px)); max-height: min(460px, calc(100dvh - 120px)); overflow-y: auto; overscroll-behavior: contain; }
+/* On phones the shift menu is a sheet at the bottom of the screen, so every link is in view. */
+@media (max-width: 640px) {
+  /* The card's blur and the page's finished rise animation would frame the fixed sheet; drop them while it is open. */
+  .admin-shift-card:has(.admin-shift-menu[open]) { -webkit-backdrop-filter: none !important; backdrop-filter: none !important; }
+  #dashboardPage:has(.admin-shift-menu[open]) { animation: none; }
+  body:has(.admin-shift-menu[open]) #chatWidget { display: none; }
+  .admin-shift-menu[open]::before { content: ""; position: fixed; inset: 0; z-index: 299; background: rgba(10, 16, 30, .4); }
+  .admin-shift-menu .admin-menu-panel { position: fixed; left: 12px; right: 12px; bottom: max(12px, env(safe-area-inset-bottom, 0px)); top: auto; z-index: 300; width: auto; max-height: 75vh; max-height: 75dvh; padding: 10px; border-radius: 18px; }
+  .admin-shift-menu .admin-menu-panel a { padding: 12px; font-size: 15px; }
+}
 .admin-shift-menu h4 { display: flex; align-items: center; }
 
 /* Read-only schedule viewer */
