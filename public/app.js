@@ -3490,20 +3490,20 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   });
 }
 
-const READONLY_SCHEDULE_VIEW_KEY = "staff_schedule_view";
-let readOnlyScheduleDay = "";
-let readOnlyScheduleDayWeek = "";
+const SCHEDULE_VIEW_KEY = "staff_schedule_view";
+let selectedScheduleDay = "";
+let selectedScheduleDayWeek = "";
 
-function getReadOnlyScheduleView() {
+function getScheduleView() {
   try {
-    const stored = localStorage.getItem(READONLY_SCHEDULE_VIEW_KEY);
+    const stored = localStorage.getItem(SCHEDULE_VIEW_KEY);
     if (stored === "day" || stored === "week") return stored;
   } catch { /* Private mode: use the default below. */ }
   return window.matchMedia?.("(max-width: 640px)").matches ? "day" : "week";
 }
 
-function setReadOnlyScheduleView(view) {
-  try { localStorage.setItem(READONLY_SCHEDULE_VIEW_KEY, view); } catch { /* Private mode: keep it for this render only. */ }
+function setScheduleView(view) {
+  try { localStorage.setItem(SCHEDULE_VIEW_KEY, view); } catch { /* Private mode: keep it for this render only. */ }
 }
 
 function getTodayScheduleDay() {
@@ -3512,13 +3512,13 @@ function getTodayScheduleDay() {
   return DAYS.includes(today) ? today : "";
 }
 
-function getReadOnlyScheduleDay() {
+function getSelectedScheduleDay() {
   const week = getSelectedWeekKey();
-  if (readOnlyScheduleDayWeek !== week || !DAYS.includes(readOnlyScheduleDay)) {
-    readOnlyScheduleDayWeek = week;
-    readOnlyScheduleDay = getTodayScheduleDay() || DAYS[0] || "";
+  if (selectedScheduleDayWeek !== week || !DAYS.includes(selectedScheduleDay)) {
+    selectedScheduleDayWeek = week;
+    selectedScheduleDay = getTodayScheduleDay() || DAYS[0] || "";
   }
-  return readOnlyScheduleDay;
+  return selectedScheduleDay;
 }
 
 function formatScheduleName(personId, nameById, ownId, tag = "strong") {
@@ -3554,7 +3554,7 @@ function describeReadOnlySlot(task, day, { nameById, ownId, schedule, trainingLe
   return { html: lines.join(""), mine: Boolean(ownId) && involved.includes(ownId) };
 }
 
-function renderReadOnlyViewBar(root, view, selectedDay, rerender) {
+function renderScheduleViewBar(root, view, selectedDay, rerender) {
   const card = root.parentElement;
   card?.querySelector(".schedule-view-bar")?.remove();
   if (!card) return;
@@ -3571,11 +3571,11 @@ function renderReadOnlyViewBar(root, view, selectedDay, rerender) {
       ${DAYS.map((day, index) => `<button type="button" data-day="${escapeHtml(day)}" aria-pressed="${day === selectedDay}" class="${day === today ? "is-today" : ""}"><span>${escapeHtml(day.slice(0, 3))}</span><small>${escapeHtml(dates[index])}</small></button>`).join("")}
     </div>`;
   bar.querySelectorAll("[data-view]").forEach(button => button.addEventListener("click", () => {
-    setReadOnlyScheduleView(button.dataset.view);
+    setScheduleView(button.dataset.view);
     rerender();
   }));
   bar.querySelectorAll("[data-day]").forEach(button => button.addEventListener("click", () => {
-    readOnlyScheduleDay = button.dataset.day;
+    selectedScheduleDay = button.dataset.day;
     rerender();
   }));
   card.insertBefore(bar, root);
@@ -3591,15 +3591,15 @@ function renderReadOnlySchedule(root, data) {
   renderTrainingScheduleSummary(root, people, schedule, trainingLocations);
 
   const rerender = () => renderReadOnlySchedule(root, data);
-  const view = getReadOnlyScheduleView();
-  const selectedDay = getReadOnlyScheduleDay();
+  const view = getScheduleView();
+  const selectedDay = getSelectedScheduleDay();
   renderMyWeekSummary(root, data, day => {
-    readOnlyScheduleDay = day;
-    setReadOnlyScheduleView("day");
+    selectedScheduleDay = day;
+    setScheduleView("day");
     rerender();
     root.scrollIntoView({ behavior: "smooth", block: "start" });
   });
-  renderReadOnlyViewBar(root, view, selectedDay, rerender);
+  renderScheduleViewBar(root, view, selectedDay, rerender);
 
   const context = {
     ...data,
@@ -3711,7 +3711,7 @@ async function renderSchedule() {
     ]);
   const dates = getDatesForWeek();
   void updateShareScheduleButton();
-  root.classList.remove("schedule-readonly", "schedule-day-view");
+  root.classList.remove("schedule-readonly", "schedule-day-view", "schedule-edit-day");
   root.parentElement?.querySelectorAll(".schedule-view-bar, .my-week-summary").forEach(element => element.remove());
 
   if (isOperator() && !(await getScheduleShare())) {
@@ -3730,12 +3730,21 @@ async function renderSchedule() {
   renderUnassignedPeopleSummary(root, people, schedule, trainingLeaders);
   renderTrainingScheduleSummary(root, people, schedule, trainingLocations);
   await renderSchedulePrioritySelector(root);
+
+  const view = getScheduleView();
+  const selectedDay = getSelectedScheduleDay();
+  const visibleDays = view === "day" ? [selectedDay] : DAYS;
+  const today = getTodayScheduleDay();
+  renderScheduleViewBar(root, view, selectedDay, () => void renderSchedule());
+  root.style.setProperty("--schedule-day-count", String(visibleDays.length));
+  root.classList.toggle("schedule-edit-day", view === "day");
   root.innerHTML = "";
   root.appendChild(makeCell("Uppgift", "header task"));
 
-  DAYS.forEach((day, index) => {
+  visibleDays.forEach(day => {
+    const index = DAYS.indexOf(day);
     const header = document.createElement("div");
-    header.className = "cell header day-header";
+    header.className = `cell header day-header${day === today ? " is-today" : ""}`;
     header.innerHTML = `
       <span class="day-name-full">${day}</span>
       <span class="day-name-short">${day.slice(0, 2)}</span>
@@ -3762,7 +3771,7 @@ async function renderSchedule() {
     taskCell.innerHTML = `<span>${escapeHtml(task)}</span>${requiredStaff > 1 ? `<small class="required-staff-badge">${requiredStaff} personer behövs</small>` : ""}`;
     root.appendChild(taskCell);
 
-    DAYS.forEach(day => {
+    visibleDays.forEach(day => {
       const cell = document.createElement("div");
       const select = document.createElement("select");
       const emptyOption = document.createElement("option");
@@ -4989,7 +4998,7 @@ async function renderProduction() {
   const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
   root.innerHTML = `
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
-    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label>Dagligt mål<input id="productionTarget" type="number" min="0" value="${target}" title="Gäller från valt datum och framåt. Tidigare dagar behåller sitt mål." /><small>Gäller från valt datum och framåt</small></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
+    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Dagligt mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="Gäller från valt datum och framåt. Tidigare dagar behåller sitt mål." /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
     <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small><button id="editFactoryRecordBtn" type="button">Ändra manuellt</button></article></div>
     <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select></label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
