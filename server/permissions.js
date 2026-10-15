@@ -150,28 +150,40 @@ function weekRequiringShare(user, scope, key) {
   return key.slice(key.indexOf(":") + 1);
 }
 
-// The daily production target lives in "productionSettings" next to the factory
+// The daily production targets live in "productionSettings" next to the factory
 // record. Right hands save that document when a day beats the record, but only
-// admins and shift leaders may change the target in it.
+// admins and shift leaders may change the targets in it.
 const DEFAULT_DAILY_TARGET = 160;
 
 function canChangeProductionTarget(user) {
   return isAdminOrLeader(user);
 }
 
-function productionTargets(settings) {
-  const changes = settings?.targetChanges && typeof settings.targetChanges === "object" ? settings.targetChanges : {};
-  return JSON.stringify({
-    dailyTarget: Number(settings?.dailyTarget) || DEFAULT_DAILY_TARGET,
-    targetChanges: Object.entries(changes)
-      .filter(([date, target]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Number(target)) && Number(target) >= 0)
-      .map(([date, target]) => [date, Number(target)])
-      .sort(([first], [second]) => first.localeCompare(second))
-  });
+const isPlainObject = value => Boolean(value) && typeof value === "object" && !Array.isArray(value);
+
+function targetChangeList(changes) {
+  return Object.entries(isPlainObject(changes) ? changes : {})
+    .filter(([date, target]) => /^\d{4}-\d{2}-\d{2}$/.test(date) && Number.isFinite(Number(target)) && Number(target) >= 0)
+    .map(([date, target]) => [date, Number(target)])
+    .sort(([first], [second]) => first.localeCompare(second));
 }
 
-function changesProductionTarget(before, after) {
-  return productionTargets(before) !== productionTargets(after);
+// Each shift has its own targets in shiftTargets; targetChanges and dailyTarget are the
+// history from when all shifts shared one target.
+const sharedTargets = settings => JSON.stringify([
+  Number(settings?.dailyTarget) || DEFAULT_DAILY_TARGET, targetChangeList(settings?.targetChanges)
+]);
+const shiftTargets = (settings, shiftId) =>
+  JSON.stringify(targetChangeList(isPlainObject(settings?.shiftTargets) ? settings.shiftTargets[shiftId] : null));
+
+// Whether the user may save "after" over "before": only admins change the shared history,
+// and a shift leader changes only the targets of their own shift.
+function mayChangeProductionTargets(user, before, after) {
+  if (isAdmin(user)) return true;
+  if (sharedTargets(before) !== sharedTargets(after)) return false;
+  const shiftIds = new Set([before, after].flatMap(settings => Object.keys(isPlainObject(settings?.shiftTargets) ? settings.shiftTargets : {})));
+  return [...shiftIds].every(shiftId => shiftTargets(before, shiftId) === shiftTargets(after, shiftId)
+    || (canChangeProductionTarget(user) && canEditShift(user, shiftId)));
 }
 
 // Audit events belong to global or a shift; personal lists have no history.
@@ -291,7 +303,7 @@ module.exports = {
   EVALUATED_BY_LEADERS,
   evaluatesEveryone,
   canEvaluatePerson,
-  changesProductionTarget,
+  mayChangeProductionTargets,
   documentCategory,
   sharedFlagKey,
   weekRequiringShare,

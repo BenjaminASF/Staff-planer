@@ -91,11 +91,37 @@ describe("right hand", () => {
     const recordSaved = await rightHand.put("/api/documents/global/productionSettings", { value: settings, baseVersion: 0 });
     assert.equal(recordSaved.status, 200, "a new factory record is saved");
 
-    const newTarget = { ...settings, targetChanges: { "2026-10-15": 180 } };
-    const refused = await rightHand.put("/api/documents/global/productionSettings", { value: newTarget, baseVersion: recordSaved.data.version });
+    const sharedTarget = { ...settings, targetChanges: { "2026-10-15": 180 } };
+    const refused = await rightHand.put("/api/documents/global/productionSettings", { value: sharedTarget, baseVersion: recordSaved.data.version });
     assert.equal(refused.status, 403);
     assert.equal((await rightHand.put("/api/documents/global/productionSettings", { value: { ...settings, dailyTarget: 150 }, baseVersion: recordSaved.data.version })).status, 403);
-    assert.equal((await leader.put("/api/documents/global/productionSettings", { value: newTarget, baseVersion: recordSaved.data.version })).status, 200);
+    const shiftTarget = { ...settings, shiftTargets: { [dayShift.id]: { "2026-10-15": 170 } } };
+    assert.equal((await rightHand.put("/api/documents/global/productionSettings", { value: shiftTarget, baseVersion: recordSaved.data.version })).status, 403,
+      "a shift's own target is also only for shift leaders and admins");
+    const leaderSaved = await leader.put("/api/documents/global/productionSettings", { value: shiftTarget, baseVersion: recordSaved.data.version });
+    assert.equal(leaderSaved.status, 200, "a shift leader sets their own shift's target");
+  });
+
+  test("each shift has its own daily target", async () => {
+    const read = async () => (await admin.get("/api/documents?scope=global&keys=productionSettings")).data.documents.productionSettings;
+    const current = await read();
+    const save = (client, value) => client.put("/api/documents/global/productionSettings", { value, baseVersion: current.version });
+    const withShiftTarget = (shiftId, changes) => ({ ...current.value, shiftTargets: { ...current.value.shiftTargets, [shiftId]: changes } });
+
+    assert.equal((await save(leader, withShiftTarget(eveningShift.id, { "2026-10-20": 140 }))).status, 403, "not another shift's target");
+    assert.equal((await save(leader, { ...current.value, targetChanges: { "2026-10-20": 140 } })).status, 403, "not the shared history");
+    assert.equal((await save(leader, withShiftTarget(dayShift.id, { "2026-10-15": 170, "2026-10-20": 175 }))).status, 200);
+
+    const updated = await read();
+    const adminSaved = await admin.put("/api/documents/global/productionSettings", {
+      value: { ...updated.value, shiftTargets: { ...updated.value.shiftTargets, [eveningShift.id]: { "2026-10-20": 140 } } },
+      baseVersion: updated.version
+    });
+    assert.equal(adminSaved.status, 200, "admins set any shift's target");
+    assert.deepEqual((await read()).value.shiftTargets, {
+      [dayShift.id]: { "2026-10-15": 170, "2026-10-20": 175 },
+      [eveningShift.id]: { "2026-10-20": 140 }
+    }, "each shift's targets are kept separately");
   });
 
   test("does not change shared machines or settings", async () => {

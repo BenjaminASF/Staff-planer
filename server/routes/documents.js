@@ -2,8 +2,8 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScope, personalScopeOwner,
-  sharedFlagKey, weekRequiringShare, canChangeProductionTarget, changesProductionTarget, evaluatesEveryone
+  isAdmin, isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScope, personalScopeOwner,
+  sharedFlagKey, weekRequiringShare, mayChangeProductionTargets, evaluatesEveryone
 } = require("../permissions");
 const { isPersonScoped, evaluatedPersonIds, onlyFor, mergeFor } = require("../evaluations");
 const {
@@ -77,10 +77,10 @@ function documentRoutes({ pool, mailer, appUrl }) {
     await assertScopeExists(pool, scope);
     if (!req.body || !("value" in req.body)) throw new HttpError(400, "Värde saknas.");
     const baseVersion = Number(req.body.baseVersion) || 0;
-    if (scope === "global" && key === "productionSettings" && !canChangeProductionTarget(req.user)) {
+    if (scope === "global" && key === "productionSettings" && !isAdmin(req.user)) {
       const current = (await readDocuments(pool, scope, [key]))[key]?.value;
-      if (changesProductionTarget(current, req.body.value)) {
-        throw new HttpError(403, "Endast skiftledare och admin kan ändra det dagliga målet.");
+      if (!mayChangeProductionTargets(req.user, current, req.body.value)) {
+        throw new HttpError(403, "Endast admin och skiftets skiftledare kan ändra skiftets dagliga mål.");
       }
     }
     let { value } = req.body;
