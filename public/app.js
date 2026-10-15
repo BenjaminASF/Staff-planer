@@ -6270,8 +6270,10 @@ async function renderDashboard() {
       <article class="stat-green"><span>Full kompetens</span><strong>${fullyQualified}</strong><small>alla maskiner</small></article>
       <article><span>Senaste produktion</span><strong>${latestProduction?.total || 0}</strong><small>${latestProduction?.date || "ingen dag"}</small></article>
     </div>
+    ${isShiftLeader() ? `<section class="card settings-card shift-backup-card"><div><h3>Backup av skiftet</h3><p>Ladda ner en backup av Skift ${escapeHtml(getShiftName(getOwnShiftId()))}: personal, scheman, produktion, kompetens och bedömningar för skiftet. Lösenord och andra skift ingår inte. Filen är en kopia att spara och kan inte importeras.</p></div><div class="settings-actions"><button id="exportShiftBackupBtn" class="btn primary" type="button">Exportera backup</button></div></section>` : ""}
     ${auditCardHtml(events)}
   `;
+  root.querySelector("#exportShiftBackupBtn")?.addEventListener("click", event => void downloadShiftBackup(event.currentTarget));
   bindAuditUndo(root, events);
 }
 
@@ -6284,7 +6286,8 @@ function downloadJson(data, filename) {
   link.href = url;
   link.download = filename;
   link.click();
-  URL.revokeObjectURL(url);
+  // Revoked a moment later: revoking at once can make the browser lose the file name.
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 // Admin backup of everything on the server. Passwords are not included.
@@ -6292,6 +6295,23 @@ async function downloadBackup() {
   const payload = await apiRequest("GET", "/admin/export");
   downloadJson(payload, `staff-planner-backup-${formatDateKey(new Date())}.json`);
   await addAuditEvent("backup", "Backup exporterad", formatDateKey(new Date()));
+}
+
+// A shift leader's backup of their own shift. The server decides what is in it.
+async function downloadShiftBackup(button) {
+  button.disabled = true;
+  try {
+    const payload = await apiRequest("GET", "/backup/shift");
+    // Plain letters only: browsers may drop a download name with å, ä or ö.
+    const name = (getShiftName(getOwnShiftId()) || "skift").normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+      .toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "skift";
+    downloadJson(payload, `staff-planner-skift-${name}-${formatDateKey(new Date())}.json`);
+    showAppToast("Backupen av skiftet har laddats ner.");
+  } catch (error) {
+    showAppToast(error instanceof ApiError ? error.message : "Backupen kunde inte skapas.", "error");
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // Accepts both new backups and encrypted backups from the old single-device version.
@@ -6304,6 +6324,7 @@ async function importBackupFile(file) {
     throw new ApiError(400, "Backupfilen är ogiltig eller skadad.");
   }
   if (payload?.app !== "Staff Planner") throw new ApiError(400, "Filen är inte en backup från Staff Planner.");
+  if (payload.kind === "shift") throw new ApiError(400, "Det här är en backup av ett enda skift. Den kan inte läsas in, eftersom den bara innehåller en del av datan.");
   if (payload.version === 1 && isPlainObject(payload.data)) {
     await openLegacyImportDialog(payload.data, "file");
     return;

@@ -285,6 +285,11 @@ function canDeleteAccount(user) {
   return isAdmin(user);
 }
 
+// Shift leaders may download a backup of their own shift. Only admins export or import everything.
+function canExportShiftBackup(user) {
+  return isLeader(user) && Boolean(user.shiftId);
+}
+
 module.exports = {
   canUseChat,
   canDeleteChatMessage,
@@ -328,5 +333,6 @@ module.exports = {
   canChangeRole,
   canChangeUsername,
   canDeleteAccount,
+  canExportShiftBackup,
   canSetAvailability
 };
