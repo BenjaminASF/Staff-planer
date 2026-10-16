@@ -140,7 +140,7 @@ const PAGE_ACCESS = {
   "testresultat.html": [ROLES.ADMIN, ROLES.LEADER],
   "maskiner.html": [ROLES.ADMIN, ROLES.LEADER],
   "bedomning.html": [ROLES.ADMIN, ROLES.LEADER],
-  "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
+  "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
   "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
@@ -2247,9 +2247,11 @@ function enhanceAppShell() {
 function setupRoleNavigation() {
   const currentPage = getCurrentPage();
   const nav = document.querySelector(".nav");
-  if (nav && !nav.querySelector('[href="installningar.html"]')) {
-    nav.insertAdjacentHTML("beforeend", '<a class="nav-link" href="profil.html">Min profil</a><a class="nav-link" href="installningar.html">Inställningar</a><a class="nav-link" href="hjalp.html">Hjälp</a>');
-  }
+  // This runs more than once per page, after links the role may not open were removed,
+  // so each link is added only when it is missing.
+  [["profil.html", "Min profil"], ["installningar.html", "Inställningar"], ["hjalp.html", "Hjälp"]].forEach(([href, label]) => {
+    if (nav && !nav.querySelector(`[href="${href}"]`)) nav.insertAdjacentHTML("beforeend", `<a class="nav-link" href="${href}">${label}</a>`);
+  });
   if (nav && !nav.querySelector('[href="anvandare.html"]')) {
     nav.querySelector('[href="installningar.html"]')?.insertAdjacentHTML("beforebegin", '<a class="nav-link" href="anvandare.html">Användare</a>');
   }
@@ -2533,7 +2535,6 @@ function renderHelpPage() {
       ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
       ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
       ["Ledig eller borta?", "Öppna Min profil och ändra din status till Ledig. Skiftledaren ser ändringen direkt."],
-      ["Att göra", "Under Att göra har du en egen lista som bara du ser. Vill du visa en uppgift för någon väljer du Dela och bockar i vem."],
       ["Lösenord", "Byt lösenord under Min profil. Har du glömt det, be din skiftledare om ett tillfälligt."]
     ]
     : [

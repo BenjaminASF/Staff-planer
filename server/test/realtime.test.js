@@ -81,7 +81,7 @@ describe("live updates", () => {
     assert.ok(!adminStream.events.some(event => event.data.key === "todos"), "nobody else learns about a personal list");
     const hint = await adminStream.waitFor(event => event.data.type === "sharedTodos");
     assert.deepEqual(hint.data, { type: "sharedTodos" }, "others with a list only hear to look for shared tasks again");
-    await operatorStream.waitFor(event => event.data.type === "sharedTodos");
+    assert.ok(!operatorStream.events.some(event => event.data.type === "sharedTodos"), "operators have no list to look in");
     assert.ok(!operatorStream.events.some(event => event.data.type === "chat"), "chat is for admins and shift leaders");
   });
 

@@ -112,6 +112,6 @@ describe("notifications", () => {
     assert.equal((await notes(rightHand)).notifications[0]?.title, "Beställ handskar");
 
     await leader.put(`/api/documents/${scope}/todos`, { value: [todo("Städa GD", [operatorUser.id])], baseVersion: saved.data.version });
-    assert.equal((await notes(operator)).notifications[0]?.title, "Städa GD", "operators have lists and are told too");
+    assert.equal((await notes(operator)).notifications.length, 0, "operators have no list and are not told");
   });
 });
