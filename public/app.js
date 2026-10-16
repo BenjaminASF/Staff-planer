@@ -171,6 +171,8 @@ let selectedBreakDay = getDefaultBreakDay();
 let selectedAssessmentPersonId = "";
 let selectedTestPersonId = "";
 let selectedProductionDate = formatDateKey(new Date());
+// Admin opens a shift's production read-only; "Redigera" unlocks editing for that shift only.
+let productionEditScope = null;
 let selectedCompetencyPersonId = "";
 let assessmentFormOpen = false;
 let editingAssessmentId = "";
@@ -5241,7 +5243,7 @@ function renderProductionHistory(root, records, settings, scope) {
   const section = root.querySelector(".production-history");
   if (!section) return;
   const days = Object.values(records).filter(item => item?.date).sort((a, b) => b.date.localeCompare(a.date));
-  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "history-met" : "history-missed"}">${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button><button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button></div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
+  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "history-met" : "history-missed"}">${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button>${isAdmin() && productionEditScope !== scope ? "" : `<button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button>`}</div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
   section.querySelectorAll("[data-production-menu]").forEach(button => button.addEventListener("click", event => {
     event.stopPropagation();
     const menu = section.querySelector(`[data-production-actions="${button.dataset.productionMenu}"]`);
@@ -5268,6 +5270,15 @@ function renderProductionHistory(root, records, settings, scope) {
     await renderProduction();
     await renderDashboard();
   }));
+}
+
+function bindProductionDateChange(root) {
+  root.querySelector("#productionDate").addEventListener("change", async event => {
+    if (!event.target.value || !event.target.reportValidity()) return;
+    await flushProductionAutosave();
+    selectedProductionDate = event.target.value;
+    void renderProduction();
+  });
 }
 
 async function renderProduction() {
@@ -5311,16 +5322,36 @@ async function renderProduction() {
   const otherMonthTotal = otherMonthDays.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
   const monthName = new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { month: "long", year: "numeric" });
   const monthDaysText = days => `${days} ${days === 1 ? "dag" : "dagar"} med resultat`;
+  const readOnly = isAdmin() && productionEditScope !== scope;
   const savedText = stored?.updatedAt ? `Sparat ${new Date(stored.updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Sparas automatiskt";
   const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
   root.innerHTML = `
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
-    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div><button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button><span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
-    <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small><button id="editFactoryRecordBtn" type="button">Ändra manuellt</button></article></div>
+    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div>${readOnly ? '<span class="production-view-badge">Visningsläge</span><button id="productionEditBtn" class="btn primary" type="button">Redigera</button>' : `<button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button>${isAdmin() ? '<button id="productionDoneBtn" class="btn" type="button">Klar</button>' : ""}`}<span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
+    <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small>${readOnly ? "" : '<button id="editFactoryRecordBtn" type="button">Ändra manuellt</button>'}</article></div>
     <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
   `;
   renderProductionHistory(root, records, settings, scope);
+  bindOnce(root, "click", event => {
+    if (!event.target.closest(".production-history-item")) {
+      root.querySelectorAll(".production-history-menu").forEach(menu => { menu.hidden = true; });
+    }
+  });
+  if (readOnly) {
+    root.querySelectorAll(".production-entry input, .production-entry select, #productionTarget").forEach(input => { input.disabled = true; });
+    root.querySelector("#productionEditBtn").addEventListener("click", () => {
+      productionEditScope = scope;
+      void renderProduction();
+    });
+    bindProductionDateChange(root);
+    return;
+  }
+  root.querySelector("#productionDoneBtn")?.addEventListener("click", async () => {
+    await flushProductionAutosave();
+    productionEditScope = null;
+    void renderProduction();
+  });
   const saveStatus = root.querySelector("#productionSaveStatus");
   const setSaveStatus = (text, state = "") => {
     saveStatus.textContent = text;
@@ -5422,12 +5453,7 @@ async function renderProduction() {
   root.querySelector(".production-entry").addEventListener("input", () => queueSave("day"));
   root.querySelector(".production-entry").addEventListener("change", () => queueSave("day"));
   root.querySelector("#productionTarget").addEventListener("input", () => queueSave("target"));
-  root.querySelector("#productionDate").addEventListener("change", async event => {
-    if (!event.target.value || !event.target.reportValidity()) return;
-    await flushProductionAutosave();
-    selectedProductionDate = event.target.value;
-    void renderProduction();
-  });
+  bindProductionDateChange(root);
   root.querySelector("#syncScheduleBtn").addEventListener("click", async () => {
     const [currentSchedule, currentLocations] = await Promise.all([
       getScheduleForDate(selectedProductionDate), getTrainingLocationsForDate(selectedProductionDate)
@@ -5449,11 +5475,6 @@ async function renderProduction() {
     await saveProductionSettings({ ...latest, factoryRecord: Math.round(newRecord), recordDate: "", recordPrevious: 0 });
     await addAuditEvent("production", "Fabriksrekord ändrat", `${Math.round(newRecord)} box`);
     await renderProduction();
-  });
-  bindOnce(root, "click", event => {
-    if (!event.target.closest(".production-history-item")) {
-      root.querySelectorAll(".production-history-menu").forEach(menu => { menu.hidden = true; });
-    }
   });
 }
 
