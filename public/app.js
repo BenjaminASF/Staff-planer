@@ -8123,7 +8123,13 @@ function applyLinkedShift() {
   return true;
 }
 
-async function openAppUI() {
+async function openAppUI(justSignedIn = false) {
+  if (isAdmin() && justSignedIn && getCurrentPage() !== "dashboard.html") {
+    // Right after signing in, an admin always starts on Översikt, whichever page the login was on.
+    sessionStorage.setItem(ADMIN_LANDED_KEY, "1");
+    location.replace("dashboard.html");
+    return;
+  }
   if (!canOpenPage(getCurrentPage())) {
     location.replace("index.html");
     return;
@@ -8218,13 +8224,15 @@ function renderAuthForm(mode, onSubmit) {
   form.querySelector("input")?.focus();
 }
 
-async function continueAfterSignIn(me) {
+// justSignedIn: the user just submitted the login (or setup / new password) form,
+// rather than coming back with a session that was already open.
+async function continueAfterSignIn(me, justSignedIn = false) {
   setSession(me);
   if (me.user.mustChangePassword) {
     showAuthScreen("changePassword");
     return;
   }
-  await openAppUI();
+  await openAppUI(justSignedIn);
 }
 
 function showAuthScreen(mode) {
@@ -8235,19 +8243,19 @@ function showAuthScreen(mode) {
   clearAuthMessage();
   if (mode === "login") {
     renderAuthForm("login", async values => {
-      await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }));
+      await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
     });
   } else if (mode === "setup") {
     renderAuthForm("setup", async values => {
       checkNewPassword(values.password, values.confirm);
       await continueAfterSignIn(await apiRequest("POST", "/setup", {
         setupCode: values.setupCode, name: values.name, username: values.username, password: values.password
-      }));
+      }), true);
     });
   } else {
     renderAuthForm("changePassword", async values => {
       checkNewPassword(values.newPassword, values.confirm);
-      await continueAfterSignIn(await apiRequest("POST", "/me/password", { currentPassword: values.currentPassword, newPassword: values.newPassword }));
+      await continueAfterSignIn(await apiRequest("POST", "/me/password", { currentPassword: values.currentPassword, newPassword: values.newPassword }), true);
     });
   }
   const notice = sessionStorage.getItem(AUTH_NOTICE_KEY);
