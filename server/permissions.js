@@ -25,8 +25,8 @@
 //                status and password. Their name and e-mail address are changed
 //                only by an admin, shift leader or right hand.
 //
-// Personal documents ("Att göra") belong to one user, whatever their role, and
-// only that user reads and writes them – admins included. The owner can share
+// Personal documents ("Att göra") belong to one user, whatever their role above
+// operator, and only that user reads and writes them – admins included. The owner can share
 // single tasks with chosen users, who then see those tasks read-only. Backups
 // leave the lists out.
 
@@ -106,7 +106,8 @@ const leadsShift = (user, shiftId) => (isLeader(user) || isRightHand(user)) && B
 const canEditShift = (user, shiftId) => isAdmin(user) || leadsShift(user, shiftId);
 // Shift leaders and right hands manage the people in their own shift who rank below them.
 const managesPerson = (user, person) => leadsShift(user, person?.shiftId) && personLevel(person) < roleLevel(user.role);
-const hasPersonalList = user => Boolean(user?.id) && Boolean(user.role);
+// Operators have no "Att göra" list; everyone above them does.
+const hasPersonalList = user => Boolean(user?.id) && Boolean(user.role) && user.role !== ROLES.OPERATOR;
 const ownsPersonalScope = (user, scope) => hasPersonalList(user) && Boolean(user.id) && personalScopeOwner(scope) === user.id;
 
 function documentCategory(scope, key) {

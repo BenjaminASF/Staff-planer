@@ -82,7 +82,7 @@ async function notifyTodosShared(db, { user, scope, before, after }) {
     return sharedWithOf(item).filter(id => id !== user.id && !previous.includes(id)).map(id => ({ id, text: String(item.text || "") }));
   });
   if (!shares.length) return 0;
-  const { rows } = await db.query("SELECT id FROM users WHERE id = ANY($1::text[])", [shares.map(share => share.id)]);
+  const { rows } = await db.query("SELECT id FROM users WHERE id = ANY($1::text[]) AND role <> 'operator'", [shares.map(share => share.id)]);
   const valid = new Set(rows.map(row => row.id));
   let sent = 0;
   for (const share of shares.filter(share => valid.has(share.id))) {

@@ -13,11 +13,11 @@ function todoRoutes({ pool }) {
     next();
   });
 
-  // Who a task can be shared with: everyone else with a login, since everyone has a list.
+  // Who a task can be shared with: everyone else with a list, so all logins but operators.
   router.get("/recipients", async (req, res) => {
     const { rows } = await pool.query(
       `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id
-        WHERE u.id <> $1 ORDER BY lower(p.name)`,
+        WHERE u.id <> $1 AND u.role <> 'operator' ORDER BY lower(p.name)`,
       [req.user.id]
     );
     res.json({ recipients: rows.map(row => ({ id: row.id, name: row.name })) });

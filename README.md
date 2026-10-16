@@ -15,7 +15,7 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | |
 | Ändra skiftets dagliga produktionsmål | ✓ | ✓ | | |
-| Egen privat att göra-lista, med delning av enskilda uppgifter | ✓ | ✓ | ✓ | ✓ |
+| Egen privat att göra-lista, med delning av enskilda uppgifter | ✓ | ✓ | ✓ | |
 | Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | Eget skift | |
 | Lägga till personal och skapa konton | Alla roller och skift | Höger hand och operatörer, eget skift | Operatörer, eget skift | |
 | Återställa lösenord | Alla | Höger hand och operatörer i eget skift | Operatörer i eget skift | |
@@ -72,7 +72,7 @@ Skiftledare kan aldrig ändra uppgifter (namn, företag, telefon, status eller i
 
 **Höger hand** är skiftledarens assistent och tar över ansvaret när skiftledaren inte är på plats. Höger hand arbetar bara i sitt eget skift: ändrar schemat, lägger till operatörer, läser och skriver i chatten och registrerar dagens produktion, men kan inte ändra det dagliga målet eller maskiner och inställningar som gäller alla skift. Höger hand kan ändra operatörernas uppgifter i skiftet, men inte skiftledarens eller adminens.
 
-**Att göra** är privat. Alla har en egen lista, oavsett roll, och ingen annan kan se den, inte ens admin. Med **Dela** på en uppgift väljer man exakt vilka personer som ska se just den uppgiften. De ser den under **Delade med mig**, med namnet på den som delade den, men kan inte ändra den. Resten av listan förblir privat, och delningen kan tas bort när som helst.
+**Att göra** är privat. Alla utom operatörer har en egen lista, och ingen annan kan se den, inte ens admin. Med **Dela** på en uppgift väljer man exakt vilka personer som ska se just den uppgiften. De ser den under **Delade med mig**, med namnet på den som delade den, men kan inte ändra den. Resten av listan förblir privat, och delningen kan tas bort när som helst.
 
 Skiftledare genomför tester och bedömer kompetens för operatörerna i sitt eget skift, och för skiftets Höger hand och personal utan inloggning. De ser bara testresultat och bedömningar för de personerna, och kan inte ändra något för andra skift, andra skiftledare eller admin. Att lägga till eller ta bort avdelningar på sidan Testresultat är fortfarande bara för admin, eftersom det ändrar resultaten i alla skift.
 
