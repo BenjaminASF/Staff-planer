@@ -6681,3 +6681,13 @@ body.schedule-viewer-open { overflow: hidden; }
 .break-group-person.is-mine strong { color: #fff; }
 .break-group-person.is-mine > span { background: rgba(255, 255, 255, .2); color: #fff; }
 .break-group-person.is-mine .mine-badge { max-width: none; margin-left: 2px; padding: 1px 6px; border-radius: 999px; background: #fff; color: var(--g-accent-text, var(--primary-hover)); font-size: 10px; }
+
+.production-view-badge {
+  align-self: center;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: light-dark(#eef2f7, #2a3140);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
