@@ -1310,7 +1310,8 @@ function renderTrainingScheduleSummary(scheduleRoot, people, schedule, trainingL
   });
 
   let summary = card.querySelector(".training-schedule-summary");
-  if (!entries.length) {
+  // Operators do not need the training overview.
+  if (!entries.length || isOperator()) {
     summary?.remove();
     return;
   }
