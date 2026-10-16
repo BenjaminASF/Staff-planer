@@ -3809,6 +3809,7 @@ function renderReadOnlySchedule(root, data) {
     rerender();
     root.scrollIntoView({ behavior: "smooth", block: "start" });
   });
+  renderUnplacedTodayNotice(root, data);
   renderScheduleViewBar(root, view, selectedDay, rerender);
 
   const context = {
@@ -3877,6 +3878,22 @@ function renderReadOnlySchedule(root, data) {
   });
 }
 
+// Operators with no workstation (or training to lead) in today's schedule get a clear notice.
+function renderUnplacedTodayNotice(root, { schedule, trainingLeaders }) {
+  const card = root.parentElement;
+  card?.querySelector(".unplaced-today-notice")?.remove();
+  const ownId = currentPerson?.id;
+  const today = getTodayScheduleDay();
+  if (!card || !isOperator() || !ownId || !today || currentPerson.shiftId !== getShiftScope()) return;
+  const placed = TASKS.some(task => schedule?.[task]?.[today] === ownId || trainingLeaders?.[task]?.[today] === ownId);
+  if (placed) return;
+  const notice = document.createElement("div");
+  notice.className = "unplaced-today-notice";
+  notice.setAttribute("role", "alert");
+  notice.innerHTML = "<strong>Du är inte placerad på någon arbetsstation idag. Kontakta din skiftledare.</strong>";
+  card.insertBefore(notice, card.firstChild);
+}
+
 // "Min vecka": where the signed-in person works each day.
 function renderMyWeekSummary(root, { schedule, trainingLeaders, trainingLocations, extraPersonLocations }, onSelectDay = null) {
   const card = root.parentElement;
@@ -3922,7 +3939,7 @@ async function renderSchedule() {
   const dates = getDatesForWeek();
   void updateShareScheduleButton();
   root.classList.remove("schedule-readonly", "schedule-day-view", "schedule-edit-day");
-  root.parentElement?.querySelectorAll(".schedule-view-bar, .my-week-summary").forEach(element => element.remove());
+  root.parentElement?.querySelectorAll(".schedule-view-bar, .my-week-summary, .unplaced-today-notice").forEach(element => element.remove());
 
   if (isOperator() && !(await getScheduleShare())) {
     document.getElementById("autoScheduleBtn")?.classList.add("hidden");
