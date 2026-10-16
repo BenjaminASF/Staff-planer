@@ -6670,3 +6670,14 @@ body.schedule-viewer-open { overflow: hidden; }
 
 /* A person scheduled for training at the machine, shown under the operator on the production page. */
 .production-machine-row .production-training-badge { justify-self: start; max-width: 100%; overflow-wrap: anywhere; padding: 2px 7px; border-radius: 999px; background: #fff4d6; background: light-dark(#fff4d6, #3a2f12); color: #8a5a00; color: light-dark(#8a5a00, #f3c766); font-size: 11px; font-weight: 750; line-height: 1.4; }
+
+/* Operator break view: which lines run during the break, and the operator's own place. */
+.break-running-lines { display: grid; gap: 2px; max-width: 620px; margin: 0 0 14px; padding: 14px 16px; border: 1px solid var(--g-border-inner, var(--border)); border-radius: 14px; background: var(--g-surface-inner, #fff); }
+.break-running-lines small { color: var(--g-muted, var(--muted)); font-size: 12px; font-weight: 700; }
+.break-running-lines strong { font-size: 18px; font-weight: 800; }
+.break-own { max-width: 620px; margin: 0 0 14px; }
+.break-group-panel.is-mine { box-shadow: inset 0 0 0 2px var(--primary); }
+.break-group-person.is-mine { background: var(--g-primary-bg, var(--primary)); box-shadow: 0 6px 18px var(--g-accent-glow, rgba(59, 130, 246, .3)); }
+.break-group-person.is-mine strong { color: #fff; }
+.break-group-person.is-mine > span { background: rgba(255, 255, 255, .2); color: #fff; }
+.break-group-person.is-mine .mine-badge { max-width: none; margin-left: 2px; padding: 1px 6px; border-radius: 999px; background: #fff; color: var(--g-accent-text, var(--primary-hover)); font-size: 10px; }
