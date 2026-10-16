@@ -2218,7 +2218,9 @@ function enhanceAppShell() {
     "bedomning.html": "Spara återkommande bedömningar för att se utveckling över tid.",
     "todo.html": "Uppgifter som inte blir klara följer med som påminnelser till nästa vecka.",
     "produktion.html": "Allt du skriver sparas automatiskt. Förra månadens dagar tas bort den 10:e.",
-    "rast.html": "Kontrollera att alla valda linjer täcks innan rastplanen används.",
+    "rast.html": isOperator()
+      ? "Ditt namn är markerat i din grupp. Överst står vilka linjer som ska vara igång under rasten."
+      : "Kontrollera att alla valda linjer täcks innan rastplanen används.",
     "installningar.html": "Inställningarna gäller alla skift och sparas när du trycker Spara.",
     "profil.html": "Ändra din status här om du är sjuk eller borta, så ser skiftledaren det direkt."
   };
@@ -2839,6 +2841,19 @@ async function renderBreakPlannerContent() {
     return;
   }
 
+  // Operators only need to know which lines run during the break and when they
+  // themselves go, so they get neither the priority choice nor the assignment table.
+  const operatorView = isOperator();
+  if (operatorView) {
+    const runningLines = (dayPlan.priorityLines || []).map(line => BREAK_LINE_LABELS[line]).filter(Boolean);
+    const running = document.createElement("section");
+    running.className = "break-running-lines";
+    running.innerHTML = runningLines.length
+      ? `<small>Igång under rasten</small><strong>${runningLines.map(escapeHtml).join(", ")}</strong>`
+      : "<small>Igång under rasten</small><strong>Inte bestämt än</strong>";
+    root.appendChild(running);
+  }
+
   const priorityPanel = document.createElement("section");
   const priorityHeading = document.createElement("div");
   const priorityOptions = document.createElement("div");
@@ -2872,7 +2887,7 @@ async function renderBreakPlannerContent() {
     priorityOptions.appendChild(option);
   });
   priorityPanel.append(priorityHeading, priorityOptions);
-  root.appendChild(priorityPanel);
+  if (!operatorView) root.appendChild(priorityPanel);
 
   const assignment = document.createElement("section");
   const assignmentHeading = document.createElement("div");
@@ -3035,7 +3050,21 @@ async function renderBreakPlannerContent() {
   }
 
   assignment.appendChild(assignmentList);
-  root.appendChild(assignment);
+  if (!operatorView) root.appendChild(assignment);
+
+  // The operator's own group and times, so they find themselves at a glance.
+  const ownId = operatorView ? currentPerson?.id : "";
+  const ownGroup = ownId ? dayPlan.groups[ownId] : null;
+  if (operatorView && (ownGroup === 1 || ownGroup === 2)) {
+    const isHourlySplit = dayPlan.mode === "split_hour";
+    const times = [dayPlan[`group${ownGroup}Break1`], isHourlySplit ? "" : dayPlan[`group${ownGroup}Break2`]]
+      .filter(Boolean)
+      .map(start => `${start}–${formatBreakEnd(start, isHourlySplit ? 60 : 30)}`);
+    const own = document.createElement("div");
+    own.className = "day-view-own is-mine break-own";
+    own.innerHTML = `<small>Du har rast i</small><strong>Grupp ${ownGroup}${times.length ? ` · ${times.join(" och ")}` : ""}</strong>${dayPlan.workplaces[ownId] ? `<small>${escapeHtml(dayPlan.workplaces[ownId])}</small>` : ""}`;
+    root.appendChild(own);
+  }
 
   const groupsGrid = document.createElement("div");
   groupsGrid.className = "break-groups-grid";
@@ -3043,7 +3072,7 @@ async function renderBreakPlannerContent() {
     const panel = document.createElement("div");
     const title = document.createElement("div");
     const isHourlySplit = dayPlan.mode === "split_hour";
-    panel.className = `break-group-panel group-${groupNumber}`;
+    panel.className = `break-group-panel group-${groupNumber}${ownGroup === groupNumber ? " is-mine" : ""}`;
     title.className = "break-group-title";
     title.innerHTML = `<strong>Grupp ${groupNumber}</strong><span>${isHourlySplit ? "60 min" : "2 × 30 min"}</span>`;
     panel.appendChild(title);
@@ -3066,8 +3095,12 @@ async function renderBreakPlannerContent() {
         const member = document.createElement("div");
         const memberName = document.createElement("strong");
         const memberWorkplace = document.createElement("span");
-        member.className = "break-group-person";
+        member.className = `break-group-person${ownId && person.id === ownId ? " is-mine" : ""}`;
         memberName.textContent = person.name;
+        if (ownId && person.id === ownId) {
+          memberName.classList.add("mine-name");
+          memberName.insertAdjacentHTML("beforeend", '<span class="mine-badge">Du</span>');
+        }
         memberWorkplace.textContent = dayPlan.workplaces[person.id] || "Extra · ingen arbetsplats";
         member.append(memberName, memberWorkplace);
         members.appendChild(member);
@@ -3085,7 +3118,9 @@ async function renderBreakPlannerContent() {
     const missingWorkplaces = requiredWorkplaces
       .filter(workplace => !occupiedWorkplaces.has(workplace))
       .sort(compareBreakWorkplaces);
-    if (missingWorkplaces.length) {
+    if (operatorView) {
+      // Staffing gaps are for whoever plans the break, not for operators.
+    } else if (missingWorkplaces.length) {
       const shortage = document.createElement("div");
       const shortageTitle = document.createElement("strong");
       const shortageList = document.createElement("span");
