@@ -753,7 +753,7 @@ async function createFairWeeklySchedule(priorityLines) {
     getExtraPersonLocations()
   ]);
   const availablePeople = people.filter(
-    person => getPersonAvailability(person) === "available"
+    person => isOperatorStaff(person) && getPersonAvailability(person) === "available"
   );
   const requestedTasks = priorityLines.flatMap(choice =>
     Object.hasOwn(BREAK_LINE_WORKPLACES, choice) ? BREAK_LINE_WORKPLACES[choice] : [choice]
@@ -1192,6 +1192,10 @@ async function getEvaluatedPeople() {
   if (!isShiftLeader()) return [];
   return people.filter(person => !person.account || EVALUATED_BY_LEADERS.includes(person.account.role));
 }
+
+// Shift leaders and admins lead the shift. They are not operators: the schedule does not
+// place them and they are not counted among the shift's operators.
+const isOperatorStaff = person => ![ROLES.ADMIN, ROLES.LEADER].includes(person.account?.role);
 
 async function createPerson(data) {
   const { person } = await apiRequest("POST", "/people", data);
@@ -3991,8 +3995,9 @@ async function renderSchedule() {
   }
   await renderScheduleTools(schedule, people, skills, { trainingLeaders, trainingLocations, extraPersonLocations });
 
-  renderAvailabilitySummary(root, people);
-  renderUnassignedPeopleSummary(root, people, schedule, trainingLeaders);
+  const operators = people.filter(isOperatorStaff);
+  renderAvailabilitySummary(root, operators);
+  renderUnassignedPeopleSummary(root, operators, schedule, trainingLeaders);
   renderTrainingScheduleSummary(root, people, schedule, trainingLocations);
   await renderSchedulePrioritySelector(root);
 
@@ -4091,6 +4096,7 @@ async function renderSchedule() {
       people.forEach(person => {
         if (trainingReservation) return;
         if (person.id !== selectedPersonId) {
+          if (!isOperatorStaff(person)) return;
           if (scheduleFilters.company && person.company !== scheduleFilters.company) return;
           if (scheduleFilters.availability !== "all" && getPersonAvailability(person) !== scheduleFilters.availability) return;
           if (scheduleFilters.skill && !(skills[person.id] || []).includes(scheduleFilters.skill)) return;
@@ -5324,7 +5330,7 @@ async function renderProduction() {
   const monthDaysText = days => `${days} ${days === 1 ? "dag" : "dagar"} med resultat`;
   const readOnly = isAdmin() && productionEditScope !== scope;
   const savedText = stored?.updatedAt ? `Sparat ${new Date(stored.updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Sparas automatiskt";
-  const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
+  const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.filter(person => isOperatorStaff(person) || person.id === selectedId).map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
   root.innerHTML = `
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
     <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div>${readOnly ? '<span class="production-view-badge">Visningsläge</span><button id="productionEditBtn" class="btn primary" type="button">Redigera</button>' : `<button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button>${isAdmin() ? '<button id="productionDoneBtn" class="btn" type="button">Klar</button>' : ""}`}<span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
@@ -5716,7 +5722,7 @@ async function getAdminDashboardData() {
   const shiftData = shifts.map((shift, index) => {
     const staff = allPeople.filter(person => person.shiftId === shift.id);
     const leaders = staff.filter(person => person.account?.role === ROLES.LEADER);
-    const operators = staff.filter(person => ![ROLES.ADMIN, ROLES.LEADER].includes(person.account?.role));
+    const operators = staff.filter(isOperatorStaff);
     const available = operators.filter(person => getPersonAvailability(person) === "available");
     const days = Object.values(recordsByShift[index])
       .filter(record => record?.date >= monthStart && record.date <= today)
@@ -6333,9 +6339,10 @@ async function renderDashboard() {
   const root = document.getElementById("dashboardPage");
   if (!root) return;
   if (isAdmin()) return renderAdminDashboard(root);
-  const [people, departments, skills, events, productionRecords] = await Promise.all([
+  const [staff, departments, skills, events, productionRecords] = await Promise.all([
     getPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getAuditLog(), getProductionRecords()
   ]);
+  const people = staff.filter(isOperatorStaff);
   const unavailable = people.filter(person => getPersonAvailability(person) === "unavailable").length;
   const off = people.filter(person => getPersonAvailability(person) === "off").length;
   const available = people.filter(person => getPersonAvailability(person) === "available").length;
@@ -6346,7 +6353,7 @@ async function renderDashboard() {
   const latestProduction = Object.values(productionRecords).sort((a, b) => b.date.localeCompare(a.date))[0];
   root.innerHTML = `
     <div class="dashboard-stats">
-      <article><span>Personal</span><strong>${people.length}</strong><small>${shiftColorDot(getShiftScope())}${escapeHtml(getShiftName(getShiftScope()) || "inget skift")}</small></article>
+      <article><span>Operatörer</span><strong>${people.length}</strong><small>${shiftColorDot(getShiftScope())}${escapeHtml(getShiftName(getShiftScope()) || "inget skift")}</small></article>
       <article class="stat-green"><span>Tillgängliga i gruppen</span><strong>${available}</strong><small>kan schemaläggas</small></article>
       <article class="stat-red"><span>Ej tillgängliga</span><strong>${unavailable}</strong><small>kan inte arbeta</small></article>
       <article class="stat-yellow"><span>Lediga</span><strong>${off}</strong><small>frånvarande</small></article>
