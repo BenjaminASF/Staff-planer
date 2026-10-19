@@ -2594,8 +2594,10 @@ function formatBreakEnd(start, durationMinutes) {
   return `${padNumber(Math.floor(total / 60) % 24)}:${padNumber(total % 60)}`;
 }
 
-function getScheduledPeopleForDay(schedule, people, day) {
-  const scheduledIds = new Set();
+// Trainees are in the schedule itself, but their supervisors are stored separately and
+// still need a break, so both are counted as working that day.
+function getScheduledPeopleForDay(schedule, people, day, trainingLeaders = {}) {
+  const scheduledIds = getTrainingLeadersForDay(trainingLeaders, day);
   TASKS.forEach(task => {
     const personId = schedule?.[task]?.[day];
     if (personId) scheduledIds.add(personId);
@@ -2771,8 +2773,9 @@ async function renderBreakPlannerContent() {
   const people = await getPeople();
   const schedule = await getSchedule();
   const breakPlan = await getBreakPlan();
+  const trainingLeaders = await getTrainingLeaders();
   const dayPlan = breakPlan[selectedBreakDay];
-  const scheduledPeople = getScheduledPeopleForDay(schedule, people, selectedBreakDay);
+  const scheduledPeople = getScheduledPeopleForDay(schedule, people, selectedBreakDay, trainingLeaders);
 
   root.innerHTML = "";
 
