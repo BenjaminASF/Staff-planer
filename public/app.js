@@ -4477,6 +4477,13 @@ async function renderPeople() {
   if (!list) return;
 
   ensurePeopleShiftFilter();
+  if (canOpenPage("add.html") && !document.querySelector(".main > .header > .header-aside")) {
+    const addLink = document.createElement("a");
+    addLink.className = "btn primary";
+    addLink.href = "add.html";
+    addLink.textContent = "Lägg till person";
+    placeBesideTitle(addLink);
+  }
   const allPeople = await getAllPeople();
   const query = (document.getElementById("peopleSearch")?.value || "").trim().toLocaleLowerCase();
   const statusFilter = document.getElementById("availabilityFilter")?.value || "";
@@ -4562,7 +4569,12 @@ async function renderPeople() {
       deleteBtn.addEventListener("click", () => void deletePerson(person.id));
       actions.append(deleteBtn);
     }
-    row.append(meta, actions);
+    const avatar = document.createElement("span");
+    const color = getShiftColor(person.shiftId);
+    avatar.className = `person-avatar${color ? ` shift-color-${color}` : ""}`;
+    avatar.setAttribute("aria-hidden", "true");
+    avatar.textContent = person.name.split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toLocaleUpperCase("sv-SE");
+    row.append(avatar, meta, actions);
     list.appendChild(row);
   });
   if (!people.length) {
@@ -5290,6 +5302,15 @@ function bindProductionDateChange(root) {
   });
 }
 
+// Moves a page's own summary or controls up beside its title, replacing what an earlier render put there.
+function placeBesideTitle(element) {
+  const header = document.querySelector(".main > .header");
+  if (!header || !element) return;
+  header.querySelector(":scope > .header-aside")?.remove();
+  element.classList.add("header-aside");
+  header.appendChild(element);
+}
+
 async function renderProduction() {
   const root = document.getElementById("productionPage");
   if (!root) return;
@@ -5341,6 +5362,7 @@ async function renderProduction() {
     <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
   `;
+  placeBesideTitle(root.querySelector(".production-month"));
   renderProductionHistory(root, records, settings, scope);
   bindOnce(root, "click", event => {
     if (!event.target.closest(".production-history-item")) {
@@ -5381,7 +5403,7 @@ async function renderProduction() {
     const currentTotal = [...root.querySelectorAll(".production-result")].reduce((sum, input) => sum + (Number(input.value) || 0), 0);
     const currentTarget = Number(root.querySelector("#productionTarget").value) || 0;
     root.querySelector("#productionTotal").textContent = currentTotal;
-    root.querySelector("#productionMonthTotal").textContent = otherMonthTotal + currentTotal;
+    document.getElementById("productionMonthTotal").textContent = otherMonthTotal + currentTotal;
     root.querySelector("#productionGoalValue").textContent = currentTarget;
     root.querySelector("#productionTotalCard").className = currentTotal >= currentTarget ? "goal-card-met" : "goal-card-missed";
     const status = root.querySelector("#productionStatus");
@@ -5436,7 +5458,7 @@ async function renderProduction() {
         root.querySelector("#factoryRecordValue").textContent = result.settings.factoryRecord;
         Object.assign(settings, result.settings);
         renderProductionHistory(root, result.records, settings, scope);
-        if (dayRecord) root.querySelector("#productionMonthDays").textContent = monthDaysText(otherMonthDays.length + 1);
+        if (dayRecord) document.getElementById("productionMonthDays").textContent = monthDaysText(otherMonthDays.length + 1);
         if (result.brokeRecord && !productionCelebratedDates.has(`${scope}|${date}`)) {
           productionCelebratedDates.add(`${scope}|${date}`);
           showProductionCelebration(dayRecord.total, result.previousRecord);
@@ -5805,10 +5827,11 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
     ...capacity.reasons
   ].filter(Boolean);
   const competence = data.competence.map(item => ({ ...item, ...capacity.departments.find(entry => entry.department === item.department) }));
-  return `<details class="admin-section admin-capacity-block" data-admin-section="capacity:${escapeHtml(shift.id)}"${adminSectionOpen(`capacity:${shift.id}`)}>
+  // The lines are always in sight; the figures behind them fold away.
+  return `<div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.ruleGaps.length ? "rule" : line.staffed ? "ok" : "no"}" title="${escapeHtml(lineTitle(line))}">${escapeHtml(line.label)}<small>${lineText(line)}</small>${productionText(line) ? `<span class="admin-line-production${line.production ? " on" : ""}">${line.production ? "I produktion" : "Ej i produktion"}</span>` : ""}</div>`).join("")}</div>
+    <details class="admin-section admin-capacity-block" data-admin-section="capacity:${escapeHtml(shift.id)}"${adminSectionOpen(`capacity:${shift.id}`)}>
       <summary class="admin-section-toggle"><span class="admin-label">Produktionskapacitet</span><span class="admin-muted">${escapeHtml(formatLinesDate(linesDate, today))}</span></summary>
       <div class="admin-capacity-content">
-      <div class="admin-lines">${lines.map(line => `<div class="admin-line ${line.ruleGaps.length ? "rule" : line.staffed ? "ok" : "no"}" title="${escapeHtml(lineTitle(line))}">${escapeHtml(line.label)}<small>${lineText(line)}</small>${productionText(line) ? `<span class="admin-line-production${line.production ? " on" : ""}">${line.production ? "I produktion" : "Ej i produktion"}</span>` : ""}</div>`).join("")}</div>
       <div class="admin-capacity-stats">${stats.map(([label, value, state]) => `<div class="admin-stat ${state}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>
       <details class="admin-capacity-details" data-admin-section="details:${escapeHtml(shift.id)}"${adminSectionOpen(`details:${shift.id}`)}>
         <summary><span class="show-label">Visa detaljer</span><span class="hide-label">Dölj detaljer</span></summary>
@@ -5871,9 +5894,9 @@ function adminShiftCardHtml(data, context) {
       <div class="admin-bar"><i style="width:${Math.min(100, progress * 100)}%"></i></div>
     </div>
     ${adminLinesHtml(data, context)}
+    <div class="admin-shift-footer">
     <div><span class="admin-pill ${absent.length ? "bad" : "good"}">${absent.length ? `${absent.length} frånvarande` : "Alla på plats"}</span>${absentOperators !== absent.length && absent.length ? ` <span class="admin-muted">varav ${absentOperators} operatörer</span>` : ""}</div>
     <div class="admin-shift-actions">
-      <button class="btn primary" type="button" data-view-schedule="${escapeHtml(shift.id)}">Visa schema</button>
       <details class="admin-shift-menu" data-popover>
         <summary class="btn">Fler inställningar</summary>
         <div class="admin-menu-panel">
@@ -5881,6 +5904,8 @@ function adminShiftCardHtml(data, context) {
           ${SHIFT_MANAGE_LINKS.filter(([page]) => canOpenPage(page)).map(([page, label]) => `<a href="${page}?skift=${encodeURIComponent(shift.id)}" data-shift-link="${escapeHtml(shift.id)}">${label}</a>`).join("")}
         </div>
       </details>
+      <button class="btn primary" type="button" data-view-schedule="${escapeHtml(shift.id)}">Visa schema</button>
+    </div>
     </div>
   </article>`;
 }
@@ -5995,12 +6020,13 @@ async function renderAdminDashboard(root) {
     </section>
     <section id="adminAuditSection"${adminAuditOpen ? "" : " hidden"}>${auditCardHtml(events)}</section>
   `;
-  root.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => {
+  const toolbar = root.querySelector(".admin-toolbar");
+  toolbar.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => {
     adminDashboardPeriod = button.dataset.period;
-    root.querySelectorAll("[data-period]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
+    toolbar.querySelectorAll("[data-period]").forEach(item => item.setAttribute("aria-pressed", String(item === button)));
     root.querySelector(".admin-shifts").innerHTML = data.shiftData.map(item => adminShiftCardHtml(item, data)).join("");
   }));
-  root.querySelector("#adminLinesDate").addEventListener("change", async event => {
+  toolbar.querySelector("#adminLinesDate").addEventListener("change", async event => {
     if (!event.target.value) return;
     adminLinesDate = event.target.value === today ? "" : event.target.value;
     const next = await getAdminDashboardData();
@@ -6043,6 +6069,7 @@ async function renderAdminDashboard(root) {
       if (scheduleButton) void openScheduleViewer(scheduleButton.dataset.viewSchedule, scheduleButton);
     });
   }
+  placeBesideTitle(toolbar);
   setupDataTools();
   bindAuditUndo(root, events);
   void renderProductionSummary();
