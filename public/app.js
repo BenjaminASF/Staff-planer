@@ -5347,6 +5347,17 @@ async function renderProduction() {
       root.querySelectorAll(".production-history-menu").forEach(menu => { menu.hidden = true; });
     }
   });
+  if (!root.dataset.zeroSelectBound) {
+    root.dataset.zeroSelectBound = "true";
+    // A zero in a number field is selected on focus so a new number replaces it directly.
+    root.addEventListener("focusin", event => {
+      const input = event.target;
+      if (!input.matches?.('input[type="number"]') || input.value === "" || Number(input.value) !== 0) return;
+      input.select();
+      // Safari and some mobile browsers clear the selection on mouseup/touch, so select again after it.
+      setTimeout(() => { if (document.activeElement === input) input.select(); }, 0);
+    });
+  }
   if (readOnly) {
     root.querySelectorAll(".production-entry input, .production-entry select, #productionTarget").forEach(input => { input.disabled = true; });
     root.querySelector("#productionEditBtn").addEventListener("click", () => {
