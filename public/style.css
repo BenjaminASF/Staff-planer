@@ -6687,15 +6687,6 @@ body.schedule-viewer-open { overflow: hidden; }
 .break-group-person.is-mine > span { background: rgba(255, 255, 255, .2); color: #fff; }
 .break-group-person.is-mine .mine-badge { max-width: none; margin-left: 2px; padding: 1px 6px; border-radius: 999px; background: #fff; color: #3730a3; font-size: 10px; }
 
-.production-view-badge {
-  align-self: center;
-  padding: 6px 10px;
-  border-radius: 999px;
-  background: light-dark(#eef2f7, #2a3140);
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
 
 /* ==========================================================================
    ASF design system. Loaded last, so it restyles everything above:
@@ -7065,4 +7056,45 @@ body::before { content: none; }
 
 @media (prefers-reduced-motion: reduce) {
   .header h2, .admin-bar i { animation: none; }
+}
+
+/* ---------- Admin: shift picker and view/edit mode ---------- */
+.admin-context-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; margin: 0 0 16px; }
+.admin-toolbar .admin-context-bar { flex: 1 1 auto; margin: 0 auto 0 0; justify-content: flex-start; }
+.shift-picker { display: inline-flex; gap: 2px; max-width: 100%; padding: 3px; overflow-x: auto; border-radius: 10px; background: var(--ds-surface-2); scrollbar-width: none; }
+.shift-picker::-webkit-scrollbar { display: none; }
+.shift-picker-option { display: inline-flex; flex: 0 0 auto; align-items: center; gap: 0; min-height: 32px; padding: 0 12px; border: 0; border-radius: 8px; background: none; color: var(--ds-muted); font: inherit; font-size: 13px; font-weight: 500; white-space: nowrap; cursor: pointer; transition: background .15s, color .15s, box-shadow .15s; }
+.shift-picker-option:hover { color: var(--ds-text); }
+.shift-picker-option .shift-dot { width: 8px; height: 8px; margin-right: 7px; box-shadow: none; opacity: .75; }
+.shift-picker-option[aria-pressed="true"] { background: var(--ds-surface); color: var(--ds-text); font-weight: 600; box-shadow: 0 1px 2px rgb(var(--ds-shadow-color) / .06), 0 1px 3px rgb(var(--ds-shadow-color) / .08), inset 0 -2px 0 var(--shift-color, var(--ds-accent)); }
+.shift-picker-option[aria-pressed="true"] .shift-dot { opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--shift-color) 22%, transparent); }
+
+.admin-mode { display: inline-flex; align-items: center; gap: 8px; }
+.admin-mode-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 11px; border: 1px solid var(--ds-border); border-radius: 999px; background: var(--ds-surface); color: var(--ds-muted); font: inherit; font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+button.admin-mode-chip { cursor: pointer; transition: border-color .15s, color .15s; }
+button.admin-mode-chip:hover { border-color: var(--ds-border-strong); color: var(--ds-text); }
+.admin-mode.is-editing .admin-mode-chip { border-color: var(--ds-accent-border); background: var(--ds-accent-soft); color: var(--ds-accent); font-weight: 600; }
+.admin-mode-done.btn { min-height: 30px; padding: 0 12px; font-size: 12.5px; }
+
+.admin-mode-switch { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 9px 10px; border: 1px solid var(--ds-border); border-radius: 10px; background: var(--ds-surface); color: var(--ds-text); font: inherit; text-align: left; cursor: pointer; }
+.admin-mode-switch:hover { border-color: var(--ds-border-strong); }
+.admin-mode-switch span { display: grid; gap: 1px; }
+.admin-mode-switch strong { font-size: 13.5px; font-weight: 600; }
+.admin-mode-switch small { color: var(--ds-muted); font-size: 12px; }
+.admin-mode-switch i { position: relative; flex: 0 0 auto; width: 34px; height: 20px; border-radius: 999px; background: var(--ds-border-strong); transition: background .15s; }
+.admin-mode-switch i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgb(0 0 0 / .2); transition: transform .15s var(--ds-ease); }
+.admin-mode-switch[aria-checked="true"] i { background: var(--ds-accent); }
+.admin-mode-switch[aria-checked="true"] i::after { transform: translateX(14px); }
+.admin-nav-mode:empty { display: none; }
+.admin-nav-account .sidebar-shift strong { color: var(--ds-text); }
+
+.admin-shift-card.is-active-shift { outline: 2px solid color-mix(in srgb, var(--shift-color, var(--ds-accent)) 55%, transparent); outline-offset: 2px; }
+
+@media (max-width: 640px) {
+  .admin-toolbar .admin-context-bar { flex-basis: 100%; }
+  .shift-picker { width: 100%; }
+  .shift-picker-option { flex: 1 0 auto; justify-content: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .shift-picker-option, .admin-mode-switch i, .admin-mode-switch i::after { transition: none; }
 }

@@ -171,8 +171,12 @@ let selectedBreakDay = getDefaultBreakDay();
 let selectedAssessmentPersonId = "";
 let selectedTestPersonId = "";
 let selectedProductionDate = formatDateKey(new Date());
-// Admin opens a shift's production read-only; "Redigera" unlocks editing for that shift only.
-let productionEditScope = null;
+// Admin opens Schema, Produktion and Personal read-only. Editing is switched on under Meny and
+// lasts until "Klar", another shift is chosen or another page is opened.
+const ADMIN_VIEW_MODE_PAGES = ["index.html", "produktion.html", "personal.html"];
+// Pages where admin's shift picker shows which shift the page is about.
+const ADMIN_SHIFT_PICKER_PAGES = ["dashboard.html", "index.html", "rast.html", "produktion.html", "personal.html"];
+let adminEditMode = false;
 let selectedCompetencyPersonId = "";
 let assessmentFormOpen = false;
 let editingAssessmentId = "";
@@ -430,6 +434,10 @@ function canEditShift(shiftId) {
 function canEditActiveShift() {
   return canEditShift(getShiftScope());
 }
+
+const hasAdminViewMode = () => isAdmin() && ADMIN_VIEW_MODE_PAGES.includes(getCurrentPage());
+// True while admin looks at a view-mode page without having switched on editing.
+const isAdminViewing = () => hasAdminViewMode() && !adminEditMode;
 
 const roleLevel = role => ROLE_LEVELS[role] ?? -1;
 // Staff without a login rank as operators.
@@ -1504,8 +1512,9 @@ async function saveScheduleShare(shared) {
 async function updateShareScheduleButton() {
   const button = document.getElementById("shareScheduleBtn");
   if (!button) return;
-  button.classList.toggle("hidden", !canEditActiveShift());
-  if (!canEditActiveShift()) return;
+  const canShare = canEditActiveShift() && !isAdminViewing();
+  button.classList.toggle("hidden", !canShare);
+  if (!canShare) return;
   const shared = Boolean(await getScheduleShare());
   button.classList.toggle("is-shared", shared);
   button.textContent = shared ? "Schemat är delat" : "Dela schema";
@@ -1522,7 +1531,7 @@ function setupShareSchedule() {
   if (button.dataset.bound === "true") return;
   button.dataset.bound = "true";
   button.addEventListener("click", async () => {
-    if (!canEditActiveShift()) return;
+    if (!canEditActiveShift() || isAdminViewing()) return;
     button.disabled = true;
     try {
       const [schedule, trainingLeaders, trainingLocations, extraPersonLocations, people, share] = await Promise.all([
@@ -2247,6 +2256,7 @@ function enhanceAppShell() {
     footer.removeAttribute("style");
     footer.textContent = `© ${new Date().getFullYear()} Mizzar — Staff Planner`;
   }
+  renderAdminContextBar();
 }
 
 // The menu, account box and shift notice for the signed-in user's role. Runs before
@@ -2292,7 +2302,9 @@ function renderSidebarAccount() {
     else sidebar.appendChild(box);
   }
   const scope = getShiftScope();
-  const shiftControl = canBrowseShifts() && shifts.length
+  // On pages with admin's shift picker the menu only names the shift.
+  const hasShiftPicker = isAdmin() && ADMIN_SHIFT_PICKER_PAGES.includes(getCurrentPage());
+  const shiftControl = canBrowseShifts() && shifts.length && !hasShiftPicker
     ? `<label class="sidebar-shift"><span>Visar skift</span><select id="shiftSwitcher">${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === scope ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}</select></label>`
     : `<div class="sidebar-shift"><span>Skift</span><strong>${shiftColorDot(scope)}${escapeHtml(getShiftName(scope) || "Inget skift")}</strong></div>`;
   box.innerHTML = `<a class="sidebar-user" href="profil.html"><strong>${escapeHtml(currentPerson?.name || currentUser.username)}</strong><small>${escapeHtml(ROLE_LABELS[currentUser.role] || "")}</small></a>${shiftControl}`;
@@ -2317,6 +2329,9 @@ function renderShiftNotice() {
     notice.textContent = isAdmin()
       ? "Det finns inga skift ännu. Skapa skift under Inställningar."
       : "Du tillhör inget skift ännu. Be en admin att lägga till dig i ett skift.";
+  } else if (isAdmin()) {
+    // Admin's shift picker under the title already shows the shift.
+    return;
   } else if (canEditShift(scope)) {
     if (getShiftColor(scope)) notice.classList.add(`shift-color-${getShiftColor(scope)}`);
     notice.innerHTML = `${shiftColorDot(scope)}<strong>${escapeHtml(getShiftName(scope))}</strong>`;
@@ -3992,10 +4007,13 @@ async function renderSchedule() {
     return;
   }
 
-  if (!canEditActiveShift()) {
+  if (!canEditActiveShift() || isAdminViewing()) {
     renderReadOnlySchedule(root, { people, schedule, trainingLeaders, trainingLocations, extraPersonLocations });
     return;
   }
+  // Admin may come here from the read-only view, which hid these.
+  document.getElementById("autoScheduleBtn")?.classList.remove("hidden");
+  document.getElementById("autoScheduleMessage")?.classList.remove("hidden");
   await renderScheduleTools(schedule, people, skills, { trainingLeaders, trainingLocations, extraPersonLocations });
 
   const operators = people.filter(isOperatorStaff);
@@ -4466,9 +4484,13 @@ function ensurePeopleShiftFilter() {
   select.id = "peopleShiftFilter";
   select.setAttribute("aria-label", "Visa skift");
   select.innerHTML = `<option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}">${escapeHtml(shiftOptionLabel(shift))}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}<option value="none">Utan skift</option>`;
-  // Shift leaders and right hands start in their own shift; admins see everyone.
-  select.value = linkedShiftId || (!isAdmin() && getOwnShiftId() ? getOwnShiftId() : "");
-  select.addEventListener("change", () => void renderPeople());
+  // Shift leaders and right hands start in their own shift; admins in the shift chosen in the shift picker.
+  select.value = linkedShiftId || (isAdmin() ? getShiftScope() : getOwnShiftId());
+  select.addEventListener("change", () => {
+    if (isAdmin() && shifts.some(shift => shift.id === select.value)) return void switchAdminShift(select.value);
+    renderAdminContextBar();
+    void renderPeople();
+  });
   bar.prepend(select);
 }
 
@@ -4505,7 +4527,7 @@ async function renderPeople() {
     const actions = document.createElement("div");
     const availabilitySelect = document.createElement("select");
     const availability = getPersonAvailability(person);
-    const editable = canEditPerson(person);
+    const editable = canEditPerson(person) && !isAdminViewing();
 
     row.className = `person-row person-row-${availability}`;
     meta.className = "person-meta";
@@ -4554,7 +4576,7 @@ async function renderPeople() {
       actions.append(editBtn);
     }
     // Removing people and their logins is reserved for admins.
-    if (isAdmin() && person.id !== currentPerson?.id) {
+    if (isAdmin() && !isAdminViewing() && person.id !== currentPerson?.id) {
       const deleteBtn = document.createElement("button");
       deleteBtn.className = "btn danger";
       deleteBtn.type = "button";
@@ -5252,7 +5274,7 @@ function renderProductionHistory(root, records, settings, scope) {
   const section = root.querySelector(".production-history");
   if (!section) return;
   const days = Object.values(records).filter(item => item?.date).sort((a, b) => b.date.localeCompare(a.date));
-  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "history-met" : "history-missed"}">${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button>${isAdmin() && productionEditScope !== scope ? "" : `<button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button>`}</div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
+  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "history-met" : "history-missed"}">${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button>${isAdminViewing() ? "" : `<button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button>`}</div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
   section.querySelectorAll("[data-production-menu]").forEach(button => button.addEventListener("click", event => {
     event.stopPropagation();
     const menu = section.querySelector(`[data-production-actions="${button.dataset.productionMenu}"]`);
@@ -5331,12 +5353,12 @@ async function renderProduction() {
   const otherMonthTotal = otherMonthDays.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
   const monthName = new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { month: "long", year: "numeric" });
   const monthDaysText = days => `${days} ${days === 1 ? "dag" : "dagar"} med resultat`;
-  const readOnly = isAdmin() && productionEditScope !== scope;
+  const readOnly = isAdminViewing();
   const savedText = stored?.updatedAt ? `Sparat ${new Date(stored.updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Sparas automatiskt";
   const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.filter(person => isOperatorStaff(person) || person.id === selectedId).map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
   root.innerHTML = `
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
-    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div>${readOnly ? '<span class="production-view-badge">Visningsläge</span><button id="productionEditBtn" class="btn primary" type="button">Redigera</button>' : `<button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button>${isAdmin() ? '<button id="productionDoneBtn" class="btn" type="button">Klar</button>' : ""}`}<span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
+    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div>${readOnly ? "" : '<button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button>'}<span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
     <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small>${readOnly ? "" : '<button id="editFactoryRecordBtn" type="button">Ändra manuellt</button>'}</article></div>
     <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
@@ -5360,18 +5382,9 @@ async function renderProduction() {
   }
   if (readOnly) {
     root.querySelectorAll(".production-entry input, .production-entry select, #productionTarget").forEach(input => { input.disabled = true; });
-    root.querySelector("#productionEditBtn").addEventListener("click", () => {
-      productionEditScope = scope;
-      void renderProduction();
-    });
     bindProductionDateChange(root);
     return;
   }
-  root.querySelector("#productionDoneBtn")?.addEventListener("click", async () => {
-    await flushProductionAutosave();
-    productionEditScope = null;
-    void renderProduction();
-  });
   const saveStatus = root.querySelector("#productionSaveStatus");
   const setSaveStatus = (text, state = "") => {
     saveStatus.textContent = text;
@@ -5856,7 +5869,7 @@ function adminShiftCardHtml(data, context) {
   const progress = target ? produced / target : 0;
   const notReported = isToday && !data.reportedToday;
   const absentOperators = operators.length - available.length;
-  return `<article class="card admin-shift-card${shiftColorClass(shift)}">
+  return `<article class="card admin-shift-card${shiftColorClass(shift)}${shift.id === getShiftScope() ? " is-active-shift" : ""}" data-shift-id="${escapeHtml(shift.id)}">
     <div class="admin-shift-head">
       <div><h3>${shiftColorDot(shift.id)}Skift ${escapeHtml(shift.name)}</h3><small>${leaders.length ? `Skiftledare: ${leaders.map(person => escapeHtml(person.name)).join(", ")}` : "Ingen skiftledare"}</small></div>
       ${lines.length ? `<span class="admin-pill ${lineState}" title="Linjer bemannade enligt schemat">${runnable} av ${lines.length} linjer</span>` : ""}
@@ -6045,6 +6058,7 @@ async function renderAdminDashboard(root) {
   }
   setupDataTools();
   bindAuditUndo(root, events);
+  renderAdminContextBar();
   void renderProductionSummary();
 }
 
@@ -6336,6 +6350,7 @@ function setupAdminTopbar() {
       <summary class="btn">Meny</summary>
       <div class="admin-menu-panel admin-nav-panel">
         <div class="admin-nav-account"></div>
+        <div class="admin-nav-mode"></div>
         <div class="admin-nav-tools"></div>
         ${groups.map(([title, pages]) => `<h4>${title}</h4>${pages.map(page => link(page, "admin-nav-item")).join("")}`).join("")}
         <div class="admin-nav-footer"></div>
@@ -6347,6 +6362,111 @@ function setupAdminTopbar() {
   const logout = document.getElementById("logoutBtn");
   if (logout) bar.querySelector(".admin-nav-footer").appendChild(logout);
   document.body.classList.add("admin-topnav");
+  bar.addEventListener("click", event => {
+    if (!event.target.closest("[data-admin-mode-toggle]")) return;
+    bar.querySelector(".admin-nav-menu").open = false;
+    void setAdminEditMode(!adminEditMode);
+  });
+}
+
+const EYE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+const PEN_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
+
+// The shift the picker marks. On Personal it follows the list's shift filter, which can also show everyone.
+function adminPickedShiftId() {
+  const filter = document.getElementById("peopleShiftFilter");
+  return filter ? filter.value : getShiftScope();
+}
+
+// Admin's bar under the page title: the shifts as one-click buttons, and whether the page
+// is in view or edit mode. On Översikt it sits in the overview's own toolbar.
+function renderAdminContextBar() {
+  const page = getCurrentPage();
+  const main = document.querySelector(".main");
+  if (!isAdmin() || !main || !ADMIN_SHIFT_PICKER_PAGES.includes(page)) return;
+  const toolbar = document.querySelector("#dashboardPage .admin-toolbar");
+  if (page === "dashboard.html" && !toolbar) return;
+  let bar = document.getElementById("adminContextBar");
+  if (!bar) {
+    bar = document.createElement("div");
+    bar.id = "adminContextBar";
+    bar.className = "admin-context-bar";
+    bar.addEventListener("click", event => {
+      const shiftButton = event.target.closest("[data-shift-pick]");
+      if (shiftButton) return void switchAdminShift(shiftButton.dataset.shiftPick);
+      if (event.target.closest("[data-admin-mode-done]")) return void setAdminEditMode(false);
+      if (event.target.closest("[data-admin-mode-open]")) {
+        const menu = document.querySelector("#adminTopbar .admin-nav-menu");
+        if (!menu) return;
+        // Opened after this click has passed the handler that closes menus on outside clicks.
+        setTimeout(() => {
+          menu.open = true;
+          menu.querySelector("[data-admin-mode-toggle]")?.focus();
+        });
+      }
+    });
+  }
+  if (toolbar) {
+    if (bar.parentElement !== toolbar) toolbar.prepend(bar);
+  } else if (!bar.isConnected) {
+    (main.querySelector(":scope > .page-tip") || main.querySelector(":scope > .header"))?.after(bar);
+  }
+  const picked = adminPickedShiftId();
+  bar.innerHTML = shifts.length ? `<div class="shift-picker" role="group" aria-label="Visar skift">${shifts.map(shift => `<button type="button" class="shift-picker-option${shift.color ? ` shift-color-${shift.color}` : ""}" aria-pressed="${shift.id === picked}" data-shift-pick="${escapeHtml(shift.id)}">${shiftColorDot(shift.id)}<span>${escapeHtml(shift.name)}</span></button>`).join("")}</div>` : "";
+  if (hasAdminViewMode()) {
+    bar.insertAdjacentHTML("beforeend", adminEditMode
+      ? `<div class="admin-mode is-editing" role="status"><span class="admin-mode-chip">${PEN_ICON}Redigeringsläge</span><button type="button" class="btn admin-mode-done" data-admin-mode-done>Klar</button></div>`
+      : `<div class="admin-mode"><button type="button" class="admin-mode-chip" data-admin-mode-open title="Vill du ändra något? Välj Redigeringsläge under Meny.">${EYE_ICON}Visningsläge</button></div>`);
+  }
+  renderAdminModeMenu();
+}
+
+function renderAdminModeMenu() {
+  const box = document.querySelector("#adminTopbar .admin-nav-mode");
+  if (!box) return;
+  box.innerHTML = hasAdminViewMode()
+    ? `<h4>Läge</h4><button type="button" class="admin-mode-switch" role="switch" aria-checked="${adminEditMode}" data-admin-mode-toggle>
+        <span><strong>Redigeringsläge</strong><small>${adminEditMode ? "På – ändringar sparas direkt" : "Av – sidan visas skrivskyddad"}</small></span><i aria-hidden="true"></i>
+      </button>`
+    : "";
+}
+
+async function setAdminEditMode(on) {
+  if (!hasAdminViewMode() || adminEditMode === on) return;
+  // Production typed just before "Klar" is saved before the fields lock.
+  if (!on) await flushProductionAutosave();
+  adminEditMode = on;
+  renderAdminContextBar();
+  await refreshAppViews();
+  showAppToast(on ? "Redigeringsläge – du kan ändra på sidan." : "Visningsläge – sidan är skrivskyddad.");
+}
+
+// One click on a shift in the picker shows that shift. Editing ends, so a change is never
+// made in a shift by mistake.
+async function switchAdminShift(shiftId) {
+  if (!isAdmin() || !shifts.some(shift => shift.id === shiftId)) return;
+  const filter = document.getElementById("peopleShiftFilter");
+  const filterChanged = Boolean(filter) && filter.value !== shiftId;
+  if (filter) filter.value = shiftId;
+  if (shiftId === getShiftScope()) {
+    renderAdminContextBar();
+    if (filterChanged) await renderPeople();
+    return;
+  }
+  await flushProductionAutosave();
+  sessionStorage.setItem(ACTIVE_SHIFT_KEY, shiftId);
+  adminEditMode = false;
+  renderAdminContextBar();
+  renderSidebarAccount();
+  if (getCurrentPage() === "dashboard.html") {
+    document.querySelectorAll(".admin-shift-card[data-shift-id]").forEach(card => card.classList.toggle("is-active-shift", card.dataset.shiftId === shiftId));
+  } else {
+    resetScheduleHistory();
+    renderShiftNotice();
+    renderWeekNavigation();
+    await refreshAppViews();
+  }
+  document.querySelector(`#adminContextBar [data-shift-pick="${CSS.escape(shiftId)}"]`)?.focus();
 }
 
 async function renderDashboard() {
