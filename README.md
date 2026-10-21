@@ -115,6 +115,10 @@ När någon sparar en ändring syns den direkt hos alla andra som har appen öpp
 
 Ändringarna meddelas via Postgres (`LISTEN`/`NOTIFY`), så det fungerar även om appen körs på flera instanser.
 
+### Dölja informationsmeddelanden
+
+När man stänger ett informationsmeddelande (sidtipsen och utbildningspåminnelsen) frågar appen om det ska döljas permanent eller bara den här gången. **Bara den här gången** döljer det tills man loggar in nästa gång, även om man byter sida eller laddar om. **Dölj permanent** döljer det för gott, även efter ny inloggning. Valet sparas på servern och gäller bara den egna användaren.
+
 ### Ljudnotiser
 
 Appen spelar ett kort ljud när någon annan skickar ett meddelande i chatten eller ändrar schemat eller rastplanen för ens eget skift (eller skiftet man tittar på), utan att man behöver ladda om sidan. Operatörer hör bara ändringar i veckor som har delats med dem, och ett ljud när en vecka delas. Egna ändringar ger inget ljud, och en sparning som ändrar flera saker samtidigt ger bara ett ljud, även med flera flikar öppna.

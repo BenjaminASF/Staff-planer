@@ -9,6 +9,10 @@ const { ROLES, editablePersonFields } = require("../permissions");
 const { newId, serializeShift, getPersonById, addAuditEvent } = require("../store");
 const { availabilityLabel, cleanPersonFields } = require("../validation");
 
+function buildDismissedMessages(user) {
+  return [...new Set([...(user.dismissedMessages || []), ...(user.sessionDismissedMessages || [])])];
+}
+
 async function buildMePayload(db, user) {
   const [person, shifts] = await Promise.all([
     getPersonById(db, user.personId),
@@ -17,9 +21,12 @@ async function buildMePayload(db, user) {
   return {
     user: { id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword },
     person,
-    shifts: shifts.rows.map(serializeShift)
+    shifts: shifts.rows.map(serializeShift),
+    dismissedMessages: buildDismissedMessages(user)
   };
 }
+
+const MESSAGE_ID_PATTERN = /^[a-z0-9:._-]{1,80}$/i;
 
 function authRoutes({ pool, setupCode, loginLimiter }) {
   const router = express.Router();
@@ -73,7 +80,7 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     const ip = req.ip || "";
     loginLimiter.check(ip, username);
     const { rows } = await pool.query(
-      "SELECT id, username, password_hash, role, must_change_password, person_id FROM users WHERE username = $1",
+      "SELECT id, username, password_hash, role, must_change_password, person_id, dismissed_messages FROM users WHERE username = $1",
       [username]
     );
     const row = rows[0];
@@ -87,7 +94,8 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     await pool.query("DELETE FROM sessions WHERE expires_at < now()");
     await createSession(pool, req, res, row.id);
     res.json(await buildMePayload(pool, {
-      id: row.id, username: row.username, role: row.role, mustChangePassword: row.must_change_password, personId: row.person_id
+      id: row.id, username: row.username, role: row.role, mustChangePassword: row.must_change_password, personId: row.person_id,
+      dismissedMessages: row.dismissed_messages
     }));
   });
 
@@ -140,8 +148,23 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
       // Sign out other devices; this one gets a fresh session below.
       await client.query("DELETE FROM sessions WHERE user_id = $1", [req.user.id]);
     });
-    await createSession(pool, req, res, req.user.id);
+    await createSession(pool, req, res, req.user.id, req.user.sessionDismissedMessages);
     res.json(await buildMePayload(pool, { ...req.user, mustChangePassword: false }));
+  });
+
+  // Hides an info message for this user: permanently, or until the next login.
+  router.post("/me/dismissed-messages", requireUser, async (req, res) => {
+    const id = String(req.body?.id || "");
+    if (!MESSAGE_ID_PATTERN.test(id)) throw new HttpError(400, "Ogiltigt meddelande.");
+    const append = "dismissed_messages = CASE WHEN $2 = ANY(dismissed_messages) THEN dismissed_messages ELSE array_append(dismissed_messages, $2) END";
+    if (req.body?.permanent === true) {
+      await pool.query(`UPDATE users SET ${append} WHERE id = $1`, [req.user.id, id]);
+      req.user.dismissedMessages = [...req.user.dismissedMessages, id];
+    } else {
+      await pool.query(`UPDATE sessions SET ${append} WHERE token_hash = $1`, [req.sessionTokenHash, id]);
+      req.user.sessionDismissedMessages = [...req.user.sessionDismissedMessages, id];
+    }
+    res.json({ dismissedMessages: buildDismissedMessages(req.user) });
   });
 
   return router;

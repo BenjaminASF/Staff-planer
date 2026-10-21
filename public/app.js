@@ -100,7 +100,6 @@ const LEGACY_WEEKLY_DOCUMENTS = {
   staff_schedule_priority_lines_enc: "schedulePriorityLines"
 };
 
-const TRAINING_REMINDER_DISMISSED_KEY = "staff_training_reminder_dismissed_day";
 const ACTIVE_SHIFT_KEY = "staff_active_shift";
 const SIGNED_IN_HINT_KEY = "staff_signed_in";
 const ADMIN_LANDED_KEY = "staff_admin_landed";
@@ -956,6 +955,45 @@ function manageDialogFocus(modal, onEscape) {
     document.body.style.overflow = previousOverflow;
     if (previousFocus?.isConnected) previousFocus.focus();
   };
+}
+
+// Info messages the signed-in user has closed, from /api/me. "Bara den här gången" lasts
+// until the next login, "Dölj permanent" for good; the server keeps both per user.
+let dismissedMessages = new Set();
+const isMessageDismissed = id => dismissedMessages.has(id);
+
+function askDismissMode() {
+  return new Promise(resolve => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `<section class="replacement-modal dismiss-message-modal">
+      <h3>Dölj meddelandet</h3>
+      <p>Vill du dölja det här meddelandet permanent eller bara den här gången?</p>
+      <div><button class="btn" type="button" data-choice="cancel">Avbryt</button><button class="btn" type="button" data-choice="session">Bara den här gången</button><button class="btn primary" type="button" data-choice="permanent">Dölj permanent</button></div>
+    </section>`;
+    document.body.appendChild(overlay);
+    let cleanupFocus;
+    const close = choice => { overlay.remove(); cleanupFocus?.(); resolve(choice); };
+    cleanupFocus = manageDialogFocus(overlay.querySelector(".dismiss-message-modal"), () => close(null));
+    overlay.querySelectorAll("[data-choice]").forEach(button => button.addEventListener("click", () => {
+      close(button.dataset.choice === "cancel" ? null : button.dataset.choice);
+    }));
+    overlay.addEventListener("click", event => { if (event.target === overlay) close(null); });
+  });
+}
+
+async function dismissMessage(id, element) {
+  const choice = await askDismissMode();
+  if (!choice) return;
+  element.remove();
+  dismissedMessages.add(id);
+  try {
+    const result = await apiRequest("POST", "/me/dismissed-messages", { id, permanent: choice === "permanent" });
+    dismissedMessages = new Set(result.dismissedMessages);
+  } catch (error) {
+    // Still hidden on this page; it may come back after a reload.
+    console.warn("Could not save dismissed message:", error);
+  }
 }
 
 function showSchedulePreview(result, people, options = {}) {
@@ -2233,9 +2271,11 @@ function enhanceAppShell() {
   };
   const header = main?.querySelector(".header");
   if (!appSettings.showTips) main?.querySelector(".page-tip")?.remove();
-  if (appSettings.showTips && header && pageTips[currentPage] && !main.querySelector(".page-tip")) {
+  const tipId = `tip:${currentPage}`;
+  if (appSettings.showTips && header && pageTips[currentPage] && !isMessageDismissed(tipId) && !main.querySelector(".page-tip")) {
     header.insertAdjacentHTML("afterend", `<aside class="page-tip"><span>Tips</span><p>${escapeHtml(pageTips[currentPage])}</p><button type="button" aria-label="Dölj tips">×</button></aside>`);
-    main.querySelector(".page-tip button").addEventListener("click", event => event.currentTarget.parentElement.remove());
+    const tip = main.querySelector(".page-tip");
+    tip.querySelector("button").addEventListener("click", () => dismissMessage(tipId, tip));
   }
   if (appShell) {
     let footer = appShell.querySelector(":scope > footer");
@@ -4815,6 +4855,8 @@ async function renderTestResults() {
   root.append(peoplePanel, content);
 }
 
+const TRAINING_REMINDER_MESSAGE_ID = "training-reminder";
+
 async function renderTrainingReminders() {
   const main = document.querySelector("#appShell .main");
   if (!main) return;
@@ -4824,13 +4866,10 @@ async function renderTrainingReminders() {
     return;
   }
 
-  const dismissedDay = localStorage.getItem(TRAINING_REMINDER_DISMISSED_KEY);
-  const currentDay = formatDateKey(new Date());
-  if (dismissedDay === currentDay) {
+  if (isMessageDismissed(TRAINING_REMINDER_MESSAGE_ID)) {
     document.getElementById("trainingReminderPanel")?.remove();
     return;
   }
-  if (dismissedDay) localStorage.removeItem(TRAINING_REMINDER_DISMISSED_KEY);
 
   const [people, departments, skills, timestamps] = await Promise.all([
     getPeople(),
@@ -4905,10 +4944,7 @@ async function renderTrainingReminders() {
       <button class="btn training-reminder-close" type="button">Stäng</button>
     </div>
   `;
-  panel.querySelector(".training-reminder-close").addEventListener("click", () => {
-    localStorage.setItem(TRAINING_REMINDER_DISMISSED_KEY, currentDay);
-    panel.remove();
-  });
+  panel.querySelector(".training-reminder-close").addEventListener("click", () => dismissMessage(TRAINING_REMINDER_MESSAGE_ID, panel));
 }
 
 // Admins choose which shift the competence page shows: one shift or "Alla skift".
@@ -7929,6 +7965,7 @@ const AUTH_NOTICE_KEY = "staff_auth_notice";
 
 function setSession(me) {
   currentUser = me.user;
+  dismissedMessages = new Set(me.dismissedMessages || []);
   currentPerson = me.person;
   shifts = Array.isArray(me.shifts) ? me.shifts : [];
   sessionStorage.setItem(SIGNED_IN_HINT_KEY, "1");

@@ -89,12 +89,14 @@ function setSessionCookie(req, res, token, maxAgeSeconds) {
   res.append("Set-Cookie", parts.join("; "));
 }
 
-async function createSession(db, req, res, userId) {
+// dismissedMessages carries "hidden this time" choices over when a session is replaced
+// without a new login (password change).
+async function createSession(db, req, res, userId, dismissedMessages = []) {
   const token = crypto.randomBytes(32).toString("base64url");
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
   await db.query(
-    "INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, now() + make_interval(secs => $3))",
-    [hashToken(token), userId, maxAge]
+    "INSERT INTO sessions (token_hash, user_id, expires_at, dismissed_messages) VALUES ($1, $2, now() + make_interval(secs => $3), $4)",
+    [hashToken(token), userId, maxAge, dismissedMessages]
   );
   setSessionCookie(req, res, token, maxAge);
 }
@@ -114,6 +116,7 @@ function loadUser(pool) {
     const tokenHash = hashToken(token);
     const { rows } = await pool.query(
       `SELECT u.id, u.username, u.role, u.must_change_password, u.person_id, p.shift_id, p.name,
+              u.dismissed_messages, s.dismissed_messages AS session_dismissed_messages,
               s.last_seen_at < now() - interval '1 hour' AS needs_refresh
          FROM sessions s
          JOIN users u ON u.id = s.user_id
@@ -123,6 +126,7 @@ function loadUser(pool) {
     );
     const row = rows[0];
     if (!row) return next();
+    req.sessionTokenHash = tokenHash;
     req.user = {
       id: row.id,
       username: row.username,
@@ -130,7 +134,9 @@ function loadUser(pool) {
       mustChangePassword: row.must_change_password,
       personId: row.person_id,
       shiftId: row.shift_id,
-      name: row.name
+      name: row.name,
+      dismissedMessages: row.dismissed_messages,
+      sessionDismissedMessages: row.session_dismissed_messages
     };
     if (row.needs_refresh) {
       // Sliding expiry: an active session stays valid.
