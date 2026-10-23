@@ -1762,7 +1762,14 @@ async function getDepartments() {
     if (canChangeSharedSettings()) await saveDepartments(DEFAULT_DEPARTMENTS);
     return [...DEFAULT_DEPARTMENTS];
   }
-  return departments;
+  // A machine moved to the trash earlier could stay behind in the list; drop it here.
+  const trash = await getWorkItemTrash();
+  const activeNames = new Set(customWorkItems.map(item => item.name.toLocaleLowerCase()));
+  const trashedNames = new Set(trash.map(item => String(item.name || "").toLocaleLowerCase())
+    .filter(name => name && !activeNames.has(name) && !DEFAULT_DEPARTMENTS.some(value => value.toLocaleLowerCase() === name)));
+  const kept = departments.filter(name => !trashedNames.has(String(name).toLocaleLowerCase()));
+  if (kept.length !== departments.length) await saveDepartments(kept);
+  return kept;
 }
 
 async function saveDepartments(departments) {
@@ -3727,7 +3734,8 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   const templates = await getScheduleTemplates();
   const updatedAt = getDocumentUpdatedAt(getShiftScope(), getWeekDocumentKey("schedule"));
   const companies = [...new Set(people.map(person => person.company).filter(Boolean))].sort((a, b) => a.localeCompare(b, "sv"));
-  const knownSkills = [...new Set(Object.values(skills).flat().filter(Boolean))].sort((a, b) => a.localeCompare(b, "sv"));
+  const currentSkills = new Set((await getDepartmentsFor("showInCompetency")).map(name => name.toLocaleLowerCase()));
+  const knownSkills = [...new Set(Object.values(skills).flat().filter(name => name && currentSkills.has(String(name).toLocaleLowerCase())))].sort((a, b) => a.localeCompare(b, "sv"));
   tools.innerHTML = `<div class="schedule-filter-tools"><label>Företag<select id="scheduleCompanyFilter"><option value="">Alla</option>${companies.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></label><label>Status<select id="scheduleAvailabilityFilter"><option value="all">Alla</option><option value="available">Tillgänglig</option><option value="unavailable">Ej tillgänglig</option><option value="off">Ledig</option></select></label><label>Kompetens<select id="scheduleSkillFilter"><option value="">Alla</option>${knownSkills.map(value => `<option value="${escapeHtml(value)}">${escapeHtml(value)}</option>`).join("")}</select></label></div><div class="schedule-copy-tools"><label>Från<select id="copyDayFrom">${DAYS.map(day => `<option>${day}</option>`).join("")}</select></label><label>Till<select id="copyDayTo">${DAYS.map((day, index) => `<option${index === 1 ? " selected" : ""}>${day}</option>`).join("")}</select></label><button id="copyScheduleDay" class="btn" type="button">Kopiera dag</button></div><div class="schedule-template-tools"><select id="scheduleTemplateSelect"><option value="">Välj mall</option>${templates.map(item => `<option value="${item.id}">${escapeHtml(item.name)}</option>`).join("")}</select><button id="saveScheduleTemplate" class="btn" type="button">Spara veckan som mall</button><button id="applyScheduleTemplate" class="btn" type="button">Använd mall</button></div><div class="schedule-history-tools"><button id="undoSchedule" class="btn" type="button"${scheduleUndoStack.length ? "" : " disabled"}>↶ Ångra</button><button id="redoSchedule" class="btn" type="button"${scheduleRedoStack.length ? "" : " disabled"}>↷ Gör om</button><span class="schedule-save-state">✓ ${updatedAt ? `Sparat ${new Date(updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Redo att spara"}</span></div>`;
   tools.querySelector("#scheduleCompanyFilter").value = scheduleFilters.company;
   tools.querySelector("#scheduleAvailabilityFilter").value = scheduleFilters.availability;
@@ -4716,10 +4724,18 @@ async function renderTestResults() {
       removeButton.setAttribute("aria-label", `Ta bort ${department}`);
       removeButton.title = `Ta bort ${department}`;
       removeButton.addEventListener("click", async () => {
+        const workItem = customWorkItems.find(item => item.name.toLocaleLowerCase() === department.toLocaleLowerCase());
         const shouldRemove = confirm(
-          `Vill du ta bort ${department}? Testresultat och maskinbehörighet för avdelningen tas också bort.`
+          `Vill du ta bort ${department}? Testresultat och maskinbehörighet för avdelningen tas också bort.` +
+          (workItem ? ` ${workItem.name} flyttas även till papperskorgen och försvinner från Schema.` : "")
         );
         if (!shouldRemove) return;
+        if (workItem) {
+          await createWorkItemSafetySnapshot(`${workItem.name} togs bort från Testresultat`);
+          const trashItems = await getWorkItemTrash();
+          await saveWorkItemTrash([{ ...workItem, deletedAt: new Date().toISOString() }, ...trashItems]);
+          await saveCustomWorkItems(customWorkItems.filter(entry => entry.id !== workItem.id));
+        }
 
         const [currentDepartments, currentResults, currentSkills, currentRestrictions, currentDetails] = await Promise.all([
           getDepartments(),
@@ -4728,7 +4744,7 @@ async function renderTestResults() {
           getMachineRestrictions(),
           getMachineSkillDetails()
         ]);
-        const updatedDepartments = currentDepartments.filter(item => item !== department);
+        const updatedDepartments = currentDepartments.filter(item => item.toLocaleLowerCase() !== department.toLocaleLowerCase());
         Object.values(currentResults).forEach(personResults => {
           if (personResults && typeof personResults === "object") {
             delete personResults[department];
@@ -7332,7 +7348,7 @@ async function syncWorkItemCompetency(item, previousItem = null) {
   const shouldShow = item.enabled && (item.showInCompetency || item.showInTestResults);
   const contains = next.some(value => value.toLocaleLowerCase() === item.name.toLocaleLowerCase());
   if (shouldShow && !contains) next.push(item.name);
-  if (!shouldShow) next = next.filter(value => value !== item.name);
+  if (!shouldShow) next = next.filter(value => value.toLocaleLowerCase() !== item.name.toLocaleLowerCase());
   await saveDepartments([...new Set(next)]);
 }
 
