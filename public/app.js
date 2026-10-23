@@ -5858,7 +5858,7 @@ async function getAdminDashboardData() {
         department,
         need: need[department] || 0,
         available: available.filter(person => (skills[person.id] || []).includes(department)).length,
-        total: operators.filter(person => (skills[person.id] || []).includes(department)).length
+        total: operators.length
       })),
       hasSchedule: Boolean(linesDay) && TASKS.some(task => schedules[index]?.[task]?.[linesDay]),
       lines: getScheduledLines({
@@ -6094,7 +6094,7 @@ async function renderAdminDashboard(root) {
       <div class="card"><h3>Svinn hittills i månaden</h3><p class="admin-sub">Kilo svinn per skift.</p><div class="admin-waste">${adminWasteHtml(shiftData)}</div></div>
     </section>
     <section class="admin-columns">
-      <details class="card admin-section admin-section-card" data-admin-section="competence"${adminSectionOpen("competence")}><summary class="admin-section-toggle"><h3>Kompetens per skift</h3></summary><p class="admin-sub">Tillgängliga idag / alla operatörer med kompetensen. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</details>
+      <details class="card admin-section admin-section-card" data-admin-section="competence"${adminSectionOpen("competence")}><summary class="admin-section-toggle"><h3>Kompetens per skift</h3></summary><p class="admin-sub">Tillgängliga med kompetensen / alla operatörer på skiftet. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</details>
       <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Ej tillgängliga och lediga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
     </section>
     <section id="adminAuditSection"${adminAuditOpen ? "" : " hidden"}>${auditCardHtml(events)}</section>
