@@ -43,7 +43,7 @@ Admin hamnar på **Översikt** efter inloggningen. Sidan visar alla skift sida v
 - **Regler för linjebemanning** visar vilka platser, kompetenser och hur många personer varje linje kräver. Saknas en regel, till exempel en plats utan kopplad kompetens, visas linjen som **Regel saknas** och regeln listas där i stället för att appen gissar. Platserna per linje ändras under **Inställningar → Rastlinjer**.
 
 Linjeöversikten uppdateras direkt när schemat, personalens status eller kompetensen ändras. Tillgängligheten är personens status just nu, även när man tittar på ett annat datum.
-- Kompetensen per skift jämfört med hur många som behövs för att köra alla linjer.
+- Kompetensen per skift jämfört med hur många som behövs för att köra alla linjer. Varje ruta visar hur många tillgängliga som har kompetensen av alla operatörer på skiftet, till exempel 5 / 12 för GD.
 
 Admin har ingen sidomeny. Överst finns en kompakt menyrad med genvägar till Översikt, Schema, Produktion och Personal. Under **Meny** finns alla sidor, valet av skift, Min profil och Logga ut.
 
