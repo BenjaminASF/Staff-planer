@@ -170,7 +170,7 @@ let selectedBreakDay = getDefaultBreakDay();
 let selectedAssessmentPersonId = "";
 let selectedTestPersonId = "";
 let selectedProductionDate = formatDateKey(new Date());
-// Admin opens Schema, Produktion and Personal read-only. Editing is switched on under Meny and
+// Admin opens Schema, Produktion and Personal read-only. Editing is switched on with the mode chip and
 // lasts until "Klar", another shift is chosen or another page is opened.
 const ADMIN_VIEW_MODE_PAGES = ["index.html", "produktion.html", "personal.html"];
 // Pages where admin's shift picker shows which shift the page is about.
@@ -6413,7 +6413,6 @@ function setupAdminTopbar() {
       <summary class="btn">Meny</summary>
       <div class="admin-menu-panel admin-nav-panel">
         <div class="admin-nav-account"></div>
-        <div class="admin-nav-mode"></div>
         <div class="admin-nav-tools"></div>
         ${groups.map(([title, pages]) => `<h4>${title}</h4>${pages.map(page => link(page, "admin-nav-item")).join("")}`).join("")}
         <div class="admin-nav-footer"></div>
@@ -6425,11 +6424,6 @@ function setupAdminTopbar() {
   const logout = document.getElementById("logoutBtn");
   if (logout) bar.querySelector(".admin-nav-footer").appendChild(logout);
   document.body.classList.add("admin-topnav");
-  bar.addEventListener("click", event => {
-    if (!event.target.closest("[data-admin-mode-toggle]")) return;
-    bar.querySelector(".admin-nav-menu").open = false;
-    void setAdminEditMode(!adminEditMode);
-  });
 }
 
 const EYE_ICON = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -6456,15 +6450,7 @@ function renderAdminContextBar() {
       const shiftButton = event.target.closest("[data-shift-pick]");
       if (shiftButton) return void switchAdminShift(shiftButton.dataset.shiftPick);
       if (event.target.closest("[data-admin-mode-done]")) return void setAdminEditMode(false);
-      if (event.target.closest("[data-admin-mode-open]")) {
-        const menu = document.querySelector("#adminTopbar .admin-nav-menu");
-        if (!menu) return;
-        // Opened after this click has passed the handler that closes menus on outside clicks.
-        setTimeout(() => {
-          menu.open = true;
-          menu.querySelector("[data-admin-mode-toggle]")?.focus();
-        });
-      }
+      if (event.target.closest("[data-admin-mode-toggle]")) return void setAdminEditMode(!adminEditMode);
     });
   }
   if (!bar.isConnected) {
@@ -6474,20 +6460,9 @@ function renderAdminContextBar() {
   bar.innerHTML = shifts.length ? `<div class="shift-picker" role="group" aria-label="Visar skift">${shifts.map(shift => `<button type="button" class="shift-picker-option${shift.color ? ` shift-color-${shift.color}` : ""}" aria-pressed="${shift.id === picked}" data-shift-pick="${escapeHtml(shift.id)}">${shiftColorDot(shift.id)}<span>${escapeHtml(shift.name)}</span></button>`).join("")}</div>` : "";
   if (hasAdminViewMode()) {
     bar.insertAdjacentHTML("beforeend", adminEditMode
-      ? `<div class="admin-mode is-editing" role="status"><span class="admin-mode-chip">${PEN_ICON}Redigeringsläge</span><button type="button" class="btn admin-mode-done" data-admin-mode-done>Klar</button></div>`
-      : `<div class="admin-mode"><button type="button" class="admin-mode-chip" data-admin-mode-open title="Vill du ändra något? Välj Redigeringsläge under Meny.">${EYE_ICON}Visningsläge</button></div>`);
+      ? `<div class="admin-mode is-editing"><button type="button" class="admin-mode-chip" data-admin-mode-toggle title="Tryck för att gå tillbaka till Visningsläge">${PEN_ICON}Redigeringsläge</button><button type="button" class="btn admin-mode-done" data-admin-mode-done>Klar</button></div>`
+      : `<div class="admin-mode"><button type="button" class="admin-mode-chip" data-admin-mode-toggle title="Tryck för att byta till Redigeringsläge">${EYE_ICON}Visningsläge</button></div>`);
   }
-  renderAdminModeMenu();
-}
-
-function renderAdminModeMenu() {
-  const box = document.querySelector("#adminTopbar .admin-nav-mode");
-  if (!box) return;
-  box.innerHTML = hasAdminViewMode()
-    ? `<h4>Läge</h4><button type="button" class="admin-mode-switch" role="switch" aria-checked="${adminEditMode}" data-admin-mode-toggle>
-        <span><strong>Redigeringsläge</strong><small>${adminEditMode ? "På – ändringar sparas direkt" : "Av – sidan visas skrivskyddad"}</small></span><i aria-hidden="true"></i>
-      </button>`
-    : "";
 }
 
 async function setAdminEditMode(on) {
