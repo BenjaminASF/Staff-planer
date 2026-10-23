@@ -101,6 +101,35 @@ describe("chat for admins and shift leaders", () => {
     assert.ok(!ids.includes(own.id) && !ids.includes(leaderMessage.id));
   });
 
+  test("a private message is seen only by the sender and the recipient", async () => {
+    const { members } = (await leader.get("/api/chat/members")).data;
+    const names = members.map(member => member.name);
+    assert.deepEqual(names, ["Ada Admin", "Bo Blå"]);
+    const bo = members.find(member => member.name === "Bo Blå");
+    const sent = await leader.post("/api/chat/messages", { text: "Bara till dig", recipientId: bo.id, image: { type: "image/png", data: PNG } });
+    assert.equal(sent.status, 201);
+    const message = sent.data.message;
+    assert.equal(message.recipientId, bo.id);
+    assert.equal(message.recipientName, "Bo Blå");
+    const ids = async client => (await client.get("/api/chat/messages")).data.messages.map(item => item.id);
+    assert.ok((await ids(leader)).includes(message.id));
+    assert.ok((await ids(otherLeader)).includes(message.id));
+    assert.ok(!(await ids(admin)).includes(message.id));
+    assert.equal((await otherLeader.get("/api/chat/unread")).data.latest.id, message.id);
+    assert.notEqual((await admin.get("/api/chat/unread")).data.latest?.id, message.id);
+    const image = await fetch(server.baseUrl + message.imageUrl, { headers: { cookie: admin.cookie } });
+    assert.equal(image.status, 404);
+    assert.equal((await admin.delete(`/api/chat/messages/${message.id}`)).status, 404);
+  });
+
+  test("private messages need a recipient who uses the chat", async () => {
+    const operatorUser = (await operator.get("/api/me")).data.user;
+    assert.equal((await leader.post("/api/chat/messages", { text: "Hej", recipientId: operatorUser.id })).status, 400);
+    assert.equal((await leader.post("/api/chat/messages", { text: "Hej", recipientId: "finns-inte" })).status, 400);
+    const me = (await leader.get("/api/me")).data.user;
+    assert.equal((await leader.post("/api/chat/messages", { text: "Hej", recipientId: me.id })).status, 400);
+  });
+
   test("older messages load page by page", async () => {
     for (let index = 0; index < 55; index += 1) await leader.post("/api/chat/messages", { text: `Meddelande ${index}` });
     const first = await admin.get("/api/chat/messages");
