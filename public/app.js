@@ -5400,7 +5400,7 @@ async function renderProduction() {
   const record = stored || {
     date: selectedProductionDate,
     machines: Object.fromEntries(machines.map(machine => [machine, {
-      personId: scheduledOperator(schedule, trainingLocations, machine), result: "", waste: "", comment: ""
+      personId: scheduledOperator(schedule, trainingLocations, machine), result: "", waste: "", plusMinus: "", comment: ""
     }]))
   };
   const total = machines.reduce((sum, machine) => sum + (Number(record.machines?.[machine]?.result) || 0), 0);
@@ -5417,7 +5417,7 @@ async function renderProduction() {
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
     <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div>${readOnly ? "" : '<button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button>'}<span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
     <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small>${readOnly ? "" : '<button id="editFactoryRecordBtn" type="button">Ändra manuellt</button>'}</article></div>
-    <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Svinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
+    <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Maskinsvinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label>Plus-/minuslåda (KG)<input data-machine="${escapeHtml(machine)}" data-field="plusMinus" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.plusMinus ?? "")}" placeholder="0" /></label><label>Totalt svinn (KG)<output class="production-waste production-waste-total" data-machine="${escapeHtml(machine)}" data-field="wasteTotal">${formatWaste(getMachineWaste(item))}</output></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
   `;
   placeBesideTitle(root.querySelector(".production-month"));
@@ -5471,6 +5471,7 @@ async function renderProduction() {
         cans: cans === "" ? null : Number(cans),
         result: Number(field(machine, "result").value) || 0,
         waste: Number(field(machine, "waste").value) || 0,
+        plusMinus: Number(field(machine, "plusMinus").value) || 0,
         comment: field(machine, "comment").value.trim()
       };
     });
@@ -5540,6 +5541,10 @@ async function renderProduction() {
     input.closest(".production-machine-row").querySelector(".production-cans").value = "";
     updateSummary();
   }));
+  root.querySelectorAll(".production-waste:not(output)").forEach(input => input.addEventListener("input", () => {
+    const machine = input.dataset.machine;
+    field(machine, "wasteTotal").textContent = formatWaste(getMachineWaste({ waste: field(machine, "waste").value, plusMinus: field(machine, "plusMinus").value }));
+  }));
   root.querySelector("#productionTarget").addEventListener("input", updateSummary);
   root.querySelector(".production-entry").addEventListener("input", () => queueSave("day"));
   root.querySelector(".production-entry").addEventListener("change", () => queueSave("day"));
@@ -5606,8 +5611,17 @@ function getProductionDayTotal(record) {
   return Number(record?.total) || sumBy(machines, machine => machine.result);
 }
 
+// Total waste on a machine: the machine's own waste plus the plus/minus box.
+function getMachineWaste(entry) {
+  return (Number(entry?.waste) || 0) + (Number(entry?.plusMinus) || 0);
+}
+
+function formatWaste(value) {
+  return Number(value || 0).toLocaleString("sv-SE", { maximumFractionDigits: 2 });
+}
+
 function getProductionDayWaste(record) {
-  return sumBy(Object.values(record?.machines || {}), machine => machine.waste);
+  return sumBy(Object.values(record?.machines || {}), getMachineWaste);
 }
 
 function getWorkplaceStaffCount(workplace) {
@@ -6215,13 +6229,18 @@ async function renderProductionSummary() {
       machine, line: lineId ? BREAK_LINE_LABELS[lineId] || lineId : "",
       reported: entries.length > 0,
       boxes: sumBy(entries, entry => entry.result),
-      waste: sumBy(entries, entry => entry.waste),
+      machineWaste: sumBy(entries, entry => entry.waste),
+      plusMinus: sumBy(entries, entry => entry.plusMinus),
+      waste: sumBy(entries, getMachineWaste),
       ...operatorsOn(machine),
       trainees: traineesOn(machine)
     };
   });
   const total = sumBy(records, getProductionDayTotal);
+  const machineWaste = sumBy(rows, row => row.machineWaste);
+  const plusMinus = sumBy(rows, row => row.plusMinus);
   const waste = sumBy(rows, row => row.waste);
+  const kg = value => `${formatNumber(value, value % 1 ? 1 : 0)} kg`;
   const target = isToday ? data.todayTarget : data.monthTarget;
   const shift = data.shift;
   const period = isToday
@@ -6233,9 +6252,9 @@ async function renderProductionSummary() {
   ].filter(Boolean).join("") || '<span class="admin-muted">–</span>';
   const body = !records.length
     ? `<div class="empty-state">${isToday ? "Ingen produktion är rapporterad idag." : "Ingen produktion är rapporterad den här månaden."}</div>`
-    : `<div class="admin-table-scroll"><table class="admin-table production-summary-table"><thead><tr><th>Linje / maskin</th><th>Box</th><th>Svinn</th><th class="summary-operator">Operatörer</th></tr></thead><tbody>
-      ${rows.map(row => `<tr class="${row.boxes ? "" : "is-idle"}"><th scope="row">${row.line ? `${escapeHtml(row.line)} <small>· ${escapeHtml(row.machine)}</small>` : escapeHtml(row.machine)}<span class="summary-operator-inline">${operatorHtml(row)}</span></th><td>${row.reported ? formatNumber(row.boxes) : "–"}</td><td>${row.reported ? `${formatNumber(row.waste, row.waste % 1 ? 1 : 0)} kg` : "–"}</td><td class="summary-operator">${operatorHtml(row)}</td></tr>`).join("")}
-      </tbody><tfoot><tr><th scope="row">Totalt</th><td>${formatNumber(total)}</td><td>${formatNumber(waste, waste % 1 ? 1 : 0)} kg</td><td class="summary-operator">${target ? `Mål ${formatNumber(target)} box · <b class="${total >= target ? "admin-good" : "admin-bad"}">${Math.round(total / target * 100)} %</b>` : ""}</td></tr></tfoot></table></div>${target ? `<p class="summary-target-inline">Mål ${formatNumber(target)} box · <b class="${total >= target ? "admin-good" : "admin-bad"}">${Math.round(total / target * 100)} %</b></p>` : ""}`;
+    : `<div class="admin-table-scroll"><table class="admin-table production-summary-table"><thead><tr><th>Linje / maskin</th><th>Box</th><th>Maskinsvinn</th><th>Plus/minus</th><th>Totalt svinn</th><th class="summary-operator">Operatörer</th></tr></thead><tbody>
+      ${rows.map(row => `<tr class="${row.boxes ? "" : "is-idle"}"><th scope="row">${row.line ? `${escapeHtml(row.line)} <small>· ${escapeHtml(row.machine)}</small>` : escapeHtml(row.machine)}<span class="summary-operator-inline">${operatorHtml(row)}</span></th><td>${row.reported ? formatNumber(row.boxes) : "–"}</td>${[row.machineWaste, row.plusMinus, row.waste].map(value => `<td>${row.reported ? kg(value) : "–"}</td>`).join("")}<td class="summary-operator">${operatorHtml(row)}</td></tr>`).join("")}
+      </tbody><tfoot><tr><th scope="row">Totalt</th><td>${formatNumber(total)}</td><td>${kg(machineWaste)}</td><td>${kg(plusMinus)}</td><td>${kg(waste)}</td><td class="summary-operator">${target ? `Mål ${formatNumber(target)} box · <b class="${total >= target ? "admin-good" : "admin-bad"}">${Math.round(total / target * 100)} %</b>` : ""}</td></tr></tfoot></table></div>${target ? `<p class="summary-target-inline">Mål ${formatNumber(target)} box · <b class="${total >= target ? "admin-good" : "admin-bad"}">${Math.round(total / target * 100)} %</b></p>` : ""}`;
   overlay.innerHTML = `<section class="schedule-viewer production-summary${shift.color ? ` shift-color-${shift.color}` : ""}">
     <header class="viewer-head">
       <div><h3>${shiftColorDot(shift.id)}Produktion per maskin · Skift ${escapeHtml(shift.name)}</h3><small>${escapeHtml(period)}</small></div>
