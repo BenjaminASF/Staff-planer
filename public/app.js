@@ -5869,7 +5869,7 @@ const capacityState = (have, need) => have >= need ? "good" : have > 0 ? "warn" 
 // Production capacity at a glance: manned lines, whether all lines could run, and available people.
 // What is missing stays behind "Visa detaljer".
 function adminLinesHtml(data, { today, linesDate, linesDay }) {
-  const { shift, lines, capacity, hasSchedule, available } = data;
+  const { shift, lines, capacity, hasSchedule, available, operators } = data;
   if (!lines.length) return "";
   const staffed = lines.filter(line => line.staffed).length;
   const lineText = line => line.ruleGaps.length ? "Regel saknas" : line.staffed ? "Bemannad" : "Ej bemannad";
@@ -5881,7 +5881,7 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
   const stats = [
     ["Bemannade linjer", `${staffed} av ${lines.length}`, capacityState(staffed, lines.length)],
     [`Kan köra alla ${lines.length} linjer`, unknown ? "Okänt" : capacity.canRunAll ? "Ja" : "Nej", unknown ? "warn" : capacity.canRunAll ? "good" : "bad"],
-    ["Tillgänglig personal", unknown ? `${available.length}` : `${available.length} av ${capacity.places}`, unknown ? "warn" : capacityState(available.length, capacity.places)]
+    ["Tillgänglig personal", `${available.length} av ${operators.length}`, unknown ? "warn" : capacityState(available.length, capacity.places)]
   ];
   const notes = [
     !linesDay ? "Ingen arbetsdag enligt inställningarna." : !hasSchedule ? "Inget schema är lagt för dagen." : "",
