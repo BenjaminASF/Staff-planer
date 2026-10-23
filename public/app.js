@@ -7629,7 +7629,7 @@ const CHAT_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const CHAT_NOTIFIED_KEY = "staff_chat_notified_id";
 const CHAT_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null };
+const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [] };
 
 const chatMessageId = message => BigInt(message?.id || 0);
 
@@ -7646,6 +7646,7 @@ function getChatElements() {
     input: widget.querySelector(".chat-form textarea"),
     file: widget.querySelector(".chat-form input[type=file]"),
     attachment: widget.querySelector(".chat-attachment"),
+    recipient: widget.querySelector(".chat-recipient select"),
     status: widget.querySelector(".chat-status")
   };
 }
@@ -7658,11 +7659,12 @@ function setupChat() {
   widget.innerHTML = `
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
-      <header class="chat-header"><div><strong>Chatt</strong><small>Admin, skiftledare och höger hand</small></div><button type="button" class="chat-close" aria-label="Stäng chatten">×</button></header>
+      <header class="chat-header"><div><strong>Chatt</strong><small>Till alla eller privat till en person</small></div><button type="button" class="chat-close" aria-label="Stäng chatten">×</button></header>
       <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
       <form class="chat-form">
         <div class="chat-attachment hidden"><img alt="Vald bild" /><button type="button" class="chat-attachment-remove" aria-label="Ta bort bilden">×</button></div>
         <p class="chat-status inline-message" role="status"></p>
+        <label class="chat-recipient">Till <select aria-label="Mottagare"><option value="">Alla</option></select></label>
         <div class="chat-input-row">
           <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
           <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande…" aria-label="Meddelande"></textarea>
@@ -7696,9 +7698,12 @@ function setupChat() {
   });
   elements.widget.querySelector(".chat-attachment-remove").addEventListener("click", () => setChatImage(null));
   elements.form.addEventListener("submit", event => { event.preventDefault(); void sendChatMessage(); });
+  elements.recipient.addEventListener("change", () => updateChatRecipientHint());
   elements.list.addEventListener("click", event => {
     const older = event.target.closest(".chat-older");
     if (older) { void loadOlderChatMessages(older); return; }
+    const reply = event.target.closest("[data-reply-to]");
+    if (reply) { setChatRecipient(reply.dataset.replyTo); elements.input.focus(); return; }
     const remove = event.target.closest("[data-delete-message]");
     if (remove) void deleteChatMessage(remove.dataset.deleteMessage);
   });
@@ -7895,7 +7900,7 @@ async function checkChatUnread() {
   playChatMessageSound(latest);
   const { preview } = getChatElements();
   const text = latest.text || (latest.imageUrl ? "Skickade en bild" : "");
-  preview.innerHTML = `<strong>${escapeHtml(latest.authorName)}</strong><span>${escapeHtml(text.length > 90 ? `${text.slice(0, 90)}…` : text)}</span>${count > 1 ? `<small>${count} olästa meddelanden</small>` : ""}`;
+  preview.innerHTML = `<strong>${escapeHtml(latest.authorName)}${latest.recipientId ? " (privat)" : ""}</strong><span>${escapeHtml(text.length > 90 ? `${text.slice(0, 90)}…` : text)}</span>${count > 1 ? `<small>${count} olästa meddelanden</small>` : ""}`;
   preview.classList.remove("hidden");
   clearTimeout(chatState.previewTimer);
   chatState.previewTimer = setTimeout(() => preview.classList.add("hidden"), 8000);
@@ -7910,6 +7915,7 @@ async function setChatOpen(open) {
   elements.widget.classList.toggle("is-open", open);
   if (!open) { scheduleChatPoll(); return; }
   elements.input.focus();
+  void loadChatMembers();
   if (!chatState.loaded) {
     elements.list.innerHTML = '<p class="chat-empty">Laddar…</p>';
     try {
@@ -7982,8 +7988,12 @@ function renderChatMessages({ scrollToEnd = false } = {}) {
   list.innerHTML = `${chatState.hasOlder ? '<button type="button" class="chat-older">Visa äldre meddelanden</button>' : ""}${chatState.messages.map(message => {
     const mine = message.userId === currentUser?.id;
     const canDelete = mine || isAdmin();
-    return `<article class="chat-message${mine ? " is-mine" : ""}">
-      <div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong><time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatChatTime(message.createdAt))}</time>${canDelete ? `<button type="button" class="chat-delete" data-delete-message="${escapeHtml(message.id)}" aria-label="Ta bort meddelandet">×</button>` : ""}</div>
+    const partner = mine ? message.recipientId : message.userId;
+    const privateLabel = message.recipientId
+      ? `<button type="button" class="chat-private" data-reply-to="${escapeHtml(partner || "")}" title="Skriv privat till ${escapeHtml(mine ? message.recipientName : message.authorName)}">${escapeHtml(mine ? `Privat till ${message.recipientName}` : "Privat till dig")}</button>`
+      : "";
+    return `<article class="chat-message${mine ? " is-mine" : ""}${message.recipientId ? " is-private" : ""}">
+      <div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong>${privateLabel}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatChatTime(message.createdAt))}</time>${canDelete ? `<button type="button" class="chat-delete" data-delete-message="${escapeHtml(message.id)}" aria-label="Ta bort meddelandet">×</button>` : ""}</div>
       ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
       ${message.imageUrl ? `<a class="chat-image" href="${escapeHtml(message.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(message.imageUrl)}" alt="Bild från ${escapeHtml(message.authorName)}" loading="lazy" /></a>` : ""}
     </article>`;
@@ -8038,6 +8048,7 @@ function setChatImage(image) {
   attachment.classList.toggle("hidden", !image);
   attachment.querySelector("img").src = image?.dataUrl || "";
   input.placeholder = image ? "Lägg till text (valfritt)…" : "Skriv ett meddelande…";
+  if (!image) updateChatRecipientHint();
 }
 
 async function attachChatImage(file) {
@@ -8059,7 +8070,8 @@ async function sendChatMessage() {
   sendButton.disabled = true;
   try {
     const image = chatState.image ? { type: chatState.image.type, data: chatState.image.dataUrl } : undefined;
-    const { message } = await apiRequest("POST", "/chat/messages", { text, image });
+    const recipientId = getChatElements().recipient.value || undefined;
+    const { message } = await apiRequest("POST", "/chat/messages", { text, image, recipientId });
     input.value = "";
     resizeChatInput(input);
     setChatImage(null);
@@ -8072,6 +8084,36 @@ async function sendChatMessage() {
     sendButton.disabled = false;
     input.focus();
   }
+}
+
+// The recipient list: "Alla" or one of the others who can use the chat.
+async function loadChatMembers() {
+  try {
+    const { members } = await apiRequest("GET", "/chat/members");
+    chatState.members = members;
+  } catch (error) {
+    console.warn("Chat members could not be loaded:", error);
+    return;
+  }
+  const { recipient } = getChatElements();
+  const selected = recipient.value;
+  recipient.innerHTML = `<option value="">Alla</option>${chatState.members.map(member => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}</option>`).join("")}`;
+  recipient.value = chatState.members.some(member => member.id === selected) ? selected : "";
+  updateChatRecipientHint();
+}
+
+function setChatRecipient(userId) {
+  const { recipient } = getChatElements();
+  if (!chatState.members.some(member => member.id === userId)) return;
+  recipient.value = userId;
+  updateChatRecipientHint();
+}
+
+function updateChatRecipientHint() {
+  const { recipient, input, form } = getChatElements();
+  const member = chatState.members.find(item => item.id === recipient.value);
+  form.classList.toggle("is-private", Boolean(member));
+  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande…";
 }
 
 async function deleteChatMessage(id) {

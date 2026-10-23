@@ -5701,6 +5701,12 @@ body.has-chat .app-toast { bottom: 92px; }
 .chat-attach:hover { color: var(--primary-hover); border-color: var(--primary); }
 .chat-input-row textarea { flex: 1; min-height: 40px; max-height: 120px; margin: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: 11px; background: transparent; color: var(--text); font: inherit; font-size: 13px; resize: none; }
 .chat-send { flex: 0 0 auto; min-height: 40px; }
+.chat-recipient { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--muted); font-size: 12px; font-weight: 700; }
+.chat-recipient select { flex: 1; min-width: 0; min-height: 32px; margin: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
+.chat-form.is-private .chat-recipient select { border-color: #b45309; }
+.chat-private { padding: 1px 7px; border: 0; border-radius: 999px; background: rgba(180,83,9,.14); color: #b45309; color: light-dark(#b45309, #fbbf24); font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
+.chat-message.is-private { outline: 1px dashed rgba(180,83,9,.55); outline-offset: -1px; }
+.chat-message.is-mine .chat-private { background: rgba(255,255,255,.22); color: inherit; }
 @media (max-width: 600px) {
   .chat-widget { right: 14px; bottom: 14px; }
   .chat-widget.is-open { inset: 0; padding: 10px; justify-content: flex-end; background: rgba(10,23,48,.4); }

@@ -30,7 +30,10 @@ function parseImage(image) {
   return { buffer, type };
 }
 
-const MESSAGE_COLUMNS = "id, user_id, author_name, body, image IS NOT NULL AS has_image, created_at";
+const MESSAGE_COLUMNS = "id, user_id, author_name, recipient_id, recipient_name, body, image IS NOT NULL AS has_image, created_at";
+// Messages to everyone, plus private ones the user sent or received. $1 is the user's id.
+const VISIBLE = "(recipient_id IS NULL OR recipient_id = $1 OR user_id = $1)";
+const CHAT_ROLES = ["admin", "shift_leader", "right_hand"];
 
 function serializeMessage(row) {
   const id = String(row.id);
@@ -38,6 +41,8 @@ function serializeMessage(row) {
     id,
     userId: row.user_id,
     authorName: row.author_name,
+    recipientId: row.recipient_id ?? null,
+    recipientName: row.recipient_name ?? null,
     text: row.body,
     imageUrl: row.has_image ? `/api/chat/images/${id}` : null,
     createdAt: row.created_at
@@ -62,11 +67,11 @@ function chatRoutes({ pool }) {
     const before = parseMessageId(req.query.before);
     let rows;
     if (after) {
-      ({ rows } = await pool.query(`SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE id > $1 ORDER BY id LIMIT 200`, [after]));
+      ({ rows } = await pool.query(`SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE ${VISIBLE} AND id > $2 ORDER BY id LIMIT 200`, [req.user.id, after]));
     } else {
       ({ rows } = await pool.query(
-        `SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE ($1::bigint IS NULL OR id < $1) ORDER BY id DESC LIMIT $2`,
-        [before, PAGE_SIZE + 1]
+        `SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE ${VISIBLE} AND ($2::bigint IS NULL OR id < $2) ORDER BY id DESC LIMIT $3`,
+        [req.user.id, before, PAGE_SIZE + 1]
       ));
       rows = rows.reverse();
     }
@@ -75,15 +80,35 @@ function chatRoutes({ pool }) {
     res.json({ messages: rows.map(serializeMessage), hasOlder });
   });
 
+  // The people a message can be sent to privately.
+  router.get("/members", async (req, res) => {
+    const { rows } = await pool.query(
+      `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id
+        WHERE u.role = ANY($1) AND u.id <> $2 ORDER BY lower(p.name)`,
+      [CHAT_ROLES, req.user.id]
+    );
+    res.json({ members: rows.map(row => ({ id: row.id, name: row.name })) });
+  });
+
   router.post("/messages", async (req, res) => {
     const text = cleanText(req.body?.text, MAX_TEXT_LENGTH + 1);
     if (text.length > MAX_TEXT_LENGTH) throw new HttpError(400, `Meddelandet får vara högst ${MAX_TEXT_LENGTH} tecken.`);
     const image = parseImage(req.body?.image);
     if (!text && !image) throw new HttpError(400, "Skriv ett meddelande eller välj en bild.");
+    let recipient = null;
+    if (req.body?.recipientId) {
+      const result = await pool.query(
+        `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id WHERE u.id = $1 AND u.role = ANY($2)`,
+        [String(req.body.recipientId), CHAT_ROLES]
+      );
+      recipient = result.rows[0];
+      if (!recipient || recipient.id === req.user.id) throw new HttpError(400, "Mottagaren finns inte i chatten.");
+    }
     const { rows } = await pool.query(
-      `INSERT INTO chat_messages (user_id, author_name, body, image, image_type) VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO chat_messages (user_id, author_name, recipient_id, recipient_name, body, image, image_type)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING ${MESSAGE_COLUMNS}`,
-      [req.user.id, req.user.name, text, image?.buffer ?? null, image?.type ?? null]
+      [req.user.id, req.user.name, recipient?.id ?? null, recipient?.name ?? null, text, image?.buffer ?? null, image?.type ?? null]
     );
     // Your own message is never unread.
     await pool.query(
@@ -96,7 +121,7 @@ function chatRoutes({ pool }) {
 
   router.get("/images/:id", async (req, res) => {
     const id = parseMessageId(req.params.id);
-    const { rows } = id ? await pool.query("SELECT image, image_type FROM chat_messages WHERE id = $1 AND image IS NOT NULL", [id]) : { rows: [] };
+    const { rows } = id ? await pool.query(`SELECT image, image_type FROM chat_messages WHERE ${VISIBLE} AND id = $2 AND image IS NOT NULL`, [req.user.id, id]) : { rows: [] };
     if (!rows[0]) throw new HttpError(404, "Bilden finns inte.");
     res.setHeader("Content-Type", rows[0].image_type);
     // Images never change, so the browser may keep them; "private" keeps them out of shared caches.
@@ -107,7 +132,7 @@ function chatRoutes({ pool }) {
 
   router.delete("/messages/:id", async (req, res) => {
     const id = parseMessageId(req.params.id);
-    const { rows } = id ? await pool.query("SELECT id, user_id FROM chat_messages WHERE id = $1", [id]) : { rows: [] };
+    const { rows } = id ? await pool.query(`SELECT id, user_id FROM chat_messages WHERE ${VISIBLE} AND id = $2`, [req.user.id, id]) : { rows: [] };
     if (!rows[0]) throw new HttpError(404, "Meddelandet finns inte.");
     if (!canDeleteChatMessage(req.user, rows[0])) throw new HttpError(403, "Du kan bara ta bort dina egna meddelanden.");
     await pool.query("DELETE FROM chat_messages WHERE id = $1", [id]);
@@ -124,7 +149,7 @@ function chatRoutes({ pool }) {
        )
        SELECT count(*)::int AS count, max(m.id) AS latest_id
          FROM chat_messages m, seen
-        WHERE m.id > seen.id AND m.user_id IS DISTINCT FROM $1`,
+        WHERE m.id > seen.id AND m.user_id IS DISTINCT FROM $1 AND (m.recipient_id IS NULL OR m.recipient_id = $1)`,
       [req.user.id]
     );
     let latest = null;
