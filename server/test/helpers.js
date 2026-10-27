@@ -14,11 +14,13 @@ async function startTestServer(appOptions = {}) {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   return {
     pool,
+    app,
     baseUrl,
     client: () => new ApiClient(baseUrl),
     async close() {
       const closing = new Promise(resolve => server.close(resolve));
       await app.locals.realtime.close();
+      await app.locals.push.close();
       await closing;
       await pool.end();
     }

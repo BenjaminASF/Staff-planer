@@ -8,6 +8,11 @@ const newId = () => crypto.randomUUID();
 // SQL condition matching documents that belong to a shift (not global, not personal).
 const SHIFT_SCOPE_SQL = `scope <> 'global' AND scope NOT LIKE '${PERSONAL_SCOPE_PREFIX}%'`;
 
+// Notes the user may see, for a query on notes n. $1 is the user's id, $2 their shift id (or null).
+const NOTE_VISIBLE_SQL = `(n.author_id = $1 OR (n.kind = 'group' AND (
+  EXISTS (SELECT 1 FROM note_people np WHERE np.note_id = n.id AND np.user_id = $1)
+  OR $2::text = ANY(n.whole_shifts))))`;
+
 const serializeShift = row => ({ id: row.id, name: row.name, color: row.color || "", sortOrder: row.sort_order });
 
 function serializePerson(row) {
@@ -22,13 +27,16 @@ function serializePerson(row) {
     demo: row.demo,
     createdAt: row.created_at,
     account: row.username
-      ? { username: row.username, role: row.role, lastLoginAt: row.last_login_at || null, mustChangePassword: Boolean(row.must_change_password) }
+      ? {
+        username: row.username, role: row.role, lastLoginAt: row.last_login_at || null, mustChangePassword: Boolean(row.must_change_password),
+        pushBlocked: Boolean(row.push_blocked)
+      }
       : null
   };
 }
 
 const PERSON_SELECT = `
-  SELECT p.*, u.username, u.role, u.last_login_at, u.must_change_password
+  SELECT p.*, u.username, u.role, u.last_login_at, u.must_change_password, u.push_blocked
     FROM people p
     LEFT JOIN users u ON u.person_id = p.id`;
 
@@ -166,6 +174,15 @@ function currentWeekKey(timeZone = process.env.APP_TIME_ZONE || "Europe/Stockhol
   const date = new Date(Date.UTC(year, month - 1, day));
   date.setUTCDate(date.getUTCDate() - ((date.getUTCDay() + 6) % 7));
   return date.toISOString().slice(0, 10);
+}
+
+// ISO week number of a "YYYY-MM-DD" date.
+function isoWeekNumber(dateKey) {
+  const date = new Date(`${dateKey}T00:00:00Z`);
+  const thursday = new Date(date);
+  thursday.setUTCDate(date.getUTCDate() + 3 - ((date.getUTCDay() + 6) % 7));
+  const firstThursday = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4));
+  return 1 + Math.round(((thursday - firstThursday) / 86_400_000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
 }
 
 // First day still kept on the production page: the current month, plus last month
@@ -350,6 +367,8 @@ module.exports = {
   deletePersonalDocuments,
   clearPersonFromShiftSchedules,
   currentWeekKey,
+  isoWeekNumber,
+  NOTE_VISIBLE_SQL,
   productionRetentionStart,
   purgeExpiredProductionRecords,
   renameWorkItemReferences,

@@ -30,6 +30,10 @@
 // right hands people in their own shift, admins anyone. Nobody else sees a group note,
 // admins included. Only the author changes a note's text, color and recipients; its
 // priority mark is set by the author and, on a group note they can see, by an admin.
+//
+// Pushnotiser: every user turns push notifications on or off on their own devices.
+// Only admins turn them off (and on again) for someone else; while off, that user
+// gets none, whatever they chose themselves.
 
 const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" });
 const ROLE_VALUES = Object.values(ROLES);
@@ -291,6 +295,10 @@ function canPrioritizeNote(user, note) {
   return canEditNote(user, note) || (note?.kind === "group" && isAdmin(user));
 }
 
+function canManagePush(user) {
+  return isAdmin(user);
+}
+
 function canDeleteAccount(user) {
   return isAdmin(user);
 }
@@ -341,6 +349,7 @@ module.exports = {
   canChangeRole,
   canChangeUsername,
   canDeleteAccount,
+  canManagePush,
   canExportShiftBackup,
   canShareNotes,
   noteShareShifts,

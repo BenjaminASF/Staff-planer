@@ -2,6 +2,7 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { canUseChat, canDeleteChatMessage } = require("../permissions");
 const { cleanText } = require("../validation");
+const { queueChatMessage } = require("../push");
 
 const MAX_TEXT_LENGTH = 2000;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
@@ -116,6 +117,7 @@ function chatRoutes({ pool }) {
        ON CONFLICT (user_id) DO UPDATE SET last_read_id = GREATEST(chat_reads.last_read_id, EXCLUDED.last_read_id)`,
       [req.user.id, rows[0].id]
     );
+    await queueChatMessage(pool, { messageId: rows[0].id, recipientId: recipient?.id, authorId: req.user.id, chatRoles: CHAT_ROLES });
     res.status(201).json({ message: serializeMessage(rows[0]) });
   });
 
