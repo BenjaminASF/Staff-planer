@@ -8,22 +8,30 @@ const { newId, readDocuments, currentWeekKey, isoWeekNumber, NOTE_VISIBLE_SQL, i
 //
 // Events are written to push_outbox and sent from there in the background, so a save
 // is never slowed down by the push services. Right before sending, the server checks
-// again that the user may still see what the notice is about and that an admin has
-// not turned push off for them. The text shown on the lock screen never contains
-// names or message contents; the app shows the details after sign-in.
+// again that the user may still see what the notice is about, that they want it, and
+// that an admin has not turned push off for them. Sessions play no part: a user who
+// signed out keeps getting notices on their devices. The text shown on the lock screen
+// never contains names or message contents; the app shows the details after sign-in.
 
 // What each kind of notice says and how often it may come.
-//   delay:    seconds to wait, so a burst of changes becomes one notice
-//   interval: at least this many seconds between two notices with the same key
+//   delay:     seconds to wait, so a burst of changes becomes one notice
+//   interval:  at least this many seconds between two notices with the same key
+//   important: sent also to users who chose "Endast viktiga"
+// The links carry push=1, so the page opens there also after signing in.
 const KINDS = Object.freeze({
-  schedule: { delay: 120, url: "index.html", text: ref => `Ditt schema för vecka ${isoWeekNumber(ref.week)} har ändrats.` },
-  share: { url: "index.html", text: ref => `Schemat för vecka ${isoWeekNumber(ref.week)} finns nu.` },
-  placement: { url: "index.html", text: () => "Din placering har ändrats." },
-  chat: { url: "index.html?chat=1", urgency: "high", text: () => "Du har fått ett privat meddelande." },
-  chatAll: { interval: 300, url: "index.html?chat=1", text: () => "Det finns nya meddelanden i chatten." },
-  note: { url: "anteckningar.html", text: () => "En anteckning har delats med dig." },
-  update: { interval: 300, url: "index.html?notifications=1", text: () => "Det finns nya uppdateringar som berör dig." }
+  schedule: { important: true, delay: 120, url: "index.html?push=1", text: ref => `Ditt schema för vecka ${isoWeekNumber(ref.week)} har ändrats.` },
+  breaks: { delay: 120, url: "rast.html?push=1", text: ref => `Rasterna för vecka ${isoWeekNumber(ref.week)} har ändrats.` },
+  share: { important: true, url: "index.html?push=1", text: ref => `Schemat för vecka ${isoWeekNumber(ref.week)} finns nu.` },
+  placement: { important: true, url: "index.html?push=1", text: () => "Din placering har ändrats." },
+  chat: { important: true, url: "index.html?chat=1&push=1", urgency: "high", text: () => "Du har fått ett privat meddelande." },
+  chatAll: { interval: 300, url: "index.html?chat=1&push=1", text: () => "Det finns nya meddelanden i chatten." },
+  note: { url: "anteckningar.html?push=1", text: () => "En anteckning har delats med dig." },
+  update: { important: true, interval: 300, url: "index.html?notifications=1&push=1", text: () => "Det finns nya uppdateringar som berör dig." }
 });
+
+const PUSH_LEVELS = ["all", "important"];
+// Whether the user wants this kind of notice: an admin's block comes first, then their own choice.
+const wantsPush = (user, kind) => !user.pushBlocked && user.pushEnabled && (user.pushLevel === "all" || Boolean(KINDS[kind]?.important));
 
 // Notices not sent within this time are dropped, so nobody gets old news later on.
 const MAX_AGE_MS = 60 * 60 * 1000;
@@ -89,8 +97,8 @@ async function withoutFailing(db, label, work) {
 
 const wakers = new Set();
 
-// Queues one notice per user. Users without a device, or turned off by an admin, are
-// skipped right away. While a notice with the same key waits, no second one is added.
+// Queues one notice per user. Users without a device, turned off by an admin or who
+// do not want this kind of notice are skipped right away. While a notice with the same key waits, no second one is added.
 // targets: user ids, or { userId, notificationId, messageId }.
 async function queuePush(db, targets, { kind, key = kind, ref = {}, exceptUserId = null }) {
   const config = KINDS[kind];
@@ -109,11 +117,12 @@ async function queuePush(db, targets, { kind, key = kind, ref = {}, exceptUserId
                                 WHERE o.user_id = u.id AND o.dedupe_key = $5 AND o.sent_at IS NOT NULL), '-infinity') + make_interval(secs => $8))
        FROM unnest($1::text[], $2::text[], $3::bigint[]) AS t(user_id, notification_id, message_id)
        JOIN users u ON u.id = t.user_id
-      WHERE NOT u.push_blocked AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.user_id = u.id)
+      WHERE NOT u.push_blocked AND u.push_enabled AND (u.push_level = 'all' OR $9)
+        AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.user_id = u.id)
      ON CONFLICT (user_id, dedupe_key) WHERE sent_at IS NULL DO NOTHING`,
     [
       items.map(item => item.userId), items.map(item => item.notificationId ?? null), items.map(item => item.messageId ?? null),
-      kind, key, JSON.stringify(ref), config.delay || 0, config.interval || 0
+      kind, key, JSON.stringify(ref), config.delay || 0, config.interval || 0, Boolean(config.important)
     ]
   )).rowCount);
   if (queued) wakers.forEach(wake => wake(config.delay || 0));
@@ -180,8 +189,10 @@ function placementWeek(key) {
 }
 
 const loadUsers = async (db, where, params) => (await db.query(
-  `SELECT u.id, u.role, u.push_blocked, p.shift_id FROM users u JOIN people p ON p.id = u.person_id WHERE ${where}`, params
-)).rows.map(row => ({ id: row.id, role: row.role, shiftId: row.shift_id, pushBlocked: row.push_blocked }));
+  `SELECT u.id, u.role, u.push_blocked, u.push_enabled, u.push_level, p.shift_id FROM users u JOIN people p ON p.id = u.person_id WHERE ${where}`, params
+)).rows.map(row => ({
+  id: row.id, role: row.role, shiftId: row.shift_id, pushBlocked: row.push_blocked, pushEnabled: row.push_enabled, pushLevel: row.push_level
+}));
 
 // Whether the user sees the shift's schedule for the week: operators only once it is shared.
 async function seesWeek(db, user, scope, week, sharedCache = {}) {
@@ -193,7 +204,8 @@ async function seesWeek(db, user, scope, week, sharedCache = {}) {
 }
 
 // A week's schedule, training, extra places or breaks were saved. Everyone whose own
-// placement changed is told, apart from the person who made the change.
+// placement changed is told, apart from the person who made the change. Breaks are
+// their own kind, which users who chose "Endast viktiga" do not get.
 async function queueScheduleChange(db, { scope, key, before, after, actorId }) {
   const week = placementWeek(key);
   if (!week || week < currentWeekKey()) return 0;
@@ -205,7 +217,8 @@ async function queueScheduleChange(db, { scope, key, before, after, actorId }) {
     const shared = {};
     const recipients = [];
     for (const user of users) if (await seesWeek(db, user, scope, week, shared)) recipients.push(user.id);
-    return queuePush(db, recipients, { kind: "schedule", key: `schedule:${scope}:${week}`, ref: { scope, week }, exceptUserId: actorId });
+    const kind = key.startsWith("breakPlan:") ? "breaks" : "schedule";
+    return queuePush(db, recipients, { kind, key: `${kind}:${scope}:${week}`, ref: { scope, week }, exceptUserId: actorId });
   });
 }
 
@@ -243,6 +256,7 @@ const LAST_READ_CHAT = `COALESCE((SELECT last_read_id FROM chat_reads WHERE user
 async function stillRelevant(db, user, row) {
   switch (row.kind) {
     case "schedule":
+    case "breaks":
     case "share":
       return row.ref.week >= currentWeekKey() && seesWeek(db, user, row.ref.scope, row.ref.week);
     case "placement":
@@ -314,7 +328,7 @@ function createPushService({ pool, sender, autoStart = true }) {
   async function deliver(row) {
     if (Date.now() - new Date(row.created_at).getTime() > MAX_AGE_MS) return;
     const [user] = await loadUsers(pool, "u.id = $1", [row.user_id]);
-    if (!user || user.pushBlocked || !(await stillRelevant(pool, user, row))) return;
+    if (!user || !wantsPush(user, row.kind) || !(await stillRelevant(pool, user, row))) return;
     const { rows: devices } = await pool.query("SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1", [user.id]);
     const config = KINDS[row.kind];
     const payload = payloadFor(row);
@@ -404,5 +418,5 @@ async function cleanupPush(db) {
 
 module.exports = {
   KINDS, createPushSender, createPushService, queuePush, queueScheduleChange, queueScheduleShared, queueChatMessage, queuePlacementChange, changedPeople,
-  placementWeek, isAllowedEndpoint, saveSubscription, cleanupPush, MAX_DEVICES_PER_USER
+  placementWeek, isAllowedEndpoint, saveSubscription, cleanupPush, MAX_DEVICES_PER_USER, PUSH_LEVELS
 };

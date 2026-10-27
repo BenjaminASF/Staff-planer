@@ -31,9 +31,9 @@
 // admins included. Only the author changes a note's text, color and recipients; its
 // priority mark is set by the author and, on a group note they can see, by an admin.
 //
-// Pushnotiser: every user turns push notifications on or off on their own devices.
-// Only admins turn them off (and on again) for someone else; while off, that user
-// gets none, whatever they chose themselves.
+// Pushnotiser: every user turns push notifications on or off for themselves, chooses
+// all or only important ones and connects their own devices. Only admins turn them off
+// (and on again) for someone else; while off, that user gets none, whatever they chose.
 
 const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" });
 const ROLE_VALUES = Object.values(ROLES);

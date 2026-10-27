@@ -2229,7 +2229,7 @@ async function renderProfilePage() {
       <div class="settings-actions"><span id="preferencesMessage" class="inline-message" aria-live="polite"></span><button id="testSoundBtn" class="btn" type="button">Testa ljudet</button></div>
     </form>
     <section id="pushSettings" class="card settings-card">
-      <div><h3>Pushnotiser</h3><p>Få en kort notis i telefonen eller datorn när ditt schema eller din placering ändras, när en anteckning delas med dig${canManageStaff() ? ", när du får chattmeddelanden och vid viktiga uppdateringar" : ""}, även när Staff Planner är stängd. Notisen visar aldrig namn eller meddelandetext.</p></div>
+      <div><h3>Pushnotiser</h3><p>Få en kort notis i telefonen eller datorn, även när Staff Planner är stängd: när ditt schema, din placering eller dina raster ändras, när en anteckning delas med dig${canManageStaff() ? ", när du får chattmeddelanden och vid viktiga uppdateringar" : ""}. Notisen visar aldrig namn eller meddelandetext.</p></div>
       <div class="push-settings-body"><p>Hämtar…</p></div>
       <p class="inline-message push-settings-message" role="status" aria-live="polite"></p>
     </section>`;
@@ -9467,11 +9467,9 @@ function setSession(me) {
   sessionStorage.setItem(SIGNED_IN_HINT_KEY, "1");
 }
 
-// forgetDevice: signing out yourself also turns push notifications off on this device,
-// so a shared phone never shows someone else's. Automatic sign-out keeps them.
-async function signOut(notice = "", { forgetDevice = false } = {}) {
+// Push notifications go on after signing out; the device can be disconnected on the sign-in page.
+async function signOut(notice = "") {
   clearTimeout(autoLockTimeoutId);
-  if (forgetDevice) await disablePushOnThisDevice().catch(error => console.warn("Push could not be turned off:", error));
   currentUser = null;
   userPreferences = {};
   try {
@@ -9566,6 +9564,40 @@ async function checkPushDevice() {
   if (!subscribed) await subscription.unsubscribe();
 }
 
+// On the sign-in page of a device that still gets push notifications: lets whoever holds
+// the device stop them without signing in, for example before handing a phone over.
+async function offerPushDisconnect() {
+  const subscription = await getPushSubscription().catch(() => null);
+  const form = document.getElementById("authForm");
+  if (!subscription || !form || document.getElementById("pushDisconnect")) return;
+  const button = document.createElement("button");
+  button.id = "pushDisconnect";
+  button.type = "button";
+  button.className = "btn auth-push-disconnect";
+  button.textContent = "Sluta ta emot pushnotiser på den här enheten";
+  form.after(button);
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      await apiRequest("POST", "/push/disconnect", { endpoint: subscription.endpoint });
+      await subscription.unsubscribe();
+      button.remove();
+      showAuthMessage("Den här enheten tar inte längre emot pushnotiser.", false);
+    } catch (error) {
+      button.disabled = false;
+      showAuthMessage(error instanceof ApiError ? error.message : "Det gick inte att koppla bort enheten.");
+    }
+  });
+}
+
+const PUSH_LEVEL_OPTIONS = [
+  ["all", "🔔 Alla notiser", "Schema, placering, raster, chatt, delade anteckningar och viktiga uppdateringar."],
+  ["important", "Endast viktiga", "Schema, placering och skift, privata chattmeddelanden och viktiga uppdateringar."]
+];
+
+// Min profil → Pushnotiser. The on/off choice and the level belong to the account and
+// apply on all its devices until the user changes them; each device is connected or
+// disconnected here too. An admin's block locks the choice to off.
 async function renderPushSettings(card) {
   let status;
   try {
@@ -9576,47 +9608,73 @@ async function renderPushSettings(card) {
   }
   const subscription = await getPushSubscription().catch(() => null);
   const otherDevices = status.devices - (subscription ? 1 : 0);
+  const on = status.enabled && !status.blocked;
   const body = card.querySelector(".push-settings-body");
-  let content;
-  if (status.blocked) {
-    content = `<label class="settings-switch"><input type="checkbox" disabled /><span>Pushnotiser 🔕</span></label>
-      <p>En administratör har stängt av pushnotiser för dig, så du kan inte slå på dem. Du ser fortfarande dina notiser här i Staff Planner.</p>`;
-  } else if (!status.available) {
-    content = "<p>Pushnotiser är inte aktiverade på servern ännu. Du ser dina notiser här i Staff Planner.</p>";
-  } else if (!pushSupported()) {
-    content = isAppleMobile() && !isInstalledApp()
+  if (!status.available) {
+    body.innerHTML = "<p>Pushnotiser är inte aktiverade på servern ännu. Du ser dina notiser här i Staff Planner.</p>";
+    return;
+  }
+  let device = "";
+  if (!pushSupported()) {
+    device = isAppleMobile() && !isInstalledApp()
       ? "<p>På iPhone och iPad fungerar pushnotiser när Staff Planner är tillagd på hemskärmen (iOS 16.4 eller senare): öppna sidan i Safari, tryck på <strong>Dela</strong> och välj <strong>Lägg till på hemskärmen</strong>. Öppna sedan Staff Planner från hemskärmen och slå på pushnotiser här.</p>"
       : "<p>Den här webbläsaren kan inte ta emot pushnotiser. Prova Chrome, Edge, Firefox eller Safari i en nyare version.</p>";
-  } else {
-    content = `<label class="settings-switch"><input name="pushEnabled" type="checkbox"${subscription ? " checked" : ""} /><span>Pushnotiser på den här enheten</span></label>
-      <small>Loggar du ut stängs pushnotiserna av på den här enheten.</small>
-      ${Notification.permission === "denied" ? "<p>Notiser är blockerade för Staff Planner i enhetens eller webbläsarens inställningar. Tillåt dem där för att kunna slå på pushnotiser.</p>" : ""}`;
+  } else if (subscription) {
+    device = '<div class="settings-actions"><span>Den här enheten tar emot pushnotiser.</span><button class="btn" type="button" data-push-device="off">Koppla bort den här enheten</button></div>';
+  } else if (on) {
+    device = Notification.permission === "denied"
+      ? "<p>Notiser är blockerade för Staff Planner i enhetens eller webbläsarens inställningar. Tillåt dem där för att få pushnotiser på den här enheten.</p>"
+      : '<div class="settings-actions"><span>Den här enheten tar inte emot pushnotiser ännu.</span><button class="btn primary" type="button" data-push-device="on">Aktivera på den här enheten</button></div>';
   }
-  body.innerHTML = `${content}
-    ${otherDevices > 0 ? `<div class="settings-actions"><span>Påslaget på ${otherDevices} ${otherDevices === 1 ? "annan enhet" : "andra enheter"}.</span><button class="btn" type="button" data-push-off-everywhere>Stäng av på alla enheter</button></div>` : ""}`;
+  body.innerHTML = `
+    <label class="settings-switch"><input name="pushOn" type="checkbox"${on ? " checked" : ""}${status.blocked ? " disabled" : ""} /><span>Pushnotiser: <strong>${on ? "🔔 På" : "🔕 Av"}</strong></span></label>
+    ${status.blocked
+      ? "<p>En administratör har stängt av pushnotiser för dig, så du kan inte slå på dem. Du ser fortfarande dina notiser här i Staff Planner.</p>"
+      : on
+        ? `<fieldset><legend>Vilka pushnotiser vill du ha?</legend><div class="settings-theme-grid">${PUSH_LEVEL_OPTIONS.map(([value, label, hint]) => `<label title="${escapeHtml(hint)}"><input type="radio" name="pushLevel" value="${value}"${status.level === value ? " checked" : ""} /> ${label}</label>`).join("")}</div><small>${escapeHtml(PUSH_LEVEL_OPTIONS.find(([value]) => value === status.level)?.[2] || "")}</small></fieldset>`
+        : "<p>Du får inga pushnotiser. Notiserna här i Staff Planner fungerar som vanligt.</p>"}
+    ${device}
+    ${otherDevices > 0 ? `<div class="settings-actions"><span>Kopplad till ${otherDevices} ${otherDevices === 1 ? "annan enhet" : "andra enheter"}.</span><button class="btn" type="button" data-push-off-everywhere>Koppla bort alla enheter</button></div>` : ""}
+    <p>Valet sparas direkt och gäller tills du ändrar det. Pushnotiserna fortsätter även när du är utloggad. Ska någon annan använda enheten, koppla bort den först, här eller på inloggningssidan.</p>`;
   const message = card.querySelector(".push-settings-message");
   const show = (text, type) => { message.textContent = text; message.className = `inline-message push-settings-message ${type}`; };
-  body.querySelector('[name="pushEnabled"]')?.addEventListener("change", async event => {
-    const input = event.target;
-    input.disabled = true;
+  const act = async (work, done) => {
+    body.querySelectorAll("input, button").forEach(element => { element.disabled = true; });
     try {
-      if (input.checked) await enablePushOnThisDevice(status.publicKey);
-      else await disablePushOnThisDevice();
-      show(input.checked ? "Pushnotiser är påslagna på den här enheten." : "Pushnotiser är avstängda på den här enheten.", "success");
+      await work();
+      show(typeof done === "function" ? done() : done, "success");
     } catch (error) {
       show(error.message || "Det gick inte att ändra pushnotiserna.", "error");
     }
     await renderPushSettings(card);
+  };
+  body.querySelector('[name="pushOn"]')?.addEventListener("change", event => {
+    const enabled = event.target.checked;
+    let deviceNote = "";
+    void act(async () => {
+      // Turning push on also connects this device, if it can be. Safari on iPhone only asks
+      // for permission straight from the tap, so this starts before anything is awaited.
+      const connecting = enabled && pushSupported() && !subscription && Notification.permission !== "denied"
+        ? enablePushOnThisDevice(status.publicKey).catch(error => { deviceNote = ` ${error.message}`; })
+        : null;
+      await apiRequest("PATCH", "/push/settings", { enabled });
+      await connecting;
+    }, () => enabled ? `Pushnotiser är påslagna.${deviceNote}` : "Pushnotiser är avstängda. Du får inga förrän du slår på dem igen.");
   });
-  body.querySelector("[data-push-off-everywhere]")?.addEventListener("click", async () => {
-    try {
+  body.querySelectorAll('[name="pushLevel"]').forEach(input => input.addEventListener("change", () => {
+    if (input.checked) void act(() => apiRequest("PATCH", "/push/settings", { level: input.value }), "Sparat.");
+  }));
+  body.querySelector('[data-push-device="on"]')?.addEventListener("click", () => {
+    void act(() => enablePushOnThisDevice(status.publicKey), "Den här enheten tar nu emot pushnotiser.");
+  });
+  body.querySelector('[data-push-device="off"]')?.addEventListener("click", () => {
+    void act(() => disablePushOnThisDevice(), "Den här enheten är bortkopplad från pushnotiser.");
+  });
+  body.querySelector("[data-push-off-everywhere]")?.addEventListener("click", () => {
+    void act(async () => {
       await apiRequest("DELETE", "/push/subscriptions", { all: true });
       await (await getPushSubscription())?.unsubscribe();
-      show("Pushnotiser är avstängda på alla dina enheter.", "success");
-    } catch (error) {
-      show(error.message || "Det gick inte att stänga av pushnotiserna.", "error");
-    }
-    await renderPushSettings(card);
+    }, "Alla dina enheter är bortkopplade från pushnotiser.");
   });
 }
 
@@ -9880,7 +9938,9 @@ function applyLinkedShift() {
 }
 
 async function openAppUI(justSignedIn = false) {
-  if (isAdmin() && justSignedIn && getCurrentPage() !== "dashboard.html") {
+  // Opened from a push notification (push=1): stay on its page, also right after signing in.
+  const fromPush = new URLSearchParams(location.search).has("push");
+  if (isAdmin() && justSignedIn && !fromPush && getCurrentPage() !== "dashboard.html") {
     // Right after signing in, an admin always starts on Översikt, whichever page the login was on.
     sessionStorage.setItem(ADMIN_LANDED_KEY, "1");
     location.replace("dashboard.html");
@@ -9890,12 +9950,13 @@ async function openAppUI(justSignedIn = false) {
     location.replace("index.html");
     return;
   }
+  takeLinkParam("push");
   const linked = applyLinkedShift();
   // The admin's start page is the production overview. Only the first page of a visit
   // redirects, so the Schema link still opens the schedule.
   const firstPageThisVisit = !sessionStorage.getItem(ADMIN_LANDED_KEY);
   sessionStorage.setItem(ADMIN_LANDED_KEY, "1");
-  if (isAdmin() && firstPageThisVisit && !linked && getCurrentPage() === "index.html") {
+  if (isAdmin() && firstPageThisVisit && !linked && !fromPush && getCurrentPage() === "index.html") {
     // Keeps ?chat=1 and the like from a push notification.
     location.replace(`dashboard.html${location.search}`);
     return;
@@ -9906,7 +9967,7 @@ async function openAppUI(justSignedIn = false) {
   document.getElementById("authScreen")?.classList.add("hidden");
   document.getElementById("appShell")?.classList.remove("hidden");
   finishInitialViewSetup();
-  bindOnce(document.getElementById("logoutBtn"), "click", () => signOut("", { forgetDevice: true }));
+  bindOnce(document.getElementById("logoutBtn"), "click", () => signOut());
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("./service-worker.js").catch(error => console.warn("Offline cache could not start", error));
   void checkPushDevice().catch(error => console.warn("Push check failed:", error));
 
@@ -9978,7 +10039,7 @@ function renderAuthForm(mode, onSubmit) {
       button.disabled = false;
     }
   });
-  form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut("", { forgetDevice: true }));
+  form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut());
   form.querySelector("input")?.focus();
 }
 
@@ -10003,6 +10064,7 @@ function showAuthScreen(mode) {
     renderAuthForm("login", async values => {
       await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
     });
+    void offerPushDisconnect();
   } else if (mode === "setup") {
     renderAuthForm("setup", async values => {
       checkNewPassword(values.password, values.confirm);

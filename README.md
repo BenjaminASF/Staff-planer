@@ -154,16 +154,25 @@ Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan r
 
 Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De är ett komplement till notiserna i appen, som finns kvar precis som förut. En pushnotis skickas bara till dem det gäller, aldrig till den som själv gjorde ändringen:
 
-- **Schema och placering:** när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
+- **Schema och placering:** när ens egen plats, utbildning eller extra plats i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
+- **Raster:** när ens rast eller dagens rasttider ändras, på samma sätt.
 - **Chatt** (admin, skiftledare och höger hand): privata meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
 - **Anteckningar:** när en lapp delas med en.
 - **Viktiga uppdateringar:** samma som notiserna i appen om admins ändringar, högst en var femte minut.
 
-Notisen visar bara en kort text som "Ditt schema för vecka 45 har ändrats", aldrig namn eller meddelandetext, och ett tryck på den öppnar rätt sida. Precis innan varje notis skickas kontrollerar servern att personen fortfarande får se det notisen gäller. Chattmeddelanden och notiser som redan har lästs i appen ger ingen pushnotis. Notiser som inte hunnit skickas inom en timme slängs, så ingen får gamla händelser i efterhand.
+Notisen visar bara en kort text som "Ditt schema för vecka 45 har ändrats", aldrig namn eller meddelandetext, och ett tryck på den öppnar rätt sida. Är man utloggad visas först inloggningen, och sedan rätt sida. Sidan visar bara det man har behörighet till. Precis innan varje notis skickas kontrollerar servern att personen fortfarande får se det notisen gäller. Chattmeddelanden och notiser som redan har lästs i appen ger ingen pushnotis. Notiser som inte hunnit skickas inom en timme slängs, så ingen får gamla händelser i efterhand.
 
-Varje användare slår på och stänger av pushnotiser för sina egna enheter under **Min profil → Pushnotiser**, och kan också stänga av dem på alla sina enheter på en gång. Den som loggar ut stänger samtidigt av dem på den enheten (inte vid automatisk utloggning). Loggar någon annan in på samma enhet går enhetens notiser inte längre till den förra användaren.
+Varje användare väljer själv under **Min profil → Pushnotiser**:
 
-**Admin** kan stänga av pushnotiser för en enskild användare under **Hantera** i användarlistan (Pushnotiser: På/Av). Då får användaren inga pushnotiser alls, oavsett eget val, och kan inte slå på dem själv förrän admin slår på dem igen. Användaren ser fortfarande sina notiser i appen. 🔕 visas vid användaren i personal- och användarlistan för admin, skiftledare och höger hand. Skiftledare och höger hand kan inte ändra inställningen.
+- **🔔 På / 🔕 Av** för hela kontot. Valet sparas direkt och gäller på alla ens enheter tills man ändrar det. När man slår på det kopplas även enheten man använder.
+- **Vilka notiser:** 🔔 *Alla notiser*, eller *Endast viktiga*: schema, placering och skift, privata chattmeddelanden och viktiga uppdateringar (inte raster, chatt till alla eller delade anteckningar).
+- **Enheter:** koppla bort den här enheten, eller alla ens enheter på en gång.
+
+Pushnotiserna fortsätter när man loggar ut, loggas ut automatiskt eller stänger appen. Lämnar man över en telefon eller dator till någon annan kan man koppla bort enheten under Min profil, eller utan att logga in med knappen **Sluta ta emot pushnotiser på den här enheten** på inloggningssidan. Loggar någon annan in på enheten går dess notiser inte längre till den förra användaren. Tas en användare bort försvinner även alla deras enheter, väntande notiser och inloggningar.
+
+Notiserna här i Staff Planner påverkas inte av något av valen.
+
+**Admin** kan stänga av pushnotiser för en enskild användare under **Hantera** i användarlistan (Pushnotiser: På/Av). Då får användaren inga pushnotiser alls, oavsett eget val, och kan inte slå på dem själv förrän admin slår på dem igen. Därefter gäller användarens tidigare val igen, men inget som hände under tiden skickas i efterhand. Användaren ser fortfarande sina notiser i appen. 🔕 visas vid användaren i personal- och användarlistan för admin, skiftledare och höger hand. Skiftledare och höger hand kan inte ändra inställningen.
 
 **Android** (Chrome, Edge, Firefox, Samsung Internet) och datorer fungerar direkt i webbläsaren. **iPhone och iPad** kräver iOS/iPadOS 16.4 eller senare och att Staff Planner har lagts till på hemskärmen via Safari (**Dela → Lägg till på hemskärmen**). Pushnotiserna slås sedan på inifrån appen på hemskärmen. Telefonens energisparläge och "Stör ej" kan fördröja eller tysta notiser.
 
