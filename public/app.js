@@ -143,6 +143,7 @@ const PAGE_ACCESS = {
   "maskinhantering.html": [ROLES.ADMIN, ROLES.LEADER],
   "bedomning.html": [ROLES.ADMIN, ROLES.LEADER],
   "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
+  "anteckningar.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
   "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
   "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
@@ -2308,6 +2309,7 @@ function enhanceAppShell() {
     "testresultat.html": "Sök fram en person och registrera resultaten per maskin eller avdelning.",
     "bedomning.html": "Spara återkommande bedömningar för att se utveckling över tid.",
     "todo.html": "Uppgifter som inte blir klara följer med som påminnelser till nästa vecka.",
+    "anteckningar.html": "Flaggan uppe till vänster på en lapp markerar den som prioriterad, så hamnar den överst.",
     "produktion.html": "Allt du skriver sparas automatiskt. Förra månadens dagar tas bort den 10:e.",
     "rast.html": isOperator()
       ? "Ditt namn är markerat i din grupp. Överst står vilka linjer som ska vara igång under rasten."
@@ -6542,9 +6544,9 @@ function formatDateRange(monday) {
 
 // Admin works from a compact top bar instead of the sidebar. The sidebar's links,
 // shift switcher and logout move into its menu, so every page is still one click away.
-const ADMIN_QUICK_PAGES = ["dashboard.html", "index.html", "produktion.html", "personal.html"];
+const ADMIN_QUICK_PAGES = ["dashboard.html", "index.html", "produktion.html", "personal.html", "anteckningar.html"];
 const ADMIN_MENU_GROUPS = [
-  ["Planering", ["dashboard.html", "index.html", "rast.html", "produktion.html", "maskinhantering.html", "todo.html"]],
+  ["Planering", ["dashboard.html", "index.html", "rast.html", "produktion.html", "maskinhantering.html", "todo.html", "anteckningar.html"]],
   ["Personal och kompetens", ["personal.html", "anvandare.html", "add.html", "maskiner.html", "testresultat.html", "bedomning.html"]],
   ["Konto och system", ["profil.html", "installningar.html", "hjalp.html"]]
 ];
@@ -8275,6 +8277,8 @@ function initializeAppContent() {
   void setupOnboarding();
   setupFilterControls();
   setupTodoPage();
+  setupNotesPage();
+  void refreshNotesBadge();
 }
 
 // Chat for admins and shift leaders: a button in the corner with an unread badge
@@ -8370,9 +8374,881 @@ function setupChat() {
   void pollChat();
 }
 
+// Anteckningar: a board of sticky notes. "Mina anteckningar" are private; on
+// "Gruppens anteckningar" admins, shift leaders and right hands share notes with the
+// people they choose. Each user's read and done marks and where the notes sit on
+// their board are saved on the server; the priority mark is shared by everyone who
+// sees the note. The server decides who sees what (server/routes/notes.js).
+const NOTE_COLORS = [["yellow", "Ljusgul"], ["pink", "Rosa"], ["blue", "Ljusblå"], ["mint", "Mintgrön"], ["lavender", "Lavendel"], ["beige", "Beige"]];
+const NOTE_TILTS = [-2.2, 1.6, -0.9, 2.3, -1.6, 0.8, -2.8, 1.2];
+const NOTE_SIZE = { w: 230, h: 230, gap: 30, minW: 170, minH: 150, maxW: 460, maxH: 460 };
+const NOTES_FLOW_WIDTH = 560;
+const NOTES_TAB_KEY = "staff_notes_tab";
+const NOTE_FLAG_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h12l-2.5 4.5L17 13H5z"/><path d="M5 21V4"/></svg>';
+const NOTE_CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
+const NOTE_SHARE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
+const notesState = {
+  notes: [], canShare: false, loaded: false, filter: "all", z: 10,
+  open: null, justCreated: null, gesture: null, recipients: null, pendingReload: false, unread: 0
+};
+
+const notesBoard = () => document.getElementById("notesBoard");
+const notesSortMode = () => getPreference("notesSort", "priority");
+const notesTab = () => sessionStorage.getItem(NOTES_TAB_KEY) === "mine" ? "mine" : "group";
+const noteHash = id => [...String(id)].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 7);
+const noteTilt = note => NOTE_TILTS[noteHash(note.id) % NOTE_TILTS.length];
+const noteDecoration = note => noteHash(note.id) % 3 === 1 ? "pin" : "tape";
+const noteColorVar = color => `var(--sn-paper-${NOTE_COLORS.some(([value]) => value === color) ? color : "yellow"})`;
+const notesReducedMotion = () => window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+const isNotesFlow = () => (notesBoard()?.clientWidth || 0) < NOTES_FLOW_WIDTH;
+const firstName = name => String(name || "").split(" ")[0];
+const noteCheckMark = animate => `<svg class="sn-check${animate ? " animate" : ""}" viewBox="0 0 48 48" aria-hidden="true"><circle cx="24" cy="24" r="21"/><path d="M14 25l7 7 13-15"/></svg>`;
+
+function noteAvatar(name, size = "") {
+  const initials = String(name || "?").split(" ").filter(Boolean).map(part => part[0]).slice(0, 2).join("").toUpperCase();
+  return `<span class="sn-av ${size}" style="--sn-hue:${noteHash(name) % 360}" title="${escapeHtml(name)}" aria-hidden="true">${escapeHtml(initials)}</span>`;
+}
+
+function noteAge(value) {
+  const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60000);
+  if (minutes < 1) return "nyss";
+  if (minutes < 60) return `${minutes} min`;
+  if (minutes < 1440) return `${Math.round(minutes / 60)} tim`;
+  return new Date(value).toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
+}
+
+// "hela Skift A + Lina och Noor", or "3 personer".
+function noteShareText(note) {
+  const parts = (note.wholeShifts || []).map(id => `hela ${getShiftName(id) || "skiftet"}`);
+  const whole = new Set(note.wholeShifts || []);
+  const extra = note.recipients.filter(person => !whole.has(person.shiftId));
+  if (extra.length) parts.push(extra.length <= 2 ? extra.map(person => firstName(person.name)).join(" och ") : `${extra.length} personer`);
+  return parts.join(" + ");
+}
+
+/* ---------- Unread badge on the Anteckningar links ---------- */
+
+function setNotesBadge(count) {
+  notesState.unread = count;
+  document.querySelectorAll('a[href="anteckningar.html"]').forEach(link => {
+    let badge = link.querySelector(".sn-nav-badge");
+    if (!count) { badge?.remove(); return; }
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "sn-nav-badge";
+      link.appendChild(badge);
+    }
+    badge.textContent = count > 99 ? "99+" : String(count);
+    badge.setAttribute("aria-label", `${count} olästa`);
+  });
+  const tabBadge = document.getElementById("notesGroupBadge");
+  if (tabBadge) {
+    tabBadge.textContent = String(count);
+    tabBadge.classList.toggle("hidden", !count);
+  }
+}
+
+async function refreshNotesBadge() {
+  if (!currentUser) return;
+  try {
+    setNotesBadge((await apiRequest("GET", "/notes/unread")).count);
+  } catch (error) {
+    console.warn("Unread notes could not be counted:", error);
+  }
+}
+
+/* ---------- Loading and drawing the board ---------- */
+
+async function loadNotes() {
+  const data = await apiRequest("GET", "/notes");
+  notesState.notes = data.notes;
+  notesState.canShare = data.canShare;
+  notesState.loaded = true;
+  notesState.z = Math.max(10, ...data.notes.flatMap(note => Object.values(note.layout || {}).map(position => position?.z || 0)));
+  setNotesBadge(data.unread);
+}
+
+function setupNotesPage() {
+  const board = notesBoard();
+  if (!board || board.dataset.bound === "true") return;
+  board.dataset.bound = "true";
+  // The opened note and "Dela med" cover the whole window, outside the page's own layers.
+  ["notesLayer", "notesSheetLayer"].forEach(id => { const layer = document.getElementById(id); if (layer) document.body.appendChild(layer); });
+  bindNotesBoard(board);
+  document.getElementById("notesSort").value = notesSortMode();
+  document.addEventListener("click", handleNotesClick);
+  document.getElementById("notesSort").addEventListener("change", event => {
+    void saveUserPreferences({ notesSort: event.target.value }).catch(error => showAppToast(error.message || "Sorteringen kunde inte sparas.", "error"));
+    reflowNotes(renderNotesPage);
+  });
+  document.addEventListener("keydown", event => {
+    if (event.key !== "Escape") return;
+    const sheet = document.getElementById("notesSheetLayer");
+    if (sheet?.innerHTML) { sheet.innerHTML = ""; return; }
+    if (notesState.open) void tryCloseNote();
+  });
+  let resizeTimer;
+  window.addEventListener("resize", () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(() => { if (!notesState.gesture && !notesState.open) renderNotesBoard(); }, 150);
+  });
+  void (async () => {
+    try {
+      await loadNotes();
+    } catch (error) {
+      board.innerHTML = `<div class="sn-empty"><div><strong>Anteckningarna kunde inte hämtas</strong>${escapeHtml(error.message || "Försök igen.")}</div></div>`;
+      return;
+    } finally {
+      board.removeAttribute("aria-busy");
+    }
+    renderNotesPage();
+    // A notification links here with ?note=<id>, which opens that note.
+    const params = new URLSearchParams(location.search);
+    const linked = params.get("note");
+    if (linked) {
+      params.delete("note");
+      history.replaceState(history.state, "", `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`);
+      const note = notesState.notes.find(item => item.id === linked);
+      if (!note) { showAppToast("Du har inte längre åtkomst till den här anteckningen.", "error"); return; }
+      sessionStorage.setItem(NOTES_TAB_KEY, note.kind === "personal" ? "mine" : "group");
+      renderNotesPage();
+      void openNote(note.id);
+    }
+  })();
+}
+
+// Called for live changes: fetches again, but leaves an open note or a drag alone until it ends.
+async function reloadNotesPage() {
+  if (!notesBoard() || !notesState.loaded) return;
+  if (notesState.open || notesState.gesture) { notesState.pendingReload = true; return; }
+  notesState.pendingReload = false;
+  try {
+    await loadNotes();
+    renderNotesPage();
+  } catch (error) {
+    console.warn("Notes could not be reloaded:", error);
+  }
+}
+
+function visibleBoardNotes() {
+  const tab = notesTab();
+  let list = notesState.notes.filter(note => tab === "mine" ? note.kind === "personal" : note.kind === "group");
+  if (notesState.filter === "unread") list = list.filter(note => note.unread);
+  if (notesState.filter === "fromme") list = list.filter(note => note.authorId === currentUser.id);
+  if (notesState.filter === "open") list = list.filter(note => !note.done);
+  const sort = notesSortMode();
+  const age = note => new Date(note.createdAt).getTime();
+  if (sort === "oldest") return list.sort((a, b) => age(a) - age(b));
+  if (sort === "newest") return list.sort((a, b) => age(b) - age(a));
+  // Priority first; within each part unread first, then newest.
+  return list.sort((a, b) => (b.priority - a.priority) || (b.unread - a.unread) || (age(b) - age(a)));
+}
+
+// Priority sorting splits the board into a zone for prioritised notes on top and one for the rest.
+function noteZones(list) {
+  if (notesSortMode() !== "priority") return [{ key: "all", label: "", notes: list }];
+  const prio = list.filter(note => note.priority);
+  const rest = list.filter(note => !note.priority);
+  return [
+    prio.length && { key: "prio", label: `${NOTE_FLAG_ICON}Prioriterade <span>· ${prio.length}</span>`, notes: prio },
+    rest.length && { key: "rest", label: prio.length ? "Övriga" : "", notes: rest }
+  ].filter(Boolean);
+}
+
+// Notes the user has never moved get the first free slot in a column grid.
+function placeNotes(notes, width, zone) {
+  const mode = notesSortMode();
+  const cols = Math.max(1, Math.floor((width + NOTE_SIZE.gap) / (NOTE_SIZE.w + NOTE_SIZE.gap)));
+  const placed = {};
+  const rects = [];
+  const saved = note => { const position = note.layout?.[mode]; return position?.zone === zone ? position : null; };
+  notes.forEach(note => {
+    const position = saved(note);
+    if (!position) return;
+    const w = Math.min(position.w, width);
+    placed[note.id] = { x: Math.max(0, Math.min(position.x, width - w)), y: position.y, w, h: position.h, z: position.z || 1 };
+    rects.push(placed[note.id]);
+  });
+  const overlaps = r => rects.some(o => r.x < o.x + o.w + 8 && r.x + r.w + 8 > o.x && r.y < o.y + o.h + 8 && r.y + r.h + 8 > o.y);
+  notes.filter(note => !saved(note)).forEach(note => {
+    for (let slot = 0; ; slot++) {
+      const r = { x: (slot % cols) * (NOTE_SIZE.w + NOTE_SIZE.gap), y: Math.floor(slot / cols) * (NOTE_SIZE.h + NOTE_SIZE.gap), w: Math.min(NOTE_SIZE.w, width), h: NOTE_SIZE.h, z: 1 };
+      if (!overlaps(r)) { placed[note.id] = r; rects.push(r); break; }
+    }
+  });
+  return placed;
+}
+
+function notePriorityControl(note) {
+  if (note.canPrioritize) {
+    const label = note.priority ? "Ta bort prioritet" : "Markera som prioriterad";
+    return `<button type="button" class="sn-prio${note.priority ? " on" : ""}" data-note-prio="${escapeHtml(note.id)}" aria-pressed="${note.priority}" aria-label="${label}" title="${note.priority ? "Ta bort prioritet" : "Prioritet"}">${NOTE_FLAG_ICON}</button>`;
+  }
+  return note.priority ? `<span class="sn-prio on" role="img" aria-label="Prioriterad" title="Prioriterad">${NOTE_FLAG_ICON}</span>` : "";
+}
+
+function noteCardHtml(note, position) {
+  const own = note.authorId === currentUser.id;
+  const style = `--sn-paper:${noteColorVar(note.color)};--sn-tilt:${noteTilt(note)}deg;`
+    + (position ? `left:${position.x}px;top:${position.y}px;width:${position.w}px;height:${position.h}px;z-index:${position.z};` : "");
+  const meta = note.kind === "group"
+    ? `<div class="sn-meta">${noteAvatar(note.authorName, "sm")}<b>${escapeHtml(own ? "Du" : note.authorName)}</b><time datetime="${escapeHtml(note.createdAt)}">${noteAge(note.createdAt)}</time></div>`
+    : `<div class="sn-meta"><time class="sn-solo" datetime="${escapeHtml(note.createdAt)}">${noteAge(note.createdAt)}</time></div>`;
+  const shown = note.recipients.slice(0, 4);
+  const foot = note.kind === "group"
+    ? `<div class="sn-foot"><span class="sn-stack">${shown.map(person => noteAvatar(person.name, "sm")).join("")}${note.recipients.length > 4 ? `<span class="sn-av sm sn-more">+${note.recipients.length - 4}</span>` : ""}</span><span class="sn-shared">${escapeHtml(noteShareText(note))}</span></div>`
+    : "";
+  const label = `${note.kind === "group" ? `Anteckning från ${note.authorName}` : "Egen anteckning"}${note.priority ? ", prioriterad" : ""}${note.unread ? ", ny" : ""}${note.done ? ", klar" : ""}: ${note.text}`;
+  return `<article class="sn-note ${noteDecoration(note)}${note.done ? " done" : ""}${notesState.justCreated === note.id ? " pop" : ""}" data-note-id="${escapeHtml(note.id)}" style="${style}" tabindex="0" role="button" aria-label="${escapeHtml(label)}">
+    ${note.unread ? '<span class="sn-new-tag">NY</span>' : ""}
+    ${notePriorityControl(note)}
+    ${meta}
+    <p class="sn-text">${escapeHtml(note.text)}</p>
+    ${foot}
+    ${note.done ? noteCheckMark(false) : ""}
+    <button class="sn-resize" type="button" aria-label="Ändra storlek" tabindex="-1"></button>
+  </article>`;
+}
+
+function renderNotesBoard() {
+  const board = notesBoard();
+  if (!board || !notesState.loaded) return;
+  const list = visibleBoardNotes();
+  const flow = isNotesFlow();
+  board.classList.toggle("flow", flow);
+  if (!list.length) {
+    const [title, text] = notesTab() === "mine"
+      ? ["Tavlan är tom", "Klicka på Ny anteckning för att sätta upp din första lapp."]
+      : notesState.filter !== "all" ? ["Inga lappar här", "Inga anteckningar matchar filtret."]
+      : notesState.canShare ? ["Inga delade lappar än", "Klicka på Ny anteckning och välj vilka som ska se den."]
+      : ["Inga delade lappar än", "Här visas anteckningar som delas med dig."];
+    board.innerHTML = `<div class="sn-empty"><div><strong>${title}</strong>${text}</div></div>`;
+    return;
+  }
+  const zones = noteZones(list);
+  board.innerHTML = zones.map(zone => `<div class="sn-zone">${zone.label ? `<p class="sn-zone-label">${zone.label}</p>` : ""}<div class="sn-area" data-zone="${zone.key}"></div></div>`).join("");
+  zones.forEach((zone, index) => {
+    const area = board.querySelector(`.sn-area[data-zone="${zone.key}"]`);
+    if (flow) { area.innerHTML = zone.notes.map(note => noteCardHtml(note, null)).join(""); return; }
+    const placed = placeNotes(zone.notes, area.clientWidth, zone.key);
+    area.innerHTML = zone.notes.map(note => noteCardHtml(note, placed[note.id])).join("");
+    const last = index === zones.length - 1;
+    const bottom = Math.max(...Object.values(placed).map(position => position.y + position.h));
+    area.style.height = `${Math.max(last ? (zones.length > 1 ? 280 : 480) : 0, bottom + (last ? 60 : 20))}px`;
+  });
+  notesState.justCreated = null;
+}
+
+function renderNotesPage() {
+  if (!notesBoard()) return;
+  const tab = notesTab();
+  const canShare = notesState.canShare;
+  const unread = notesState.notes.filter(note => note.unread).length;
+  document.getElementById("notesTabMine").setAttribute("aria-selected", String(tab === "mine"));
+  document.getElementById("notesTabGroup").setAttribute("aria-selected", String(tab === "group"));
+  document.getElementById("notesMineCount").textContent = String(notesState.notes.filter(note => note.kind === "personal").length);
+  setNotesBadge(unread);
+  document.getElementById("notesNewBtn").classList.toggle("hidden", tab === "group" && !canShare);
+  document.getElementById("notesHint").textContent = tab === "group" && !canShare
+    ? "Här ser du anteckningar som delas med dig. Admin, skiftledare och höger hand kan dela nya."
+    : isNotesFlow() ? "Tryck på en lapp för att läsa och skriva." : "Dra lapparna dit du vill. Klicka på en lapp för att läsa och skriva.";
+  const filters = tab === "group"
+    ? [["all", "Alla"], ["unread", `Olästa${unread ? ` (${unread})` : ""}`], ...(canShare ? [["fromme", "Från mig"]] : []), ["open", "Inte klara"]]
+    : [["all", "Alla"], ["open", "Inte klara"]];
+  if (!filters.some(([key]) => key === notesState.filter)) notesState.filter = "all";
+  document.getElementById("notesFilters").innerHTML = filters.map(([key, label]) => `<button type="button" class="sn-filter" data-notes-filter="${key}" aria-pressed="${notesState.filter === key}">${label}</button>`).join("");
+  document.getElementById("notesSort").value = notesSortMode();
+  document.getElementById("notesToolRight").classList.toggle("hidden", isNotesFlow());
+  renderNotesBoard();
+}
+
+// Redraws the board and glides each note from where it was to its new place.
+function reflowNotes(change) {
+  const board = notesBoard();
+  const before = {};
+  board.querySelectorAll(".sn-note").forEach(element => { before[element.dataset.noteId] = element.getBoundingClientRect(); });
+  change();
+  if (notesReducedMotion()) return;
+  board.querySelectorAll(".sn-note").forEach(element => {
+    const from = before[element.dataset.noteId];
+    const note = notesState.notes.find(item => item.id === element.dataset.noteId);
+    if (!from || !note || !element.animate) return;
+    const to = element.getBoundingClientRect();
+    const dx = from.left - to.left;
+    const dy = from.top - to.top;
+    if (Math.abs(dx) + Math.abs(dy) < 1) return;
+    const tilt = noteTilt(note);
+    element.animate([{ transform: `translate(${dx}px, ${dy}px) rotate(${tilt}deg)` }, { transform: `rotate(${tilt}deg)` }], { duration: 420, easing: "cubic-bezier(.2,.85,.25,1)" });
+  });
+}
+
+let notesSavedTimer;
+function flashNotesSaved(text = "Positionen sparad") {
+  const flag = document.getElementById("notesSaved");
+  if (!flag) return;
+  flag.textContent = text;
+  flag.classList.add("visible");
+  clearTimeout(notesSavedTimer);
+  notesSavedTimer = setTimeout(() => flag.classList.remove("visible"), 1600);
+}
+
+async function saveNotePosition(note, element) {
+  const position = { zone: element.parentElement.dataset.zone, x: element.offsetLeft, y: element.offsetTop, w: element.offsetWidth, h: element.offsetHeight, z: notesState.z };
+  const mode = notesSortMode();
+  note.layout = { ...note.layout, [mode]: position };
+  try {
+    await apiRequest("PUT", `/notes/${encodeURIComponent(note.id)}/state`, { layout: { mode, position } });
+    return true;
+  } catch (error) {
+    showAppToast(error.message || "Placeringen kunde inte sparas.", "error");
+    return false;
+  }
+}
+
+/* ---------- Dragging, resizing and opening ---------- */
+
+function bindNotesBoard(board) {
+  board.addEventListener("pointerdown", event => {
+    const element = event.target.closest(".sn-note");
+    if (!element || event.button !== 0 || event.target.closest(".sn-prio")) return;
+    const id = element.dataset.noteId;
+    if (isNotesFlow()) { notesState.gesture = { id }; return; }
+    notesState.gesture = {
+      id, element, area: element.parentElement, mode: event.target.closest(".sn-resize") ? "resize" : "move",
+      startX: event.clientX, startY: event.clientY, moved: false,
+      rect: { x: element.offsetLeft, y: element.offsetTop, w: element.offsetWidth, h: element.offsetHeight }
+    };
+    element.setPointerCapture(event.pointerId);
+  });
+  board.addEventListener("pointermove", event => {
+    const gesture = notesState.gesture;
+    if (!gesture?.element) return;
+    const dx = event.clientX - gesture.startX;
+    const dy = event.clientY - gesture.startY;
+    if (!gesture.moved && Math.hypot(dx, dy) < 5) return;
+    if (!gesture.moved) {
+      gesture.moved = true;
+      gesture.element.classList.add("dragging");
+      gesture.element.classList.remove("dropped", "pop");
+      gesture.element.style.zIndex = String(++notesState.z);
+    }
+    const width = gesture.area.clientWidth;
+    const { rect } = gesture;
+    if (gesture.mode === "move") {
+      const y = Math.max(0, rect.y + dy);
+      gesture.element.style.left = `${Math.max(0, Math.min(rect.x + dx, width - rect.w))}px`;
+      gesture.element.style.top = `${y}px`;
+      if (y + rect.h + 30 > gesture.area.clientHeight) gesture.area.style.height = `${y + rect.h + 30}px`;
+    } else {
+      gesture.element.style.width = `${Math.max(NOTE_SIZE.minW, Math.min(NOTE_SIZE.maxW, rect.w + dx, width - rect.x))}px`;
+      gesture.element.style.height = `${Math.max(NOTE_SIZE.minH, Math.min(NOTE_SIZE.maxH, rect.h + dy))}px`;
+    }
+  });
+  board.addEventListener("pointerup", async () => {
+    const gesture = notesState.gesture;
+    notesState.gesture = null;
+    if (!gesture) return;
+    if (!gesture.moved) { void openNote(gesture.id); return; }
+    const { element } = gesture;
+    element.classList.remove("dragging");
+    element.classList.add("dropped");
+    setTimeout(() => element.classList.remove("dropped"), 400);
+    const note = notesState.notes.find(item => item.id === gesture.id);
+    if (note && await saveNotePosition(note, element)) flashNotesSaved(gesture.mode === "move" ? "Positionen sparad" : "Storleken sparad");
+    if (notesState.pendingReload) void reloadNotesPage();
+  });
+  board.addEventListener("pointercancel", () => { notesState.gesture = null; renderNotesBoard(); });
+  board.addEventListener("keydown", event => {
+    const element = event.target.closest(".sn-note");
+    if (!element || event.target.closest(".sn-prio")) return;
+    if (event.key === "Enter" || event.key === " ") { event.preventDefault(); void openNote(element.dataset.noteId); return; }
+    const step = { ArrowLeft: [-12, 0], ArrowRight: [12, 0], ArrowUp: [0, -12], ArrowDown: [0, 12] }[event.key];
+    if (!step || isNotesFlow()) return;
+    event.preventDefault();
+    element.style.left = `${Math.max(0, Math.min(element.offsetLeft + step[0], element.parentElement.clientWidth - element.offsetWidth))}px`;
+    element.style.top = `${Math.max(0, element.offsetTop + step[1])}px`;
+    element.style.zIndex = String(++notesState.z);
+    const note = notesState.notes.find(item => item.id === element.dataset.noteId);
+    if (note) void saveNotePosition(note, element).then(saved => { if (saved) flashNotesSaved(); });
+  });
+}
+
+function handleNotesClick(event) {
+  if (!notesBoard()) return;
+  const priority = event.target.closest("[data-note-prio]");
+  if (priority) { void toggleNotePriority(priority.dataset.notePrio); return; }
+  const tab = event.target.closest("[data-notes-tab]");
+  if (tab) {
+    sessionStorage.setItem(NOTES_TAB_KEY, tab.dataset.notesTab);
+    notesState.filter = "all";
+    renderNotesPage();
+    return;
+  }
+  const filter = event.target.closest("[data-notes-filter]");
+  if (filter) { notesState.filter = filter.dataset.notesFilter; renderNotesPage(); return; }
+  if (event.target.closest("#notesNewBtn")) { startNewNote(event.target.closest("#notesNewBtn")); return; }
+  if (event.target.closest("#notesTidyBtn")) void tidyNotes();
+}
+
+async function tidyNotes() {
+  const mode = notesSortMode();
+  const notes = visibleBoardNotes();
+  notes.forEach(note => { if (note.layout) delete note.layout[mode]; });
+  renderNotesBoard();
+  if (!notesReducedMotion()) notesBoard().querySelectorAll(".sn-note").forEach((element, index) => { element.style.animationDelay = `${index * 35}ms`; element.classList.add("pop"); });
+  try {
+    await apiRequest("POST", "/notes/layout/reset", { mode, ids: notes.map(note => note.id) });
+    flashNotesSaved("Lapparna är ordnade");
+  } catch (error) {
+    showAppToast(error.message || "Lapparna kunde inte ordnas.", "error");
+  }
+}
+
+async function toggleNotePriority(id, fromOpenNote = false) {
+  const note = notesState.notes.find(item => item.id === id);
+  if (!note?.canPrioritize) return;
+  const priority = !note.priority;
+  // The note changes zone, so its old spot no longer applies.
+  const layout = note.layout;
+  note.priority = priority;
+  note.layout = {};
+  const redraw = () => {
+    if (fromOpenNote) {
+      drawOpenNote();
+      renderNotesPage();
+      notesBoard().querySelector(`.sn-note[data-note-id="${CSS.escape(id)}"]`)?.classList.add("is-open");
+    } else {
+      reflowNotes(renderNotesPage);
+      const flag = notesBoard().querySelector(`[data-note-prio="${CSS.escape(id)}"]`);
+      flag?.classList.add("pulse");
+      flag?.focus({ preventScroll: true });
+    }
+  };
+  redraw();
+  try {
+    await apiRequest("PATCH", `/notes/${encodeURIComponent(id)}`, { priority });
+    await Promise.all(Object.keys(layout || {}).map(mode => apiRequest("PUT", `/notes/${encodeURIComponent(id)}/state`, { layout: { mode, position: null } })));
+    const shared = note.kind === "group" ? " Alla som har tillgång ser markeringen." : "";
+    showAppToast(priority ? `Markerad som prioriterad.${notesSortMode() === "priority" ? " Lappen ligger nu överst." : ""}${shared}` : "Prioriteten är borttagen.");
+  } catch (error) {
+    note.priority = !priority;
+    note.layout = layout;
+    redraw();
+    showAppToast(error.message || "Prioriteten kunde inte sparas.", "error");
+  }
+}
+
+/* ---------- The opened note ---------- */
+
+function startNewNote(fromElement) {
+  const tab = notesTab();
+  if (tab === "group" && !notesState.canShare) return;
+  const recent = notesState.notes.filter(note => note.kind === (tab === "mine" ? "personal" : "group")).slice(0, 3).map(note => note.color);
+  const color = NOTE_COLORS.map(([value]) => value).find(value => !recent.includes(value)) || "yellow";
+  notesState.open = {
+    isNew: true, confirm: null,
+    note: {
+      id: "", kind: tab === "mine" ? "personal" : "group", authorId: currentUser.id, authorName: currentPerson?.name || currentUser.username,
+      authorRole: currentUser.role, text: "", color, priority: false, people: [], wholeShifts: [], recipients: [], done: false,
+      canEdit: true, canPrioritize: true, createdAt: new Date().toISOString()
+    }
+  };
+  showOpenNote(fromElement);
+}
+
+async function openNote(id) {
+  const note = notesState.notes.find(item => item.id === id);
+  if (!note) { showAppToast("Du har inte längre åtkomst till den här anteckningen.", "error"); return; }
+  const from = notesBoard().querySelector(`.sn-note[data-note-id="${CSS.escape(id)}"]`);
+  notesState.open = { isNew: false, note, confirm: null };
+  showOpenNote(from);
+  from?.classList.add("is-open");
+  if (note.unread) {
+    note.unread = false;
+    renderNotesPage();
+    notesBoard().querySelector(`.sn-note[data-note-id="${CSS.escape(id)}"]`)?.classList.add("is-open");
+    try {
+      await apiRequest("PUT", `/notes/${encodeURIComponent(id)}/state`, { read: true });
+      void loadNotifications();
+    } catch (error) {
+      console.warn("The note could not be marked as read:", error);
+    }
+  }
+}
+
+function openNoteHtml() {
+  const { note, isNew, confirm } = notesState.open;
+  const own = note.authorId === currentUser.id;
+  const head = note.kind === "group"
+    ? `${noteAvatar(note.authorName, "lg")}<span class="sn-who"><b>${escapeHtml(own ? `${note.authorName} (du)` : note.authorName)}</b><span>${escapeHtml(ROLE_LABELS[note.authorRole] || "")} · ${isNew ? "ny anteckning till gruppen" : noteAge(note.createdAt)}</span></span>`
+    : `<span class="sn-who"><b>${isNew ? "Ny egen anteckning" : "Egen anteckning"}</b><span>${isNew ? "Bara du ser den" : `Skapad ${noteAge(note.createdAt)} · bara du ser den`}</span></span>`;
+  const priorityTag = note.priority && !note.canPrioritize ? `<span class="sn-prio-tag" title="Bara den som skrev lappen eller admin kan ändra prioriteten">${NOTE_FLAG_ICON}Prioriterad</span>` : "";
+  const priorityButton = note.canPrioritize ? `<button type="button" class="sn-btn${note.priority ? " flag-on" : ""}" data-note-act="prio" aria-pressed="${note.priority}">${NOTE_FLAG_ICON}${note.priority ? "Prioriterad" : "Prioritet"}</button>` : "";
+  const body = note.canEdit
+    ? `<textarea id="notesText" maxlength="1000" placeholder="${note.kind === "group" ? "Skriv något till gruppen…" : "Skriv en anteckning…"}" aria-label="Anteckningens text">${escapeHtml(note.text)}</textarea>`
+    : `<p class="sn-readonly">${escapeHtml(note.text)}</p>`;
+  const colors = note.canEdit
+    ? `<div class="sn-swatches" role="group" aria-label="Färg"><span class="sn-label">Färg</span>${NOTE_COLORS.map(([value, label]) => `<button type="button" class="sn-swatch" data-note-color="${value}" style="--sn-c:${noteColorVar(value)}" aria-pressed="${note.color === value}" aria-label="${label}" title="${label}"></button>`).join("")}${isNew ? "" : '<span class="sn-hint sn-autosave" id="notesAutosave">Sparas automatiskt</span>'}</div>`
+    : "";
+  let share = "";
+  if (note.kind === "group") {
+    const recipients = isNew ? draftRecipients(note) : note.recipients;
+    const status = own && !isNew;
+    const whole = new Set(note.wholeShifts);
+    const listed = status ? recipients : recipients.filter(person => !whole.has(person.shiftId));
+    const chips = [
+      ...(status ? [] : note.wholeShifts.map(id => `<span class="sn-recip"><span class="sn-av sm sn-group-av" aria-hidden="true">${escapeHtml((getShiftName(id) || "S").slice(0, 2))}</span>Hela ${escapeHtml(getShiftName(id) || "skiftet")}</span>`)),
+      ...listed.map(person => `<span class="sn-recip">${noteAvatar(person.name, "sm")}${escapeHtml(firstName(person.name))}${status ? ` <span class="sn-st${person.read ? " read" : ""}">${person.read ? "✓ läst" : "oläst"}</span>` : ""}</span>`)
+    ];
+    share = `<div class="sn-share-box">
+      <div class="sn-share-top"><span class="sn-label">Delas med${recipients.length ? ` ${recipients.length} ${recipients.length === 1 ? "person" : "personer"}` : ""}</span>
+        ${note.canEdit ? `<button type="button" class="sn-share-btn" id="notesShareBtn">${NOTE_SHARE_ICON}${recipients.length || note.wholeShifts.length ? "Ändra mottagare" : "Dela med"}</button>` : ""}</div>
+      ${chips.length ? `<div class="sn-recips">${chips.join("")}</div>` : '<span class="sn-hint">Välj minst en person innan du delar lappen.</span>'}
+    </div>`;
+  }
+  let foot;
+  if (confirm === "delete") {
+    foot = `<div class="sn-confirm"><span>Ta bort lappen${note.kind === "group" ? ` för alla ${note.recipients.length} mottagare` : ""}? Det går inte att ångra.</span><button type="button" class="sn-btn del" data-note-act="yes-delete">Ta bort</button><button type="button" class="sn-btn" data-note-act="no">Avbryt</button></div>`;
+  } else if (confirm === "discard") {
+    foot = `<div class="sn-confirm"><span>Lappen är inte delad än. Vill du kasta den?</span><button type="button" class="sn-btn del" data-note-act="yes-discard">Kasta</button><button type="button" class="sn-btn" data-note-act="no">Fortsätt skriva</button></div>`;
+  } else if (isNew) {
+    const ready = note.text.trim() && (note.kind === "personal" || draftRecipients(note).length);
+    foot = `${priorityButton}<span class="sn-spacer"></span><button type="button" class="sn-btn" data-note-act="cancel">Avbryt</button>
+      <button type="button" class="sn-primary" data-note-act="create"${ready ? "" : " disabled"}>${note.kind === "group" ? `Dela lappen${draftRecipients(note).length ? ` med ${draftRecipients(note).length}` : ""}` : "Sätt upp lappen"}</button>`;
+  } else {
+    foot = `<button type="button" class="sn-btn${note.done ? " on" : ""}" data-note-act="done" aria-pressed="${note.done}">${NOTE_CHECK_ICON}${note.done ? "Klar" : "Markera som klar"}</button>
+      ${priorityButton}${note.canEdit ? '<button type="button" class="sn-btn del" data-note-act="delete">Ta bort</button>' : ""}<span class="sn-spacer"></span>
+      <button type="button" class="sn-primary" data-note-act="close">Stäng</button>`;
+  }
+  return `${note.done && !isNew ? noteCheckMark(notesState.open.animateCheck) : ""}<div class="sn-big-head">${head}${priorityTag}<button type="button" class="sn-close" data-note-act="close" aria-label="Stäng">×</button></div>
+    <div class="sn-big-scroll">${body}${colors}${share}</div><div class="sn-big-foot">${foot}</div>`;
+}
+
+function drawOpenNote() {
+  const big = document.getElementById("notesBig");
+  if (!big || !notesState.open) return;
+  const { note, isNew } = notesState.open;
+  big.className = `sn-big ${isNew ? "tape" : noteDecoration(note)}${note.done && !isNew ? " done" : ""}`;
+  big.style.setProperty("--sn-paper", noteColorVar(note.color));
+  const textarea = document.getElementById("notesText");
+  const selection = textarea && document.activeElement === textarea ? [textarea.selectionStart, textarea.selectionEnd] : null;
+  big.innerHTML = openNoteHtml();
+  notesState.open.animateCheck = false;
+  const restored = document.getElementById("notesText");
+  if (selection && restored) { restored.focus(); restored.setSelectionRange(...selection); }
+}
+
+// Zooms the opened note out of (or back into) the small one it came from.
+function flipNote(element, from, reverse) {
+  if (!from || notesReducedMotion() || !element.animate) return Promise.resolve();
+  const to = element.getBoundingClientRect();
+  const frames = [
+    { transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`, opacity: 0.9 },
+    { transform: "none", opacity: 1 }
+  ];
+  if (reverse) frames.reverse();
+  return element.animate(frames, { duration: reverse ? 240 : 320, easing: reverse ? "cubic-bezier(.4,0,.8,.4)" : "cubic-bezier(.2,.9,.25,1)", fill: "forwards" }).finished.catch(() => {});
+}
+
+function showOpenNote(fromElement) {
+  const layer = document.getElementById("notesLayer");
+  layer.innerHTML = '<div class="sn-scrim fade-in" id="notesScrim"><div class="sn-big" id="notesBig" role="dialog" aria-modal="true" aria-label="Anteckning"></div></div>';
+  drawOpenNote();
+  const big = document.getElementById("notesBig");
+  void flipNote(big, fromElement?.getBoundingClientRect(), false).then(() => big.getAnimations?.().forEach(animation => animation.cancel()));
+  const textarea = document.getElementById("notesText");
+  if (textarea && notesState.open.isNew) textarea.focus();
+  else big.querySelector(".sn-close").focus();
+  if (!layer.dataset.bound) {
+    layer.dataset.bound = "true";
+    layer.addEventListener("input", handleOpenNoteInput);
+    layer.addEventListener("click", handleOpenNoteClick);
+  }
+}
+
+async function closeOpenNote(keepNote = true) {
+  const open = notesState.open;
+  const id = keepNote && open && !open.isNew ? open.note.id : null;
+  await flushNoteText();
+  notesState.open = null;
+  const big = document.getElementById("notesBig");
+  const target = id ? notesBoard().querySelector(`.sn-note[data-note-id="${CSS.escape(id)}"]`) : null;
+  document.getElementById("notesScrim")?.classList.add("fade-out");
+  if (big && target) await flipNote(big, target.getBoundingClientRect(), true);
+  else if (!notesReducedMotion()) await new Promise(resolve => setTimeout(resolve, 200));
+  document.getElementById("notesLayer").innerHTML = "";
+  renderNotesPage();
+  if (id) notesBoard().querySelector(`.sn-note[data-note-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
+  if (notesState.pendingReload) void reloadNotesPage();
+}
+
+async function tryCloseNote(cancel = false) {
+  const open = notesState.open;
+  if (!open) return;
+  const { note, isNew } = open;
+  if (isNew && note.text.trim()) {
+    if (note.kind === "personal" && !cancel) { await createNoteFromDraft(); return; }
+    if (!open.confirm) { open.confirm = "discard"; drawOpenNote(); return; }
+  }
+  await closeOpenNote(!isNew);
+}
+
+let noteTextTimer = null;
+let noteTextPending = null;
+async function flushNoteText() {
+  clearTimeout(noteTextTimer);
+  const pending = noteTextPending;
+  noteTextPending = null;
+  if (!pending) return;
+  const text = pending.text.trim();
+  if (!text) return;
+  try {
+    await apiRequest("PATCH", `/notes/${encodeURIComponent(pending.id)}`, { text });
+    const label = document.getElementById("notesAutosave");
+    if (label) label.textContent = "Sparat";
+  } catch (error) {
+    showAppToast(error.message || "Texten kunde inte sparas.", "error");
+  }
+}
+
+function handleOpenNoteInput(event) {
+  if (event.target.id !== "notesText" || !notesState.open) return;
+  const { note, isNew } = notesState.open;
+  note.text = event.target.value;
+  if (isNew) {
+    const button = document.querySelector('[data-note-act="create"]');
+    if (button) button.disabled = !(note.text.trim() && (note.kind === "personal" || draftRecipients(note).length));
+    return;
+  }
+  noteTextPending = { id: note.id, text: note.text };
+  const label = document.getElementById("notesAutosave");
+  if (label) label.textContent = note.text.trim() ? "Sparar…" : "Lappen kan inte vara tom";
+  clearTimeout(noteTextTimer);
+  noteTextTimer = setTimeout(() => void flushNoteText(), 600);
+}
+
+async function handleOpenNoteClick(event) {
+  const open = notesState.open;
+  if (!open) return;
+  if (event.target.id === "notesScrim") { void tryCloseNote(); return; }
+  const { note, isNew } = open;
+  const swatch = event.target.closest("[data-note-color]");
+  if (swatch) {
+    const previous = note.color;
+    note.color = swatch.dataset.noteColor;
+    document.getElementById("notesBig").style.setProperty("--sn-paper", noteColorVar(note.color));
+    document.querySelectorAll(".sn-swatch").forEach(button => button.setAttribute("aria-pressed", String(button.dataset.noteColor === note.color)));
+    if (!isNew) {
+      try {
+        await apiRequest("PATCH", `/notes/${encodeURIComponent(note.id)}`, { color: note.color });
+      } catch (error) {
+        note.color = previous;
+        drawOpenNote();
+        showAppToast(error.message || "Färgen kunde inte sparas.", "error");
+      }
+    }
+    return;
+  }
+  if (event.target.closest("#notesShareBtn")) { void openNoteShareSheet(); return; }
+  const action = event.target.closest("[data-note-act]")?.dataset.noteAct;
+  if (!action) return;
+  if (action === "close" || action === "cancel") void tryCloseNote(action === "cancel");
+  else if (action === "no") { open.confirm = null; drawOpenNote(); }
+  else if (action === "yes-discard") void closeOpenNote(false);
+  else if (action === "delete") { open.confirm = "delete"; drawOpenNote(); }
+  else if (action === "yes-delete") {
+    try {
+      await apiRequest("DELETE", `/notes/${encodeURIComponent(note.id)}`);
+      notesState.notes = notesState.notes.filter(item => item.id !== note.id);
+      noteTextPending = null;
+      await closeOpenNote(false);
+      showAppToast("Lappen är borttagen.");
+    } catch (error) {
+      showAppToast(error.message || "Lappen kunde inte tas bort.", "error");
+    }
+  } else if (action === "done") {
+    const done = !note.done;
+    note.done = done;
+    open.animateCheck = done;
+    drawOpenNote();
+    try {
+      await apiRequest("PUT", `/notes/${encodeURIComponent(note.id)}/state`, { done });
+      if (done) showAppToast("Markerad som klar.");
+    } catch (error) {
+      note.done = !done;
+      drawOpenNote();
+      showAppToast(error.message || "Det gick inte att spara.", "error");
+    }
+  } else if (action === "prio") {
+    if (isNew) { note.priority = !note.priority; drawOpenNote(); return; }
+    void toggleNotePriority(note.id, true);
+  } else if (action === "create") void createNoteFromDraft();
+}
+
+async function createNoteFromDraft() {
+  const { note } = notesState.open;
+  const text = note.text.trim();
+  if (!text) return;
+  const button = document.querySelector('[data-note-act="create"]');
+  if (button) button.disabled = true;
+  try {
+    const body = { kind: note.kind, text, color: note.color, priority: note.priority };
+    if (note.kind === "group") Object.assign(body, { people: note.people, wholeShifts: note.wholeShifts });
+    const { note: created } = await apiRequest("POST", "/notes", body);
+    notesState.notes.unshift(created);
+    notesState.justCreated = created.id;
+    notesState.filter = "all";
+    await closeOpenNote(false);
+    notesBoard().querySelector(`.sn-note[data-note-id="${CSS.escape(created.id)}"]`)?.scrollIntoView({ behavior: notesReducedMotion() ? "auto" : "smooth", block: "nearest" });
+    const count = created.recipients.length;
+    showAppToast(created.kind === "group" ? `Lappen delades med ${count} ${count === 1 ? "person" : "personer"}. De fick en notis.` : "Lappen sitter på din tavla.");
+  } catch (error) {
+    if (button) button.disabled = false;
+    showAppToast(error.message || "Lappen kunde inte sparas.", "error");
+  }
+}
+
+/* ---------- "Dela med" ---------- */
+
+async function loadNoteRecipients() {
+  notesState.recipients ??= (await apiRequest("GET", "/notes/recipients")).groups;
+  return notesState.recipients;
+}
+
+// Who a note being written would reach, worked out from the people the user may pick.
+function draftRecipients(note) {
+  const groups = notesState.recipients || [];
+  const chosen = new Map();
+  groups.forEach(group => group.people.forEach(person => {
+    if (note.people.includes(person.id) || (group.id && note.wholeShifts.includes(group.id))) chosen.set(person.id, { ...person, shiftId: group.id });
+  }));
+  chosen.delete(currentUser.id);
+  return [...chosen.values()];
+}
+
+async function openNoteShareSheet() {
+  const note = notesState.open.note;
+  let groups;
+  try {
+    groups = await loadNoteRecipients();
+  } catch (error) {
+    showAppToast(error.message || "Mottagarna kunde inte hämtas.", "error");
+    return;
+  }
+  const people = new Set(note.people);
+  const whole = new Set(note.wholeShifts);
+  // Someone who left the user's shifts can still be on an older note; keep them unless removed.
+  const known = new Map(groups.flatMap(group => group.people.map(person => [person.id, { ...person, shiftId: group.id }])));
+  note.recipients.forEach(person => { if (!known.has(person.id) && people.has(person.id)) known.set(person.id, person); });
+  let query = "";
+  const layer = document.getElementById("notesSheetLayer");
+  layer.innerHTML = `<div class="sn-sheet-scrim" id="notesSheetScrim"><div class="sn-sheet" role="dialog" aria-modal="true" aria-labelledby="notesSheetTitle">
+    <div class="sn-sheet-head">
+      <div class="sn-sheet-title"><h3 id="notesSheetTitle">Dela med</h3><button type="button" class="sn-close" id="notesSheetClose" aria-label="Stäng">×</button></div>
+      <input class="sn-search" id="notesShareSearch" type="search" placeholder="Sök på namn" aria-label="Sök på namn" autocomplete="off" />
+    </div>
+    <div class="sn-chips" id="notesChips"></div>
+    <div class="sn-sheet-body" id="notesSheetBody"></div>
+    <div class="sn-sheet-foot"><span id="notesSheetInfo"></span><button type="button" class="sn-primary blue" id="notesSheetDone">Klar</button></div>
+  </div></div>`;
+  const groupOf = id => groups.find(group => group.id === id);
+  const chosen = () => {
+    const ids = new Set([...people].filter(id => known.has(id)));
+    whole.forEach(id => groupOf(id)?.people.forEach(person => ids.add(person.id)));
+    ids.delete(currentUser.id);
+    return [...ids];
+  };
+  const draw = () => {
+    const ids = chosen();
+    document.getElementById("notesChips").innerHTML = ids.length
+      ? [...[...whole].map(id => `<button type="button" class="sn-chip" data-unwhole="${escapeHtml(id)}"><span class="sn-av sm sn-group-av" aria-hidden="true">${escapeHtml((groupOf(id)?.name || "S").slice(0, 2))}</span> Hela ${escapeHtml(groupOf(id)?.name || "skiftet")} <span aria-hidden="true">×</span></button>`),
+         ...ids.filter(id => !whole.has(known.get(id)?.shiftId)).map(id => `<button type="button" class="sn-chip" data-unpick="${escapeHtml(id)}" aria-label="Ta bort ${escapeHtml(known.get(id).name)}">${noteAvatar(known.get(id).name, "sm")} ${escapeHtml(firstName(known.get(id).name))} <span aria-hidden="true">×</span></button>`)].join("")
+      : '<span class="sn-hint">Markera en eller flera personer nedan.</span>';
+    const q = query.trim().toLowerCase();
+    const html = groups.map(group => {
+      const list = group.people.filter(person => !q || person.name.toLowerCase().includes(q));
+      if (q && !list.length) return "";
+      const all = Boolean(group.id) && whole.has(group.id);
+      const wholeRow = group.id && !q
+        ? `<label class="sn-prow whole"><input type="checkbox" data-whole="${escapeHtml(group.id)}"${all ? " checked" : ""} /><span class="sn-av lg sn-group-av" aria-hidden="true">${escapeHtml(group.name.slice(0, 2))}</span><span class="sn-pwho"><strong>Dela med hela gruppen</strong><span>Alla ${group.people.length} i ${escapeHtml(group.name)}</span></span></label>`
+        : "";
+      return `<div><div class="sn-grp-head">${escapeHtml(group.name)}</div>${wholeRow}
+        ${list.map(person => `<label class="sn-prow${all ? " disabled" : ""}"><input type="checkbox" data-pick="${escapeHtml(person.id)}"${all || people.has(person.id) ? " checked" : ""}${all ? " disabled" : ""} />${noteAvatar(person.name, "lg")}<span class="sn-pwho"><span>${escapeHtml(person.name)}</span><span>${escapeHtml(ROLE_LABELS[person.role] || "")}</span></span></label>`).join("")}
+      </div>`;
+    }).join("");
+    const empty = groups.length ? `Ingen heter "${escapeHtml(query)}".` : "Det finns ingen att dela med ännu.";
+    document.getElementById("notesSheetBody").innerHTML = html || `<div class="sn-noresult">${empty}</div>`;
+    document.getElementById("notesSheetInfo").textContent = ids.length ? `${ids.length} mottagare valda` : "Ingen vald";
+    document.getElementById("notesSheetDone").textContent = ids.length ? `Klar (${ids.length})` : "Klar";
+  };
+  const close = () => { layer.innerHTML = ""; document.getElementById("notesShareBtn")?.focus(); };
+  draw();
+  const search = document.getElementById("notesShareSearch");
+  search.focus();
+  search.addEventListener("input", event => { query = event.target.value; draw(); });
+  const sheet = layer.querySelector(".sn-sheet");
+  sheet.addEventListener("change", event => {
+    const input = event.target;
+    if (input.dataset.pick) { if (input.checked) people.add(input.dataset.pick); else people.delete(input.dataset.pick); }
+    if (input.dataset.whole) {
+      const id = input.dataset.whole;
+      if (input.checked) whole.add(id);
+      else { whole.delete(id); groupOf(id)?.people.forEach(person => people.delete(person.id)); }
+    }
+    draw();
+  });
+  sheet.addEventListener("click", event => {
+    const unpick = event.target.closest("[data-unpick]");
+    const unwhole = event.target.closest("[data-unwhole]");
+    if (unpick) { people.delete(unpick.dataset.unpick); draw(); }
+    if (unwhole) { const id = unwhole.dataset.unwhole; whole.delete(id); groupOf(id)?.people.forEach(person => people.delete(person.id)); draw(); }
+  });
+  document.getElementById("notesSheetClose").addEventListener("click", close);
+  document.getElementById("notesSheetScrim").addEventListener("click", event => { if (event.target.id === "notesSheetScrim") close(); });
+  document.getElementById("notesSheetDone").addEventListener("click", () => {
+    // People inside a whole shift are covered by the shift itself.
+    const next = {
+      people: [...people].filter(id => known.has(id) && !whole.has(known.get(id).shiftId)),
+      wholeShifts: [...whole]
+    };
+    close();
+    void applyNoteSharing(next);
+  });
+}
+
+async function applyNoteSharing(next) {
+  const open = notesState.open;
+  if (!open) return;
+  const { note } = open;
+  if (open.isNew) {
+    note.people = next.people;
+    note.wholeShifts = next.wholeShifts;
+    drawOpenNote();
+    return;
+  }
+  const before = note.recipients.map(person => person.id);
+  try {
+    const { note: saved } = await apiRequest("PATCH", `/notes/${encodeURIComponent(note.id)}`, next);
+    Object.assign(note, saved);
+    drawOpenNote();
+    renderNotesPage();
+    notesBoard().querySelector(`.sn-note[data-note-id="${CSS.escape(note.id)}"]`)?.classList.add("is-open");
+    const after = saved.recipients.map(person => person.id);
+    const added = after.filter(id => !before.includes(id)).length;
+    const removed = before.filter(id => !after.includes(id)).length;
+    const message = [
+      added && `${added} ${added === 1 ? "person lades" : "personer lades"} till och fick en notis`,
+      removed && `${removed} ${removed === 1 ? "person har" : "personer har"} inte längre åtkomst`
+    ].filter(Boolean).join(". ");
+    showAppToast(message ? `${message}.` : "Delningen är oförändrad.");
+  } catch (error) {
+    showAppToast(error.message || "Delningen kunde inte sparas.", "error");
+  }
+}
+
 // Notes ("Notiser"): a bell in the page header. Shift leaders and right hands get a
 // short note when an admin changes something in their shift or in shared settings;
-// everyone gets one when someone shares a to-do task with them.
+// everyone gets one when someone shares a to-do task or an anteckning with them.
 const BELL_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
 const notificationState = { items: [], unread: 0, open: false, seen: null, loading: null };
 
@@ -8442,9 +9318,15 @@ async function loadNotifications({ announce = false } = {}) {
   return notificationState.loading;
 }
 
+const NOTIFICATION_HEADINGS = {
+  todoShared: "har delat en uppgift med dig",
+  noteShared: "har delat en anteckning med dig",
+  noteAdded: "lade till dig på en anteckning"
+};
+
 function notificationText(note) {
-  return note.kind === "todoShared"
-    ? `${note.actorName || "Någon"} har delat en uppgift med dig: ${note.title}`
+  return NOTIFICATION_HEADINGS[note.kind]
+    ? `${note.actorName || "Någon"} ${NOTIFICATION_HEADINGS[note.kind]}: ${note.title}`
     : `${note.actorName || "Admin"} (admin) ändrade: ${note.title}`;
 }
 
@@ -8461,16 +9343,17 @@ function renderNotifications() {
     return;
   }
   elements.list.innerHTML = items.map(note => {
-    const shared = note.kind === "todoShared";
+    const shared = Boolean(NOTIFICATION_HEADINGS[note.kind]);
     const heading = shared
-      ? `<strong>${escapeHtml(note.actorName || "Någon")}</strong> har delat en uppgift med dig`
+      ? `<strong>${escapeHtml(note.actorName || "Någon")}</strong> ${NOTIFICATION_HEADINGS[note.kind]}`
       : `<strong>${escapeHtml(note.actorName || "Admin")}</strong> (admin) ändrade`;
     const body = `<span class="notification-heading">${heading}</span>
       <span class="notification-title">${escapeHtml(note.title)}</span>
       ${note.detail ? `<span class="notification-detail">${escapeHtml(note.detail)}</span>` : ""}
       <time datetime="${escapeHtml(note.createdAt)}">${escapeHtml(formatChatTime(note.createdAt))}</time>`;
     const className = `notification-item${note.read ? "" : " unread"}`;
-    return shared ? `<a class="${className}" href="todo.html">${body}</a>` : `<div class="${className}">${body}</div>`;
+    const href = note.noteId ? `anteckningar.html?note=${encodeURIComponent(note.noteId)}` : "todo.html";
+    return shared ? `<a class="${className}" href="${href}">${body}</a>` : `<div class="${className}">${body}</div>`;
   }).join("");
 }
 
@@ -8977,6 +9860,11 @@ function handleLiveChange(change, { fromSave = false } = {}) {
   }
   if (change.type === "notification") {
     void loadNotifications({ announce: true });
+    return;
+  }
+  if (change.type === "notes") {
+    if (notesBoard()) void reloadNotesPage();
+    else void refreshNotesBadge();
     return;
   }
   if (change.type === "people") return queueLiveRefresh({ peopleChanged: true });

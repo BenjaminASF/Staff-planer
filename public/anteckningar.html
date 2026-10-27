@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Anteckningar</title>
+  <script src="theme.js?v=20261027-notes2"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700&family=Figtree:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" /><link rel="stylesheet" href="style.css?v=20261027-notes2" />
+</head>
+<body class="app-booting">
+  <div id="authScreen" class="auth-screen">
+    <div class="auth-card">
+      <div class="auth-badge">Staff Planner</div>
+      <h2 id="authTitle">Logga in</h2>
+      <p id="authSubtitle" class="auth-subtitle">Logga in med ditt användarnamn och lösenord.</p>
+      <form id="authForm" class="auth-form"></form>
+      <p id="authMessage" class="message hidden" role="status" aria-live="polite"></p>
+      <p class="privacy-note">Personaluppgifter sparas på arbetsplatsens server och används för schemaplanering.</p>
+    </div>
+  </div>
+
+  <div id="appShell" class="hidden">
+    <div class="layout">
+      <aside class="sidebar">
+        <h1 class="logo">Staff Planner</h1>
+        <nav class="nav">
+          <a class="nav-link" href="dashboard.html">Översikt</a>
+          <a class="nav-link" href="index.html">Schema</a>
+          <a class="nav-link" href="produktion.html">Produktion</a>
+          <a class="nav-link" href="rast.html">Rast</a>
+          <a class="nav-link" href="personal.html">Personal</a>
+          <a class="nav-link active" href="anteckningar.html">Anteckningar</a>
+          <a class="nav-link" href="testresultat.html">Testresultat</a>
+          <a class="nav-link" href="maskiner.html">Kompetens</a>
+          <a class="nav-link" href="maskinhantering.html">Maskinhantering</a>
+          <a class="nav-link" href="bedomning.html">Bedömning</a>
+          <a class="nav-link" href="todo.html">Att göra</a>
+          <a class="nav-link" href="add.html">Lägg till</a>
+        </nav>
+        <button id="logoutBtn" class="btn sidebar-logout" type="button">Logga ut</button>
+      </aside>
+
+      <main class="main notes-page">
+        <div class="header">
+          <h2>Anteckningar</h2>
+          <p id="notesHint">Dra lapparna dit du vill. Klicka på en lapp för att läsa och skriva.</p>
+        </div>
+        <div class="sn-top">
+          <div class="sn-tabs" role="tablist" aria-label="Anteckningar">
+            <button class="sn-tab" role="tab" id="notesTabMine" data-notes-tab="mine" type="button"><span>Mina<span class="sn-long"> anteckningar</span></span><span class="sn-count" id="notesMineCount"></span></button>
+            <button class="sn-tab" role="tab" id="notesTabGroup" data-notes-tab="group" type="button"><span>Gruppens<span class="sn-long"> anteckningar</span></span><span class="sn-badge hidden" id="notesGroupBadge"></span></button>
+          </div>
+          <button class="sn-new" id="notesNewBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Ny anteckning</button>
+        </div>
+        <div class="sn-toolbar">
+          <div class="sn-filters" id="notesFilters"></div>
+          <label class="sn-sort" for="notesSort">Sortera
+            <select id="notesSort">
+              <option value="priority">Prioritet först</option>
+              <option value="newest">Nyaste först</option>
+              <option value="oldest">Äldsta först</option>
+            </select>
+          </label>
+          <div class="sn-tool-right" id="notesToolRight"><span class="sn-saved" id="notesSaved">Positionen sparad</span><button class="sn-ghost" id="notesTidyBtn" type="button">Ordna lapparna</button></div>
+        </div>
+        <section class="sn-board" id="notesBoard" aria-label="Anslagstavla" aria-busy="true"></section>
+        <div id="notesLayer"></div>
+        <div id="notesSheetLayer"></div>
+      </main>
+    </div>
+    <footer style="margin-top:30px; text-align:center; color:#94a3b8;">© 2026 Mizzar — Staff Planner</footer>
+  </div>
+<script src="app.js?v=20261027-notes2"></script>
+</body>
+</html>

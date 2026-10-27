@@ -26,6 +26,8 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | Eget skift | |
 | Ta bort användare från sidan Användare | ✓ | | | |
 | Chatt med text och bilder | ✓ | ✓ | ✓ | |
+| Egna anteckningar på anslagstavlan (**Anteckningar → Mina anteckningar**) | ✓ | ✓ | ✓ | ✓ |
+| Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Alla skift | Eget skift | Eget skift | Läser det som delas med dem |
 | Ta bort personal och användare, ändra roller | ✓ | | | |
 | Skapa och ta bort skift, backup och import | ✓ | | | |
 | Exportera backup av sitt eget skift (**Översikt → Backup av skiftet**) | | ✓ | | |
@@ -58,6 +60,17 @@ Varje skiftkort har två knappar:
 På översikten finns även **Data** under **Meny**: dagens ändringar och export och import av backup. Skiftledare och höger hand ser samma översikt som tidigare, för sitt eget skift.
 
 Operatörer ser en veckas schema och rastplan först när admin eller skiftledaren har klickat på **Dela schema** för den veckan. Delningen kan tas tillbaka med **Sluta dela**.
+
+### Anteckningar
+
+**Anteckningar** ligger bredvid **Personal** i menyn och är en anslagstavla med färgade lappar. Siffran på länken visar hur många delade anteckningar man inte har läst.
+
+- **Mina anteckningar** är privata. Ingen annan ser dem, inte heller admin.
+- **Gruppens anteckningar**: admin, skiftledare och höger hand väljer med **Dela med** exakt vilka som ska se en lapp. De söker på namn, kryssar i personer eller väljer **Dela med hela gruppen**. Skiftledare och höger hand kan bara välja personer i sitt eget skift, admin kan välja i alla skift. Den som inte har valts ser inte lappen, inte heller admin. Hela gruppen gäller också den som börjar i skiftet senare.
+- **Notiser**: mottagarna får en notis och ser lappen som **NY** tills de har öppnat den. Den som läggs till i efterhand får en notis. Den som tas bort förlorar lappen, notisen och sina markeringar direkt. Författaren ser vilka som har läst.
+- **Ändra**: bara den som skrev lappen ändrar text, färg och mottagare och tar bort den. Var och en markerar själv en lapp som **klar**.
+- **Prioritet**: flaggan uppe till vänster markerar lappen som prioriterad. Markeringen syns för alla som ser lappen och kan ändras av den som skrev den, och av admin på delade lappar som admin ser. Med **Sortera: Prioritet först** (standard) ligger prioriterade lappar överst. Där finns också **Nyaste först** och **Äldsta först**.
+- Lapparna dras dit man vill och storleken ändras i hörnet. Placeringen sparas för varje användare och sortering, och **Ordna lapparna** lägger dem i kolumner igen. På mobilen visas lapparna i en enkel lista.
 
 ### Mejl när schemat delas
 
