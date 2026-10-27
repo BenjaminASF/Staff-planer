@@ -5932,19 +5932,26 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
 function adminLineRulesHtml() {
   const lineIds = Object.keys(BREAK_LINE_WORKPLACES);
   const gaps = lineIds.flatMap(lineId => getLineRuleGaps(lineId).map(gap => `${BREAK_LINE_LABELS[lineId] || lineId}: ${gap}`));
-  const shared = [...new Set(lineIds.flatMap(getLineWorkplaces))]
-    .filter(workplace => lineIds.filter(lineId => getLineWorkplaces(lineId).includes(workplace)).length > 1);
-  const placeHtml = workplace => {
+  const lineLabel = lineId => BREAK_LINE_LABELS[lineId] || lineId;
+  const linesWith = workplace => lineIds.filter(lineId => getLineWorkplaces(lineId).includes(workplace));
+  const listText = items => items.length > 1 ? `${items.slice(0, -1).join(", ")} och ${items.at(-1)}` : items.join("");
+  const shared = [...new Set(lineIds.flatMap(getLineWorkplaces))].filter(workplace => linesWith(workplace).length > 1);
+  const sharedText = shared.length
+    ? ` ${listText(shared)} delas av ${listText([...new Set(shared.flatMap(linesWith))].map(lineLabel))}: samma person bemannar platsen för alla linjer den hör till, och räknas där bara en gång.`
+    : "";
+  const placeHtml = (workplace, lineId) => {
     const department = getTaskDepartment(workplace);
     const required = customWorkItems.find(item => item.name === workplace)?.requiredSkills || [];
     const skillsText = department ? [...new Set([department, ...required])].join(" + ") : "kompetens saknas";
-    return `<li><strong>${escapeHtml(workplace)}</strong> · ${getWorkplaceStaffCount(workplace)} person · ${escapeHtml(skillsText)}</li>`;
+    const others = linesWith(workplace).filter(other => other !== lineId).map(lineLabel);
+    const sharedNote = others.length ? ` · samma person som ${listText(others)}` : "";
+    return `<li><strong>${escapeHtml(workplace)}</strong> · ${getWorkplaceStaffCount(workplace)} person · ${escapeHtml(skillsText)}${escapeHtml(sharedNote)}</li>`;
   };
   return `<details class="card admin-rules"${gaps.length ? " open" : ""}>
     <summary><h3>Regler för linjebemanning</h3>${gaps.length ? `<span class="admin-pill warn">${gaps.length} ${gaps.length === 1 ? "regel behöver" : "regler behöver"} definieras</span>` : '<span class="admin-muted">Från inställningar och kompetens</span>'}</summary>
     ${gaps.length ? `<div class="admin-rules-gaps"><strong>Behöver definieras innan linjerna kan räknas:</strong><ul>${gaps.map(gap => `<li>${escapeHtml(gap)}</li>`).join("")}</ul></div>` : ""}
-    <p class="admin-sub">En linje är bemannad när varje plats på linjen har en schemalagd operatör som är Tillgänglig och har platsens kompetens, utan GD-begränsning på GD. En operatör med Utbildning på platsen i schemat bemannar den också, men får ingen kompetens av utbildningen; saknad kompetens visas under Under utbildning. En operatör räknas bara på en linje. I produktion betyder att produktion är rapporterad för linjens maskin den dagen. Om skiftet kan köra alla linjer räknas fram från alla tillgängliga operatörer och deras kompetens.${shared.length ? ` ${shared.join(", ")} hör till flera linjer och delas av dem.` : ""} Platserna per linje ändras under Inställningar → Rastlinjer, och kompetenskraven under Kompetens.</p>
-    <div class="admin-rules-lines">${lineIds.map(lineId => `<div><h4>${escapeHtml(BREAK_LINE_LABELS[lineId] || lineId)}</h4><ul>${getLineWorkplaces(lineId).map(placeHtml).join("") || "<li>Inga platser</li>"}</ul></div>`).join("")}</div>
+    <p class="admin-sub">En linje är bemannad när varje plats på linjen har en schemalagd operatör som är Tillgänglig och har platsens kompetens, utan GD-begränsning på GD. En operatör med Utbildning på platsen i schemat bemannar den också, men får ingen kompetens av utbildningen; saknad kompetens visas under Under utbildning. En operatör räknas bara på en linje, utom på en plats som delas av flera linjer. I produktion betyder att produktion är rapporterad för linjens maskin den dagen. Om skiftet kan köra alla linjer räknas fram från alla tillgängliga operatörer och deras kompetens.${sharedText} Platserna per linje ändras under Inställningar → Rastlinjer, och kompetenskraven under Kompetens.</p>
+    <div class="admin-rules-lines">${lineIds.map(lineId => `<div><h4>${escapeHtml(lineLabel(lineId))}</h4><ul>${getLineWorkplaces(lineId).map(workplace => placeHtml(workplace, lineId)).join("") || "<li>Inga platser</li>"}</ul></div>`).join("")}</div>
   </details>`;
 }
 
