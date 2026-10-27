@@ -1,7 +1,7 @@
 const { describe, test, before, after, beforeEach } = require("node:test");
 const assert = require("node:assert/strict");
 const { startTestServer, SETUP_CODE } = require("./helpers");
-const { changedPeople, isAllowedEndpoint } = require("../push");
+const { changedPeople, isAllowedEndpoint, cleanupPush, KINDS } = require("../push");
 const { currentWeekKey } = require("../store");
 
 const PASSWORD = "losenord123";
@@ -267,6 +267,209 @@ describe("pushnotiser", () => {
       assert.equal((await client.post("/api/chat/messages", { text: "Hej" })).status, 201);
     } finally {
       await plain.close();
+    }
+  });
+});
+
+describe("pushnotiser efter utloggning", () => {
+  let server, admin, leader, hand, olle;
+  let handUser, handPerson, olleUser;
+  const sent = [];
+  const pushSender = {
+    configured: true,
+    publicKey: "BPublicKeyForTests",
+    async send(subscription, payload) {
+      sent.push({ endpoint: subscription.endpoint, payload: JSON.parse(payload) });
+    }
+  };
+  const endpointFor = name => `https://fcm.googleapis.com/fcm/send/${name}`;
+  const keys = { p256dh: "BKeyForTests", auth: "authForTests" };
+  const subscribe = async (client, name) => {
+    const result = await client.post("/api/push/subscriptions", { endpoint: endpointFor(name), keys, device: "Testtelefon" });
+    assert.equal(result.status, 201);
+    return result.data.deviceSecret;
+  };
+  const flush = async () => {
+    await server.pool.query("UPDATE push_outbox SET send_after = now() WHERE sent_at IS NULL");
+    await server.app.locals.push.flush();
+  };
+  const device = async name => (await server.pool.query(
+    "SELECT user_id, session_hash, signed_out_at FROM push_subscriptions WHERE endpoint = $1", [endpointFor(name)]
+  )).rows[0];
+  const signedOutHoursAgo = (name, hours) => server.pool.query(
+    "UPDATE push_subscriptions SET signed_out_at = now() - make_interval(hours => $2) WHERE endpoint = $1", [endpointFor(name), hours]
+  );
+  // A private message from the shift leader to Hanna, and whether her phone got it.
+  const handGetsMessage = async () => {
+    sent.length = 0;
+    assert.equal((await leader.post("/api/chat/messages", { text: "Hemligt för Hanna", recipientId: handUser.id })).status, 201);
+    await flush();
+    return sent.some(item => item.endpoint === endpointFor("hand"));
+  };
+
+  before(async () => {
+    server = await startTestServer({ pushSender, pushAutoStart: false });
+    [admin, leader, hand, olle] = Array.from({ length: 4 }, () => server.client());
+    await admin.post("/api/setup", { setupCode: SETUP_CODE, name: "Ada Admin", username: "ada", password: PASSWORD });
+    const shift = (await admin.post("/api/shifts", { name: "Dag" })).data.shift;
+    const createPerson = async (name, username, role) => (await admin.post("/api/people", {
+      name, shiftId: shift.id, account: { username, password: PASSWORD, role, mustChangePassword: false }
+    })).data.person;
+    await createPerson("Lisa Ledare", "lisa", "shift_leader");
+    handPerson = await createPerson("Hanna Hand", "hanna", "right_hand");
+    await createPerson("Olle Operatör", "olle", "operator");
+    await leader.login("lisa", PASSWORD);
+    handUser = (await hand.login("hanna", PASSWORD)).user;
+    olleUser = (await olle.login("olle", PASSWORD)).user;
+  });
+
+  after(async () => {
+    await server?.close();
+  });
+
+  beforeEach(async () => {
+    await flush();
+    sent.length = 0;
+  });
+
+  test("push keeps coming after signing out, for 48 hours, checked right before sending", async () => {
+    await subscribe(hand, "hand");
+    assert.equal(await handGetsMessage(), true);
+
+    assert.equal((await hand.post("/api/logout")).status, 200);
+    const signedOut = await device("hand");
+    assert.equal(signedOut.session_hash, null);
+    assert.ok(signedOut.signed_out_at, "signing out starts the 48 hours");
+    assert.equal(await handGetsMessage(), true, "still sent after signing out");
+
+    await signedOutHoursAgo("hand", 47);
+    assert.equal(await handGetsMessage(), true);
+
+    // Queued while the device was active, but the time ran out before it was sent.
+    sent.length = 0;
+    assert.equal((await leader.post("/api/chat/messages", { text: "Sent", recipientId: handUser.id })).status, 201);
+    await signedOutHoursAgo("hand", 49);
+    await flush();
+    assert.equal(sent.length, 0, "nothing is sent once the 48 hours have passed");
+    assert.equal(await handGetsMessage(), false);
+    await cleanupPush(server.pool);
+    assert.equal(await device("hand"), undefined, "the device is removed");
+  });
+
+  test("signing in on the device starts the 48 hours over; after them push must be turned on again", async () => {
+    await hand.login("hanna", PASSWORD);
+    await subscribe(hand, "hand");
+    await hand.post("/api/logout");
+    await signedOutHoursAgo("hand", 47);
+
+    await hand.post("/api/login", { username: "hanna", password: PASSWORD, pushEndpoint: endpointFor("hand") });
+    const renewed = await device("hand");
+    assert.ok(renewed.session_hash, "tied to the new session");
+    assert.equal(renewed.signed_out_at, null);
+    await hand.post("/api/logout");
+    await signedOutHoursAgo("hand", 47);
+    assert.equal(await handGetsMessage(), true);
+
+    // Too late: signing in does not bring push back by itself.
+    await signedOutHoursAgo("hand", 49);
+    await hand.post("/api/login", { username: "hanna", password: PASSWORD, pushEndpoint: endpointFor("hand") });
+    assert.equal(await device("hand"), undefined);
+    assert.equal(await handGetsMessage(), false);
+    // ...but turning it on again under Min profil does.
+    await subscribe(hand, "hand");
+    assert.equal(await handGetsMessage(), true);
+  });
+
+  test("while signed in the device stays on, also across a password change; an expired session counts as signed out", async () => {
+    await signedOutHoursAgo("hand", 100);
+    assert.equal(await handGetsMessage(), true, "signed in: signed_out_at is not used");
+
+    assert.equal((await hand.post("/api/me/password", { currentPassword: PASSWORD, newPassword: "nyttlosen123" })).status, 200);
+    const changed = await device("hand");
+    assert.ok(changed.session_hash);
+    assert.equal(changed.signed_out_at, null);
+    assert.equal(await handGetsMessage(), true);
+
+    await server.pool.query("UPDATE sessions SET expires_at = now() - interval '49 hours' WHERE user_id = $1", [handUser.id]);
+    assert.equal(await handGetsMessage(), false);
+    await server.pool.query("UPDATE sessions SET expires_at = now() + interval '1 day' WHERE user_id = $1", [handUser.id]);
+    assert.equal(await handGetsMessage(), true);
+  });
+
+  test("someone else signing in on the device stops the previous user's push there", async () => {
+    await olle.post("/api/logout");
+    await olle.post("/api/login", { username: "olle", password: PASSWORD, pushEndpoint: endpointFor("hand") });
+    assert.equal(await device("hand"), undefined);
+    assert.equal(await handGetsMessage(), false);
+    assert.equal((await olle.get("/api/push")).data.devices, 0, "the new user turns push on themselves");
+    await subscribe(hand, "hand");
+  });
+
+  test("the service worker renews the subscription with the device's key, also signed out", async () => {
+    const secret = await subscribe(hand, "hand");
+    await hand.post("/api/logout");
+    const anonymous = server.client();
+    const renew = (body, client = anonymous) => client.post("/api/push/subscriptions/renew", { endpoint: endpointFor("hand-new"), keys, replaces: endpointFor("hand"), ...body });
+
+    assert.equal((await renew({ deviceSecret: "x".repeat(43) })).status, 404, "a wrong key is refused");
+    assert.equal((await renew({ deviceSecret: secret, replaces: endpointFor("olle") })).status, 404, "only the device's own row");
+    assert.equal((await renew({ deviceSecret: secret, endpoint: "https://evil.example.com/x" })).status, 400);
+    assert.equal((await renew({ deviceSecret: secret })).status, 200);
+    const renewed = await device("hand-new");
+    assert.equal(renewed.user_id, handUser.id);
+    assert.equal(renewed.session_hash, null, "still signed out; the 48 hours are not renewed");
+    assert.ok(renewed.signed_out_at);
+    assert.equal(await device("hand"), undefined);
+    sent.length = 0;
+    await leader.post("/api/chat/messages", { text: "Hej", recipientId: handUser.id });
+    await flush();
+    assert.deepEqual(sent.map(item => item.endpoint), [endpointFor("hand-new")]);
+
+    await signedOutHoursAgo("hand-new", 49);
+    assert.equal((await anonymous.post("/api/push/subscriptions/renew", {
+      endpoint: endpointFor("hand-3"), keys, replaces: endpointFor("hand-new"), deviceSecret: secret
+    })).status, 404, "an expired device cannot renew itself");
+  });
+
+  test("a device that lost its key gets a new one when its user opens the app", async () => {
+    await hand.login("hanna", "nyttlosen123");
+    await subscribe(hand, "hand");
+    const check = await hand.post("/api/push/subscriptions/check", { endpoint: endpointFor("hand"), hasSecret: false });
+    assert.equal(check.data.subscribed, true);
+    assert.match(check.data.deviceSecret, /^[A-Za-z0-9_-]{43}$/);
+    assert.equal((await server.client().post("/api/push/subscriptions/renew", {
+      endpoint: endpointFor("hand"), keys, replaces: endpointFor("hand"), deviceSecret: check.data.deviceSecret
+    })).status, 200);
+  });
+
+  test("a blocked user gets nothing and cannot renew; a removed user's devices are gone", async () => {
+    const secret = await subscribe(hand, "hand");
+    await hand.post("/api/logout");
+    assert.equal((await admin.patch(`/api/people/${handPerson.id}/account`, { pushBlocked: true })).status, 200);
+    assert.equal(await handGetsMessage(), false);
+    assert.equal((await server.client().post("/api/push/subscriptions/renew", {
+      endpoint: endpointFor("hand-4"), keys, replaces: endpointFor("hand"), deviceSecret: secret
+    })).status, 404);
+    await admin.patch(`/api/people/${handPerson.id}/account`, { pushBlocked: false });
+
+    await leader.post("/api/chat/messages", { text: "Väntar", recipientId: handUser.id });
+    assert.equal((await admin.request("DELETE", `/api/people/${handPerson.id}/account`)).status, 200);
+    const left = await server.pool.query(
+      "SELECT (SELECT count(*)::int FROM push_subscriptions WHERE user_id = $1) AS devices, (SELECT count(*)::int FROM push_outbox WHERE user_id = $1) AS queued",
+      [handUser.id]
+    );
+    assert.deepEqual(left.rows[0], { devices: 0, queued: 0 });
+    await flush();
+    assert.equal(sent.length, 0);
+    assert.ok(olleUser.id);
+  });
+
+  test("the text on the lock screen never says who or what", () => {
+    const ref = { scope: "Hemligt skift", week: currentWeekKey() };
+    for (const [kind, config] of Object.entries(KINDS)) {
+      const text = config.text(ref);
+      assert.ok(!text.includes("Hemligt"), kind);
+      assert.match(text, /^[A-Za-zÅÄÖåäö0-9 .]+$/, kind);
     }
   });
 });

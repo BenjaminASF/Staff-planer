@@ -9467,11 +9467,11 @@ function setSession(me) {
   sessionStorage.setItem(SIGNED_IN_HINT_KEY, "1");
 }
 
-// forgetDevice: signing out yourself also turns push notifications off on this device,
-// so a shared phone never shows someone else's. Automatic sign-out keeps them.
-async function signOut(notice = "", { forgetDevice = false } = {}) {
+// Push notifications stay on, for 48 hours unless someone signs in on the device again
+// (see server/push.js). Whoever signs in next takes the device over.
+async function signOut(notice = "") {
   clearTimeout(autoLockTimeoutId);
-  if (forgetDevice) await disablePushOnThisDevice().catch(error => console.warn("Push could not be turned off:", error));
+  sessionStorage.removeItem(`${PUSH_CHECKED_KEY}:${currentUser?.id}`);
   currentUser = null;
   userPreferences = {};
   try {
@@ -9505,6 +9505,21 @@ function takeLinkParam(name) {
 // Push notifications (see server/push.js). Each user turns them on and off per device
 // under Min profil. An admin can turn them off for a user; the server then sends nothing.
 const PUSH_CHECKED_KEY = "staff_push_checked";
+// Set when the server turned this device off (its 48 hours ran out or someone else
+// took it over), so Min profil can say why.
+const PUSH_STOPPED_KEY = "staff_push_stopped";
+// The device's secret key, kept where the service worker can read it (see service-worker.js).
+const PUSH_DEVICE_CACHE = "sp-push-device";
+const PUSH_DEVICE_URL = "./push-device";
+function setPushStopped(stopped) {
+  try {
+    if (stopped) localStorage.setItem(PUSH_STOPPED_KEY, "1");
+    else localStorage.removeItem(PUSH_STOPPED_KEY);
+  } catch { /* Private mode: the hint is just not shown. */ }
+}
+function wasPushStopped() {
+  try { return Boolean(localStorage.getItem(PUSH_STOPPED_KEY)); } catch { return false; }
+}
 const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && location.protocol.startsWith("http");
 const isAppleMobile = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 const isInstalledApp = () => window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
@@ -9528,6 +9543,17 @@ function describeDevice() {
   return "Dator";
 }
 
+async function savePushDevice(device) {
+  const cache = await caches.open(PUSH_DEVICE_CACHE);
+  if (device) await cache.put(PUSH_DEVICE_URL, Response.json(device));
+  else await cache.delete(PUSH_DEVICE_URL);
+}
+
+async function readPushDevice() {
+  if (!("caches" in window)) return null;
+  return (await (await caches.open(PUSH_DEVICE_CACHE)).match(PUSH_DEVICE_URL))?.json() ?? null;
+}
+
 async function enablePushOnThisDevice(publicKey) {
   const permission = await Notification.requestPermission();
   if (permission !== "granted") {
@@ -9537,14 +9563,17 @@ async function enablePushOnThisDevice(publicKey) {
   }
   const registration = await navigator.serviceWorker.ready;
   // A subscription made with an older server key cannot be reused.
-  await (await registration.pushManager.getSubscription())?.unsubscribe();
+  const old = await registration.pushManager.getSubscription();
+  await old?.unsubscribe();
   const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(publicKey) });
   try {
-    await apiRequest("POST", "/push/subscriptions", { ...subscription.toJSON(), device: describeDevice() });
+    const { deviceSecret } = await apiRequest("POST", "/push/subscriptions", { ...subscription.toJSON(), device: describeDevice(), replaces: old?.endpoint });
+    await savePushDevice({ endpoint: subscription.endpoint, secret: deviceSecret, publicKey });
   } catch (error) {
     await subscription.unsubscribe().catch(() => {});
     throw error;
   }
+  setPushStopped(false);
 }
 
 async function disablePushOnThisDevice() {
@@ -9552,18 +9581,30 @@ async function disablePushOnThisDevice() {
   if (!subscription) return;
   await apiRequest("DELETE", "/push/subscriptions", { endpoint: subscription.endpoint }).catch(error => console.warn("Push device could not be removed:", error));
   await subscription.unsubscribe();
+  await savePushDevice(null);
 }
 
-// Once per visit and user: a device that no longer belongs to this user on the server
-// (someone else signed in on it, or it was turned off everywhere) is turned off here too.
+// Once per visit and user: ties the device to this sign-in, which keeps push on. A device
+// that no longer belongs to this user on the server (someone else signed in on it, it
+// was turned off everywhere, or its 48 hours ran out) is turned off here too.
 async function checkPushDevice() {
   const key = `${PUSH_CHECKED_KEY}:${currentUser?.id}`;
   if (!currentUser || sessionStorage.getItem(key)) return;
   sessionStorage.setItem(key, "1");
   const subscription = await getPushSubscription();
   if (!subscription) return;
-  const { subscribed } = await apiRequest("POST", "/push/subscriptions/check", { endpoint: subscription.endpoint });
-  if (!subscribed) await subscription.unsubscribe();
+  const device = await readPushDevice().catch(() => null);
+  const hasSecret = device?.endpoint === subscription.endpoint && Boolean(device.secret);
+  const result = await apiRequest("POST", "/push/subscriptions/check", { endpoint: subscription.endpoint, hasSecret });
+  if (result.deviceSecret) {
+    const { publicKey } = await apiRequest("GET", "/push");
+    await savePushDevice({ endpoint: subscription.endpoint, secret: result.deviceSecret, publicKey });
+  }
+  if (!result.subscribed) {
+    await subscription.unsubscribe();
+    await savePushDevice(null);
+    setPushStopped(true);
+  }
 }
 
 async function renderPushSettings(card) {
@@ -9589,7 +9630,8 @@ async function renderPushSettings(card) {
       : "<p>Den här webbläsaren kan inte ta emot pushnotiser. Prova Chrome, Edge, Firefox eller Safari i en nyare version.</p>";
   } else {
     content = `<label class="settings-switch"><input name="pushEnabled" type="checkbox"${subscription ? " checked" : ""} /><span>Pushnotiser på den här enheten</span></label>
-      <small>Loggar du ut stängs pushnotiserna av på den här enheten.</small>
+      <small>Notiserna fortsätter i 48 timmar efter att du loggat ut. Loggar du in på enheten igen inom den tiden fortsätter de, annars stängs de av och du kan slå på dem här igen.</small>
+      ${!subscription && wasPushStopped() ? "<p>Pushnotiserna stängdes av på den här enheten, till exempel för att ingen loggat in på den inom 48 timmar. Slå på dem igen ovan.</p>" : ""}
       ${Notification.permission === "denied" ? "<p>Notiser är blockerade för Staff Planner i enhetens eller webbläsarens inställningar. Tillåt dem där för att kunna slå på pushnotiser.</p>" : ""}`;
   }
   body.innerHTML = `${content}
@@ -9612,6 +9654,7 @@ async function renderPushSettings(card) {
     try {
       await apiRequest("DELETE", "/push/subscriptions", { all: true });
       await (await getPushSubscription())?.unsubscribe();
+      await savePushDevice(null);
       show("Pushnotiser är avstängda på alla dina enheter.", "success");
     } catch (error) {
       show(error.message || "Det gick inte att stänga av pushnotiserna.", "error");
@@ -9879,8 +9922,33 @@ function applyLinkedShift() {
   return true;
 }
 
+// A push notice opened a page while signed out: after signing in, the user lands there.
+const AFTER_SIGN_IN_KEY = "staff_after_sign_in";
+const NOTICE_LINK_PARAMS = ["chat", "notifications"];
+
+// The page saved by setupAuthUI, if this user may open it. Only pages of this app and
+// the parameters push notices use are followed.
+function takeAfterSignInPage() {
+  const saved = sessionStorage.getItem(AFTER_SIGN_IN_KEY);
+  sessionStorage.removeItem(AFTER_SIGN_IN_KEY);
+  if (!saved) return null;
+  const url = new URL(saved, location.href);
+  const page = url.pathname.split("/").pop() || "index.html";
+  if (url.origin !== location.origin || !canOpenPage(page)) return null;
+  const params = new URLSearchParams([...url.searchParams].filter(([name]) => NOTICE_LINK_PARAMS.includes(name)));
+  return `${page}${params.size ? `?${params}` : ""}`;
+}
+
 async function openAppUI(justSignedIn = false) {
-  if (isAdmin() && justSignedIn && getCurrentPage() !== "dashboard.html") {
+  const afterSignIn = justSignedIn ? takeAfterSignInPage() : null;
+  if (afterSignIn) {
+    // The notice's page comes first, for admins too.
+    sessionStorage.setItem(ADMIN_LANDED_KEY, "1");
+    if (afterSignIn !== `${getCurrentPage()}${location.search}`) {
+      location.replace(afterSignIn);
+      return;
+    }
+  } else if (isAdmin() && justSignedIn && getCurrentPage() !== "dashboard.html") {
     // Right after signing in, an admin always starts on Översikt, whichever page the login was on.
     sessionStorage.setItem(ADMIN_LANDED_KEY, "1");
     location.replace("dashboard.html");
@@ -9906,7 +9974,7 @@ async function openAppUI(justSignedIn = false) {
   document.getElementById("authScreen")?.classList.add("hidden");
   document.getElementById("appShell")?.classList.remove("hidden");
   finishInitialViewSetup();
-  bindOnce(document.getElementById("logoutBtn"), "click", () => signOut("", { forgetDevice: true }));
+  bindOnce(document.getElementById("logoutBtn"), "click", () => signOut());
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("./service-worker.js").catch(error => console.warn("Offline cache could not start", error));
   void checkPushDevice().catch(error => console.warn("Push check failed:", error));
 
@@ -9978,7 +10046,7 @@ function renderAuthForm(mode, onSubmit) {
       button.disabled = false;
     }
   });
-  form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut("", { forgetDevice: true }));
+  form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut());
   form.querySelector("input")?.focus();
 }
 
@@ -10001,7 +10069,9 @@ function showAuthScreen(mode) {
   clearAuthMessage();
   if (mode === "login") {
     renderAuthForm("login", async values => {
-      await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
+      // This device's push subscription: signing in takes it over (see server/push.js).
+      const pushEndpoint = (await getPushSubscription().catch(() => null))?.endpoint;
+      await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password, pushEndpoint }), true);
     });
   } else if (mode === "setup") {
     renderAuthForm("setup", async values => {
@@ -10026,6 +10096,7 @@ async function setupAuthUI() {
     finishInitialViewSetup();
     return;
   }
+  const fromNotice = takeLinkParam("push");
   let me = null;
   try {
     me = await apiRequest("GET", "/me");
@@ -10037,6 +10108,7 @@ async function setupAuthUI() {
     return;
   }
   sessionStorage.removeItem(SIGNED_IN_HINT_KEY);
+  if (fromNotice) sessionStorage.setItem(AFTER_SIGN_IN_KEY, `${getCurrentPage()}${location.search}`);
   const setup = await apiRequest("GET", "/setup");
   showAuthScreen(setup.needsSetup ? "setup" : "login");
 }

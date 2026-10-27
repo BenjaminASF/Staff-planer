@@ -161,7 +161,9 @@ Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De
 
 Notisen visar bara en kort text som "Ditt schema för vecka 45 har ändrats", aldrig namn eller meddelandetext, och ett tryck på den öppnar rätt sida. Precis innan varje notis skickas kontrollerar servern att personen fortfarande får se det notisen gäller. Chattmeddelanden och notiser som redan har lästs i appen ger ingen pushnotis. Notiser som inte hunnit skickas inom en timme slängs, så ingen får gamla händelser i efterhand.
 
-Varje användare slår på och stänger av pushnotiser för sina egna enheter under **Min profil → Pushnotiser**, och kan också stänga av dem på alla sina enheter på en gång. Den som loggar ut stänger samtidigt av dem på den enheten (inte vid automatisk utloggning). Loggar någon annan in på samma enhet går enhetens notiser inte längre till den förra användaren.
+Varje användare slår på och stänger av pushnotiser för sina egna enheter under **Min profil → Pushnotiser**, och kan också stänga av dem på alla sina enheter på en gång. Pushnotiserna fortsätter efter utloggning, både manuell och automatisk, men bara i 48 timmar: loggar ingen in på enheten igen inom den tiden slutar den få notiser, och användaren slår på dem igen under Min profil. Varje ny inloggning på enheten startar om de 48 timmarna. Servern kontrollerar tidsgränsen precis innan varje utskick. Loggar någon annan in på samma enhet går enhetens notiser inte längre till den förra användaren, och den nya användaren får själv slå på dem.
+
+Trycker en utloggad användare på en notis öppnas inloggningen, och efter inloggningen kommer man till sidan notisen gällde. Tas en användare bort försvinner alla användarens enheter för pushnotiser.
 
 **Admin** kan stänga av pushnotiser för en enskild användare under **Hantera** i användarlistan (Pushnotiser: På/Av). Då får användaren inga pushnotiser alls, oavsett eget val, och kan inte slå på dem själv förrän admin slår på dem igen. Användaren ser fortfarande sina notiser i appen. 🔕 visas vid användaren i personal- och användarlistan för admin, skiftledare och höger hand. Skiftledare och höger hand kan inte ändra inställningen.
 

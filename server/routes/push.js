@@ -1,9 +1,10 @@
 const express = require("express");
-const { HttpError, requireUser } = require("../auth");
-const { isAllowedEndpoint, saveSubscription } = require("../push");
+const { HttpError, requireUser, createLoginLimiter } = require("../auth");
+const { isAllowedEndpoint, saveSubscription, claimDevice, renewSubscription } = require("../push");
 const { cleanText } = require("../validation");
 
 const KEY_PATTERN = /^[A-Za-z0-9_-]{1,200}={0,2}$/;
+const SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/;
 
 function cleanSubscription(body) {
   const endpoint = typeof body?.endpoint === "string" ? body.endpoint : "";
@@ -21,8 +22,24 @@ async function isBlocked(pool, userId) {
 }
 
 // Each user turns push notifications on and off for their own devices only.
-function pushRoutes({ pool, sender }) {
+function pushRoutes({ pool, sender, renewLimiter = createLoginLimiter({ maxFailures: 20, message: "För många försök. Vänta en stund." }) }) {
   const router = express.Router();
+
+  // The service worker renews the device's subscription when the browser replaces it,
+  // also while nobody is signed in. The device's secret key stands in for a session.
+  router.post("/subscriptions/renew", async (req, res) => {
+    if (!sender?.configured) throw new HttpError(503, "Pushnotiser är inte aktiverade på servern.");
+    const ip = req.ip || "";
+    renewLimiter.check(ip, "push-renew");
+    const subscription = cleanSubscription(req.body);
+    const secret = typeof req.body?.deviceSecret === "string" ? req.body.deviceSecret : "";
+    if (!subscription.replaces || !SECRET_PATTERN.test(secret) || !(await renewSubscription(pool, { ...subscription, secret }))) {
+      renewLimiter.fail(ip, "push-renew");
+      throw new HttpError(404, "Enheten är inte längre registrerad för pushnotiser.");
+    }
+    res.json({ ok: true });
+  });
+
   router.use(requireUser);
 
   router.get("/", async (req, res) => {
@@ -33,22 +50,23 @@ function pushRoutes({ pool, sender }) {
     res.json({ available: Boolean(sender?.configured), publicKey: sender?.publicKey || "", blocked, devices: devices.rows[0].count });
   });
 
-  // Turns push on for this device, or renews its subscription.
+  // Turns push on for this device, or renews its subscription. The answer carries the
+  // device's secret key, which the page keeps for the service worker.
   router.post("/subscriptions", async (req, res) => {
     if (!sender?.configured) throw new HttpError(503, "Pushnotiser är inte aktiverade på servern.");
     const subscription = cleanSubscription(req.body);
     if (await isBlocked(pool, req.user.id)) throw new HttpError(403, "En administratör har stängt av pushnotiser för dig.");
-    await saveSubscription(pool, req.user.id, subscription);
-    res.status(201).json({ ok: true });
+    const deviceSecret = await saveSubscription(pool, req.user.id, req.sessionTokenHash, subscription);
+    res.status(201).json({ ok: true, deviceSecret });
   });
 
   // Called when a page opens on a device with push on. A device that belongs to
-  // someone else (a shared phone) is taken from them, and the page turns it off.
+  // someone else (a shared phone), or whose 48 hours ran out, is removed and the page
+  // turns it off. hasSecret: false when the page has no secret key for the device.
   router.post("/subscriptions/check", async (req, res) => {
-    const endpoint = String(req.body?.endpoint || "");
-    const { rows } = await pool.query("SELECT user_id FROM push_subscriptions WHERE endpoint = $1", [endpoint]);
-    if (rows[0] && rows[0].user_id !== req.user.id) await pool.query("DELETE FROM push_subscriptions WHERE endpoint = $1", [endpoint]);
-    res.json({ subscribed: rows[0]?.user_id === req.user.id });
+    res.json(await claimDevice(pool, {
+      userId: req.user.id, sessionHash: req.sessionTokenHash, endpoint: req.body?.endpoint, needsSecret: req.body?.hasSecret === false
+    }));
   });
 
   // Turns push off for one device ({ endpoint }) or all of the user's devices ({ all: true }).

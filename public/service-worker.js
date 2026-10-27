@@ -1,4 +1,4 @@
-const CACHE_NAME = "staff-planner-v20261027-push1";
+const CACHE_NAME = "staff-planner-v20261027-push2";
 const APP_FILES = ["./", "./index.html", "./dashboard.html", "./produktion.html", "./rast.html", "./personal.html", "./anvandare.html", "./testresultat.html", "./maskiner.html", "./maskinhantering.html", "./bedomning.html", "./anteckningar.html", "./add.html", "./installningar.html", "./hjalp.html", "./profil.html", "./style.css", "./theme.js", "./app.js", "./manifest.webmanifest", "./app-icon.svg", "./app-icon-192.png"];
 const APP_URLS = new Set(APP_FILES.map(path => new URL(path, self.registration.scope).pathname));
 
@@ -59,6 +59,8 @@ self.addEventListener("notificationclick", event => {
   const target = new URL(event.notification.data?.url || "index.html", self.registration.scope);
   // Only pages of this app are opened.
   if (target.origin !== self.location.origin) return;
+  // Tells the page the visit came from a notice, so it opens again after sign-in.
+  target.searchParams.set("push", "1");
   event.waitUntil((async () => {
     const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
     const open = windows.find(client => new URL(client.url).origin === self.location.origin);
@@ -70,18 +72,32 @@ self.addEventListener("notificationclick", event => {
   })());
 });
 
-// The browser renewed the subscription: the server is told about the new one.
+// The device's push subscription and secret key, saved by the page (see app.js). The
+// key lets the device renew its subscription without anyone being signed in.
+const PUSH_DEVICE_CACHE = "sp-push-device";
+const PUSH_DEVICE_URL = "./push-device";
+
+// The browser renewed the subscription: the server is told about the new one, also
+// after the user signed out.
 self.addEventListener("pushsubscriptionchange", event => {
-  const old = event.oldSubscription;
-  const applicationServerKey = old?.options?.applicationServerKey;
-  if (!applicationServerKey) return;
   event.waitUntil((async () => {
+    const cache = await caches.open(PUSH_DEVICE_CACHE);
+    const device = await (await cache.match(PUSH_DEVICE_URL))?.json();
+    if (!device?.secret) return;
+    const applicationServerKey = event.oldSubscription?.options?.applicationServerKey || device.publicKey;
     const subscription = event.newSubscription || await self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey });
-    await fetch("./api/push/subscriptions", {
+    const response = await fetch("./api/push/subscriptions/renew", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", "X-Requested-With": "StaffPlanner" },
-      body: JSON.stringify({ ...subscription.toJSON(), replaces: old.endpoint })
+      body: JSON.stringify({ ...subscription.toJSON(), replaces: event.oldSubscription?.endpoint || device.endpoint, deviceSecret: device.secret })
     });
+    if (response.ok) {
+      await cache.put(PUSH_DEVICE_URL, Response.json({ ...device, endpoint: subscription.endpoint }));
+    } else if (response.status === 404) {
+      // The server no longer knows the device (turned off, or its 48 hours ran out).
+      await cache.delete(PUSH_DEVICE_URL);
+      await subscription.unsubscribe();
+    }
   })().catch(error => console.warn("Push subscription could not be renewed:", error)));
 });
