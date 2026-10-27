@@ -5869,20 +5869,25 @@ function bindAuditUndo(root, events) {
   }));
 }
 
+// Admin's overview covers every shift; a shift leader gets the same overview for their own shift only.
+const isLeaderDashboard = () => !isAdmin() && isShiftLeader();
+const getDashboardShifts = () => isLeaderDashboard() ? shifts.filter(shift => shift.id === getOwnShiftId()) : shifts;
+
 async function getAdminDashboardData() {
+  const dashboardShifts = getDashboardShifts();
   const today = formatDateKey(new Date());
   const monthStart = `${today.slice(0, 8)}01`;
   const linesDate = adminLinesDate || today;
   const { day: linesDay, weekKey } = getScheduleDayForDate(linesDate);
   const [allPeople, departments, skills, restrictions, settings, events, recordsByShift, schedules, trainingLocationsByShift] = await Promise.all([
     getAllPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getMachineRestrictions(),
-    getProductionSettings(), getAuditLog(), Promise.all(shifts.map(shift => getProductionRecords(shift.id))),
-    Promise.all(shifts.map(shift => getDocument(shift.id, `schedule:${weekKey}`, null))),
-    Promise.all(shifts.map(shift => getDocument(shift.id, `trainingLocations:${weekKey}`, null)))
+    getProductionSettings(), getAuditLog(), Promise.all(dashboardShifts.map(shift => getProductionRecords(shift.id))),
+    Promise.all(dashboardShifts.map(shift => getDocument(shift.id, `schedule:${weekKey}`, null))),
+    Promise.all(dashboardShifts.map(shift => getDocument(shift.id, `trainingLocations:${weekKey}`, null)))
   ]);
   const peopleById = new Map(allPeople.map(person => [person.id, person]));
   const need = getDepartmentNeed(Object.keys(BREAK_LINE_WORKPLACES));
-  const shiftData = shifts.map((shift, index) => {
+  const shiftData = dashboardShifts.map((shift, index) => {
     const staff = allPeople.filter(person => person.shiftId === shift.id);
     const leaders = staff.filter(person => person.account?.role === ROLES.LEADER);
     const operators = staff.filter(isOperatorStaff);
@@ -6111,10 +6116,13 @@ async function renderAdminDashboard(root) {
   const data = await getAdminDashboardData();
   adminDashboardData = data;
   const { shiftData, events, today } = data;
+  const leader = isLeaderDashboard();
+  const ownShift = leader ? shiftData[0]?.shift : null;
   const header = document.querySelector(".main > .header");
   if (header) {
     header.querySelector(":scope > h2").textContent = "Produktionsöversikt";
-    header.querySelector(":scope > p").textContent = new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    const date = new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+    header.querySelector(":scope > p").textContent = ownShift ? `Skift ${ownShift.name} · ${date}` : date;
   }
   const month = new Date(`${today}T12:00:00`).toLocaleDateString("sv-SE", { month: "long" });
   const todayTotal = sumBy(shiftData, item => item.today);
@@ -6138,26 +6146,28 @@ async function renderAdminDashboard(root) {
         <button type="button" data-period="month" aria-pressed="${adminDashboardPeriod === "month"}">Månaden</button>
       </div>
     </div>
-    <section class="admin-kpis" aria-label="Alla skift">
-      <article class="card"><span>Producerat idag</span><strong>${formatNumber(todayTotal)} <small>box</small></strong><p>${reported.length} av ${shiftData.length} skift har rapporterat</p></article>
+    <section class="admin-kpis" aria-label="${leader ? "Ditt skift" : "Alla skift"}">
+      <article class="card"><span>Producerat idag</span><strong>${formatNumber(todayTotal)} <small>box</small></strong><p>${leader ? (reported.length ? "Skiftet har rapporterat" : "Skiftet har inte rapporterat ännu") : `${reported.length} av ${shiftData.length} skift har rapporterat`}</p></article>
       <article class="card"><span>Producerat i ${escapeHtml(month)}</span><strong>${formatNumber(monthTotal)} <small>box</small></strong><p>${monthTarget ? `<b class="${monthTotal >= monthTarget ? "admin-good" : "admin-bad"}">${Math.round(monthTotal / monthTarget * 100)} %</b> av målet för rapporterade dagar` : "Ingen produktion registrerad ännu"}</p></article>
-      <article class="card"><span>Svinn i ${escapeHtml(month)}</span><strong>${formatNumber(waste, 1)} <small>kg</small></strong><p>${waste ? "Alla skift tillsammans" : "Inget svinn registrerat"}</p></article>
+      <article class="card"><span>Svinn i ${escapeHtml(month)}</span><strong>${formatNumber(waste, 1)} <small>kg</small></strong><p>${!waste ? "Inget svinn registrerat" : leader ? "Ditt skift" : "Alla skift tillsammans"}</p></article>
       <article class="card"><span>Bemanning idag</span><strong>${available} <small>/ ${operators} operatörer på plats</small></strong><p>${absent.length ? `<b class="admin-bad">${absent.length} frånvarande</b> · ${absentCounts.join(", ")}` : "Alla är på plats"}</p></article>
     </section>
-    <section class="admin-shifts" aria-label="Skiften">${shiftData.map(item => adminShiftCardHtml(item, data)).join("") || '<div class="card empty-state">Inga skift finns ännu. Skapa skift under Inställningar.</div>'}</section>
+    <section class="admin-shifts" aria-label="${leader ? "Ditt skift" : "Skiften"}">${shiftData.map(item => adminShiftCardHtml(item, data)).join("") || `<div class="card empty-state">${leader ? "Du är inte kopplad till något skift. Be en admin att lägga dig i ett skift." : "Inga skift finns ännu. Skapa skift under Inställningar."}</div>`}</section>
     <section id="adminLineRules">${adminLineRulesHtml()}</section>
     <section class="admin-charts">
-      <div class="card"><h3>Produktion per dag, ${escapeHtml(month)}</h3><p class="admin-sub">Box per skift och dag.${currentTargets.length === 1 && currentTargets[0] ? ` Streckad linje = dagligt mål ${formatNumber(currentTargets[0])} box.` : currentTargets.length > 1 ? " Streckade linjer = varje skifts dagliga mål." : ""}</p>
+      <div class="card"><h3>Produktion per dag, ${escapeHtml(month)}</h3><p class="admin-sub">${leader ? "Box per dag." : "Box per skift och dag."}${currentTargets.length === 1 && currentTargets[0] ? ` Streckad linje = dagligt mål ${formatNumber(currentTargets[0])} box.` : currentTargets.length > 1 ? " Streckade linjer = varje skifts dagliga mål." : ""}</p>
         <div class="admin-legend">${shiftData.map(item => `<span>${shiftColorDot(item.shift.id)}${escapeHtml(item.shift.name)} · ${formatNumber(item.month)} box</span>`).join("")}</div>
         ${adminProductionChartHtml(shiftData)}</div>
-      <div class="card"><h3>Svinn hittills i månaden</h3><p class="admin-sub">Kilo svinn per skift.</p><div class="admin-waste">${adminWasteHtml(shiftData)}</div></div>
+      <div class="card"><h3>Svinn hittills i månaden</h3><p class="admin-sub">${leader ? "Kilo svinn i skiftet." : "Kilo svinn per skift."}</p><div class="admin-waste">${adminWasteHtml(shiftData)}</div></div>
     </section>
     <section class="admin-columns">
-      <details class="card admin-section admin-section-card" data-admin-section="competence"${adminSectionOpen("competence")}><summary class="admin-section-toggle"><h3>Kompetens per skift</h3></summary><p class="admin-sub">Tillgängliga med kompetensen / alla operatörer på skiftet. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</details>
+      <details class="card admin-section admin-section-card" data-admin-section="competence"${adminSectionOpen("competence")}><summary class="admin-section-toggle"><h3>${leader ? "Kompetens i skiftet" : "Kompetens per skift"}</h3></summary><p class="admin-sub">Tillgängliga med kompetensen / alla operatörer på skiftet. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</details>
       <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Operatörer som är ej tillgängliga eller lediga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
     </section>
-    <section id="adminAuditSection"${adminAuditOpen ? "" : " hidden"}>${auditCardHtml(events)}</section>
+    ${leader && ownShift ? shiftBackupCardHtml() : ""}
+    <section id="adminAuditSection"${adminAuditOpen || leader ? "" : " hidden"}>${auditCardHtml(events)}</section>
   `;
+  root.querySelector("#exportShiftBackupBtn")?.addEventListener("click", event => void downloadShiftBackup(event.currentTarget));
   const toolbar = root.querySelector(".admin-toolbar");
   toolbar.querySelectorAll("[data-period]").forEach(button => button.addEventListener("click", () => {
     adminDashboardPeriod = button.dataset.period;
@@ -6600,7 +6610,7 @@ async function switchAdminShift(shiftId) {
 async function renderDashboard() {
   const root = document.getElementById("dashboardPage");
   if (!root) return;
-  if (isAdmin()) return renderAdminDashboard(root);
+  if (isAdmin() || isShiftLeader()) return renderAdminDashboard(root);
   const [staff, departments, skills, events, productionRecords] = await Promise.all([
     getPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getAuditLog(), getProductionRecords()
   ]);
@@ -6622,11 +6632,13 @@ async function renderDashboard() {
       <article class="stat-green"><span>Full kompetens</span><strong>${fullyQualified}</strong><small>alla maskiner</small></article>
       <article><span>Senaste produktion</span><strong>${latestProduction?.total || 0}</strong><small>${latestProduction?.date || "ingen dag"}</small></article>
     </div>
-    ${isShiftLeader() ? `<section class="card settings-card shift-backup-card"><div><h3>Backup av skiftet</h3><p>Ladda ner en backup av Skift ${escapeHtml(getShiftName(getOwnShiftId()))}: personal, scheman, produktion, kompetens och bedömningar för skiftet. Lösenord och andra skift ingår inte. Filen är en kopia att spara och kan inte importeras.</p></div><div class="settings-actions"><button id="exportShiftBackupBtn" class="btn primary" type="button">Exportera backup</button></div></section>` : ""}
     ${auditCardHtml(events)}
   `;
-  root.querySelector("#exportShiftBackupBtn")?.addEventListener("click", event => void downloadShiftBackup(event.currentTarget));
   bindAuditUndo(root, events);
+}
+
+function shiftBackupCardHtml() {
+  return `<section class="card settings-card shift-backup-card"><div><h3>Backup av skiftet</h3><p>Ladda ner en backup av Skift ${escapeHtml(getShiftName(getOwnShiftId()))}: personal, scheman, produktion, kompetens och bedömningar för skiftet. Lösenord och andra skift ingår inte. Filen är en kopia att spara och kan inte importeras.</p></div><div class="settings-actions"><button id="exportShiftBackupBtn" class="btn primary" type="button">Exportera backup</button></div></section>`;
 }
 
 const MAX_BACKUP_SIZE_BYTES = 20 * 1024 * 1024;
