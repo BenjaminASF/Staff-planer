@@ -99,6 +99,7 @@ async function createSession(db, req, res, userId, dismissedMessages = []) {
     [hashToken(token), userId, maxAge, dismissedMessages]
   );
   setSessionCookie(req, res, token, maxAge);
+  return hashToken(token);
 }
 
 async function destroySession(db, req, res) {
@@ -173,8 +174,10 @@ function requireAppHeader(req, res, next) {
   next();
 }
 
-// Simple in-memory limit for failed logins.
-function createLoginLimiter({ maxFailures = 10, windowMs = 15 * 60 * 1000 } = {}) {
+// Simple in-memory limit for failed logins (and other guesses, with their own message).
+function createLoginLimiter({
+  maxFailures = 10, windowMs = 15 * 60 * 1000, message = "För många misslyckade inloggningar. Vänta en stund och försök igen."
+} = {}) {
   const failures = new Map();
   const keyFor = (ip, username) => `${ip}|${username}`;
   const prune = now => {
@@ -186,7 +189,7 @@ function createLoginLimiter({ maxFailures = 10, windowMs = 15 * 60 * 1000 } = {}
       prune(now);
       const entry = failures.get(keyFor(ip, username));
       if (entry && entry.count >= maxFailures) {
-        throw new HttpError(429, "För många misslyckade inloggningar. Vänta en stund och försök igen.");
+        throw new HttpError(429, message);
       }
     },
     fail(ip, username) {
@@ -216,5 +219,6 @@ module.exports = {
   allowWithoutPasswordChange,
   requireAppHeader,
   createLoginLimiter,
+  hashToken,
   MIN_PASSWORD_LENGTH
 };

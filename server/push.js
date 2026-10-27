@@ -1,3 +1,4 @@
+const crypto = require("node:crypto");
 const webPush = require("web-push");
 const { ROLES, canReadDocument, canUseChat, sharedFlagKey, weekRequiringShare } = require("./permissions");
 const { newId, readDocuments, currentWeekKey, isoWeekNumber, NOTE_VISIBLE_SQL, isPlainObject } = require("./store");
@@ -11,6 +12,11 @@ const { newId, readDocuments, currentWeekKey, isoWeekNumber, NOTE_VISIBLE_SQL, i
 // again that the user may still see what the notice is about and that an admin has
 // not turned push off for them. The text shown on the lock screen never contains
 // names or message contents; the app shows the details after sign-in.
+//
+// A device keeps getting notices after its user signs out, also after automatic
+// sign-out, but only for SIGNED_OUT_HOURS. Signing in on the device again starts the
+// time over; after it the device is turned off and the user turns it on again under
+// Min profil. The server checks this right before every notice it sends.
 
 // What each kind of notice says and how often it may come.
 //   delay:    seconds to wait, so a burst of changes becomes one notice
@@ -35,6 +41,16 @@ const MAX_DEVICES_PER_USER = 20;
 // A device that keeps failing is forgotten.
 const MAX_FAILURES = 10;
 const SENT_RETENTION_HOURS = 24;
+const SIGNED_OUT_HOURS = 48;
+
+// Whether device s still gets notices: its user is signed in on it, or signed out
+// there less than SIGNED_OUT_HOURS ago. A session past its expiry counts as signed out
+// when it expired.
+const DEVICE_ACTIVE_SQL = `COALESCE((SELECT x.expires_at FROM sessions x WHERE x.token_hash = s.session_hash), s.signed_out_at, '-infinity')
+  > now() - make_interval(hours => ${SIGNED_OUT_HOURS})`;
+
+const hashSecret = secret => crypto.createHash("sha256").update(secret).digest("hex");
+const newDeviceSecret = () => crypto.randomBytes(32).toString("base64url");
 
 // Subscriptions only ever point at the browsers' own push services, so the server
 // cannot be made to send requests anywhere else.
@@ -109,7 +125,7 @@ async function queuePush(db, targets, { kind, key = kind, ref = {}, exceptUserId
                                 WHERE o.user_id = u.id AND o.dedupe_key = $5 AND o.sent_at IS NOT NULL), '-infinity') + make_interval(secs => $8))
        FROM unnest($1::text[], $2::text[], $3::bigint[]) AS t(user_id, notification_id, message_id)
        JOIN users u ON u.id = t.user_id
-      WHERE NOT u.push_blocked AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.user_id = u.id)
+      WHERE NOT u.push_blocked AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.user_id = u.id AND ${DEVICE_ACTIVE_SQL})
      ON CONFLICT (user_id, dedupe_key) WHERE sent_at IS NULL DO NOTHING`,
     [
       items.map(item => item.userId), items.map(item => item.notificationId ?? null), items.map(item => item.messageId ?? null),
@@ -315,7 +331,9 @@ function createPushService({ pool, sender, autoStart = true }) {
     if (Date.now() - new Date(row.created_at).getTime() > MAX_AGE_MS) return;
     const [user] = await loadUsers(pool, "u.id = $1", [row.user_id]);
     if (!user || user.pushBlocked || !(await stillRelevant(pool, user, row))) return;
-    const { rows: devices } = await pool.query("SELECT id, endpoint, p256dh, auth FROM push_subscriptions WHERE user_id = $1", [user.id]);
+    const { rows: devices } = await pool.query(
+      `SELECT id, endpoint, p256dh, auth FROM push_subscriptions s WHERE user_id = $1 AND ${DEVICE_ACTIVE_SQL}`, [user.id]
+    );
     const config = KINDS[row.kind];
     const payload = payloadFor(row);
     await Promise.all(devices.map(async device => {
@@ -379,30 +397,68 @@ function createPushService({ pool, sender, autoStart = true }) {
   };
 }
 
-// Saves this device for the user. A device someone else had turned on becomes this
-// user's, so a shared phone only gets the notices of whoever uses it now.
-async function saveSubscription(db, userId, { endpoint, p256dh, auth, device, replaces }) {
+// Saves this device for the user, tied to the session they are signed in with. A device
+// someone else had turned on becomes this user's, so a shared phone only gets the
+// notices of whoever uses it now. Returns the device's new secret key.
+async function saveSubscription(db, userId, sessionHash, { endpoint, p256dh, auth, device, replaces }) {
   if (replaces && replaces !== endpoint) await db.query("DELETE FROM push_subscriptions WHERE endpoint = $1 AND user_id = $2", [replaces, userId]);
+  const secret = newDeviceSecret();
   await db.query(
-    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, device) VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO push_subscriptions (id, user_id, endpoint, p256dh, auth, device, session_hash, secret_hash) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (endpoint) DO UPDATE SET user_id = EXCLUDED.user_id, p256dh = EXCLUDED.p256dh, auth = EXCLUDED.auth,
-       device = EXCLUDED.device, failures = 0,
+       device = EXCLUDED.device, failures = 0, session_hash = EXCLUDED.session_hash, signed_out_at = NULL, secret_hash = EXCLUDED.secret_hash,
        created_at = CASE WHEN push_subscriptions.user_id = EXCLUDED.user_id THEN push_subscriptions.created_at ELSE now() END`,
-    [newId(), userId, endpoint, p256dh, auth, device]
+    [newId(), userId, endpoint, p256dh, auth, device, sessionHash, hashSecret(secret)]
   );
   await db.query(
     `DELETE FROM push_subscriptions WHERE user_id = $1 AND id NOT IN (
        SELECT id FROM push_subscriptions WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2)`,
     [userId, MAX_DEVICES_PER_USER]
   );
+  return secret;
+}
+
+// Someone signed in on the device with push subscription `endpoint`. If it was someone
+// else's, it is theirs no more. If it is the user's own and still active, it is tied to
+// the new session, which starts the 48 hours over; if their time had run out, it is
+// removed and the user turns push on again. needsSecret: the device has lost its key
+// (or never had one) and gets a new one.
+async function claimDevice(db, { userId, sessionHash, endpoint, needsSecret = false }) {
+  if (typeof endpoint !== "string" || !endpoint || endpoint.length > 1000) return { subscribed: false };
+  await db.query(
+    `DELETE FROM push_subscriptions s WHERE endpoint = $1 AND (user_id <> $2 OR NOT (${DEVICE_ACTIVE_SQL}))`,
+    [endpoint, userId]
+  );
+  const secret = needsSecret ? newDeviceSecret() : null;
+  const { rowCount } = await db.query(
+    `UPDATE push_subscriptions SET session_hash = $3, signed_out_at = NULL, secret_hash = COALESCE($4, secret_hash)
+      WHERE endpoint = $1 AND user_id = $2`,
+    [endpoint, userId, sessionHash, secret && hashSecret(secret)]
+  );
+  return rowCount ? { subscribed: true, ...(secret ? { deviceSecret: secret } : {}) } : { subscribed: false };
+}
+
+// The browser replaced the device's subscription. This works without a session, so
+// push keeps going after signing out; the device proves itself with its secret key.
+// Only the device's own row changes: never its user, session or time limit.
+async function renewSubscription(db, { replaces, secret, endpoint, p256dh, auth }) {
+  const { rowCount } = await db.query(
+    `UPDATE push_subscriptions s SET endpoint = $3, p256dh = $4, auth = $5, failures = 0
+      WHERE endpoint = $1 AND secret_hash = $2 AND ${DEVICE_ACTIVE_SQL}
+        AND NOT EXISTS (SELECT 1 FROM users u WHERE u.id = s.user_id AND u.push_blocked)
+        AND ($3 = $1 OR NOT EXISTS (SELECT 1 FROM push_subscriptions o WHERE o.endpoint = $3))`,
+    [replaces, hashSecret(secret), endpoint, p256dh, auth]
+  );
+  return rowCount > 0;
 }
 
 async function cleanupPush(db) {
   await db.query("DELETE FROM push_outbox WHERE sent_at < now() - make_interval(hours => $1)", [SENT_RETENTION_HOURS]);
   await db.query("DELETE FROM push_outbox WHERE sent_at IS NULL AND created_at < now() - make_interval(secs => $1)", [MAX_AGE_MS / 1000]);
+  await db.query(`DELETE FROM push_subscriptions s WHERE NOT (${DEVICE_ACTIVE_SQL})`);
 }
 
 module.exports = {
   KINDS, createPushSender, createPushService, queuePush, queueScheduleChange, queueScheduleShared, queueChatMessage, queuePlacementChange, changedPeople,
-  placementWeek, isAllowedEndpoint, saveSubscription, cleanupPush, MAX_DEVICES_PER_USER
+  placementWeek, isAllowedEndpoint, saveSubscription, claimDevice, renewSubscription, cleanupPush, MAX_DEVICES_PER_USER, SIGNED_OUT_HOURS
 };

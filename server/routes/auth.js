@@ -8,6 +8,7 @@ const { withTransaction } = require("../db");
 const { ROLES, editablePersonFields } = require("../permissions");
 const { newId, serializeShift, getPersonById, addAuditEvent } = require("../store");
 const { availabilityLabel, cleanPersonFields, cleanPreferences } = require("../validation");
+const { claimDevice } = require("../push");
 
 function buildDismissedMessages(user) {
   return [...new Set([...(user.dismissedMessages || []), ...(user.sessionDismissedMessages || [])])];
@@ -93,7 +94,9 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     loginLimiter.reset(ip, username);
     await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [row.id]);
     await pool.query("DELETE FROM sessions WHERE expires_at < now()");
-    await createSession(pool, req, res, row.id);
+    const sessionHash = await createSession(pool, req, res, row.id);
+    // The page sends this device's push subscription, if it has one: see claimDevice.
+    await claimDevice(pool, { userId: row.id, sessionHash, endpoint: req.body?.pushEndpoint });
     res.json(await buildMePayload(pool, {
       id: row.id, username: row.username, role: row.role, mustChangePassword: row.must_change_password, personId: row.person_id,
       dismissedMessages: row.dismissed_messages, preferences: row.preferences
@@ -141,15 +144,18 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     validatePassword(newPassword);
     if (newPassword === currentPassword) throw new HttpError(400, "Välj ett nytt lösenord som skiljer sig från det gamla.");
     const passwordHash = await hashPassword(newPassword);
-    await withTransaction(pool, async client => {
+    const devices = await withTransaction(pool, async client => {
       await client.query(
         "UPDATE users SET password_hash = $2, must_change_password = false, updated_at = now() WHERE id = $1",
         [req.user.id, passwordHash]
       );
-      // Sign out other devices; this one gets a fresh session below.
+      // Sign out other devices; this one gets a fresh session below, and keeps push on.
+      const { rows } = await client.query("SELECT id FROM push_subscriptions WHERE session_hash = $1", [req.sessionTokenHash]);
       await client.query("DELETE FROM sessions WHERE user_id = $1", [req.user.id]);
+      return rows.map(device => device.id);
     });
-    await createSession(pool, req, res, req.user.id, req.user.sessionDismissedMessages);
+    const sessionHash = await createSession(pool, req, res, req.user.id, req.user.sessionDismissedMessages);
+    await pool.query("UPDATE push_subscriptions SET session_hash = $2, signed_out_at = NULL WHERE id = ANY($1::text[])", [devices, sessionHash]);
     res.json(await buildMePayload(pool, { ...req.user, mustChangePassword: false }));
   });
 
