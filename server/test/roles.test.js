@@ -273,6 +273,27 @@ describe("roles and permissions", () => {
     assert.ok(evening.data.documents[`schedule:${WEEK}`].value["GD-1"]);
   });
 
+  test("renaming a machine updates its lines and the production page, and snapshots keep the lines", async () => {
+    const settings = (await admin.get("/api/documents?scope=global&keys=appSettings")).data.documents.appSettings;
+    const value = {
+      ...(settings?.value || {}),
+      productionMachines: ["GD2", "GD5"],
+      breakLines: [
+        { id: "GD4", label: "Linje 4", workplaces: ["GD4", "miniLogimark"] },
+        { id: "line-5", label: "Linje 5", workplaces: ["GD5", "miniLogimark"] }
+      ]
+    };
+    assert.equal((await admin.put("/api/documents/global/appSettings", { value, baseVersion: settings?.version || 0 })).status, 200);
+    assert.equal((await leader.post("/api/work-items/rename", { from: "GD5", to: "GD 5" })).status, 200);
+    const renamed = (await admin.get("/api/documents?scope=global&keys=appSettings")).data.documents.appSettings.value;
+    assert.deepEqual(renamed.productionMachines, ["GD2", "GD 5"]);
+    assert.deepEqual(renamed.breakLines[1].workplaces, ["GD 5", "miniLogimark"]);
+    assert.deepEqual(renamed.breakLines[0].workplaces, ["GD4", "miniLogimark"]);
+    assert.equal((await leader.post("/api/work-items/snapshot", { reason: "Test" })).status, 201);
+    const snapshots = (await admin.get("/api/documents?scope=global&keys=safetySnapshots")).data.documents.safetySnapshots.value;
+    assert.deepEqual(snapshots[0].data.machineSetup.breakLines, renamed.breakLines);
+  });
+
   test("moving someone to another shift clears them from the old shift from this week on", async () => {
     const { currentWeekKey } = require("../store");
     const thisWeek = currentWeekKey();
