@@ -5923,9 +5923,9 @@ function bindAuditUndo(root, events) {
   }));
 }
 
-// Admin's overview covers every shift; a shift leader gets the same overview for their own shift only.
-const isLeaderDashboard = () => !isAdmin() && isShiftLeader();
-const getDashboardShifts = () => isLeaderDashboard() ? shifts.filter(shift => shift.id === getOwnShiftId()) : shifts;
+// Admin's overview covers every shift; shift leaders and right hands get the same overview for their own shift only.
+const isOwnShiftDashboard = () => !isAdmin() && (isShiftLeader() || isRightHand());
+const getDashboardShifts = () => isOwnShiftDashboard() ? shifts.filter(shift => shift.id === getOwnShiftId()) : shifts;
 
 async function getAdminDashboardData() {
   const dashboardShifts = getDashboardShifts();
@@ -6170,7 +6170,7 @@ async function renderAdminDashboard(root) {
   const data = await getAdminDashboardData();
   adminDashboardData = data;
   const { shiftData, events, today } = data;
-  const leader = isLeaderDashboard();
+  const leader = isOwnShiftDashboard();
   const ownShift = leader ? shiftData[0]?.shift : null;
   const header = document.querySelector(".main > .header");
   if (header) {
@@ -6218,7 +6218,7 @@ async function renderAdminDashboard(root) {
       <details class="card admin-section admin-section-card" data-admin-section="competence"${adminSectionOpen("competence")}><summary class="admin-section-toggle"><h3>${leader ? "Kompetens i skiftet" : "Kompetens per skift"}</h3></summary><p class="admin-sub">Tillgängliga med kompetensen / alla operatörer på skiftet. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</details>
       <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Operatörer som är ej tillgängliga eller lediga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
     </section>
-    ${leader && ownShift ? shiftBackupCardHtml() : ""}
+    ${leader && ownShift && isShiftLeader() ? shiftBackupCardHtml() : ""}
     <section id="adminAuditSection"${adminAuditOpen || leader ? "" : " hidden"}>${leader ? auditCardHtml(hideClearedAuditEvents(events), { clearable: true }) : auditCardHtml(events)}</section>
   `;
   root.querySelector("#exportShiftBackupBtn")?.addEventListener("click", event => void downloadShiftBackup(event.currentTarget));
@@ -6665,31 +6665,7 @@ async function switchAdminShift(shiftId) {
 async function renderDashboard() {
   const root = document.getElementById("dashboardPage");
   if (!root) return;
-  if (isAdmin() || isShiftLeader()) return renderAdminDashboard(root);
-  const [staff, departments, skills, events, productionRecords] = await Promise.all([
-    getPeople(), getDepartmentsFor("showInCompetency"), getMachineSkills(), getAuditLog(), getProductionRecords()
-  ]);
-  const people = staff.filter(isOperatorStaff);
-  const unavailable = people.filter(person => getPersonAvailability(person) === "unavailable").length;
-  const off = people.filter(person => getPersonAvailability(person) === "off").length;
-  const available = people.filter(person => getPersonAvailability(person) === "available").length;
-  const fullyQualified = people.filter(person => {
-    const personSkills = Array.isArray(skills[person.id]) ? skills[person.id] : [];
-    return departments.length > 0 && departments.every(item => personSkills.includes(item));
-  }).length;
-  const latestProduction = Object.values(productionRecords).sort((a, b) => b.date.localeCompare(a.date))[0];
-  root.innerHTML = `
-    <div class="dashboard-stats">
-      <article><span>Operatörer</span><strong>${people.length}</strong><small>${shiftColorDot(getShiftScope())}${escapeHtml(getShiftName(getShiftScope()) || "inget skift")}</small></article>
-      <article class="stat-green"><span>Tillgängliga i gruppen</span><strong>${available}</strong><small>kan schemaläggas</small></article>
-      <article class="stat-red"><span>Ej tillgängliga</span><strong>${unavailable}</strong><small>kan inte arbeta</small></article>
-      <article class="stat-yellow"><span>Lediga</span><strong>${off}</strong><small>frånvarande</small></article>
-      <article class="stat-green"><span>Full kompetens</span><strong>${fullyQualified}</strong><small>alla maskiner</small></article>
-      <article><span>Senaste produktion</span><strong>${latestProduction?.total || 0}</strong><small>${latestProduction?.date || "ingen dag"}</small></article>
-    </div>
-    ${auditCardHtml(events)}
-  `;
-  bindAuditUndo(root, events);
+  return renderAdminDashboard(root);
 }
 
 function shiftBackupCardHtml() {
