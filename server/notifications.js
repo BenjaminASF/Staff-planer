@@ -47,13 +47,13 @@ const NOTIFICATION_PAGE_SIZE = 50;
 // Logged events that are not changes, so nobody is told about them.
 const NOT_A_CHANGE = new Set(["backup:Backup exporterad"]);
 
-async function addNotifications(db, userIds, { kind, actorName = "", title = "", detail = "" }) {
+async function addNotifications(db, userIds, { kind, actorName = "", title = "", detail = "", noteId = null }) {
   const recipients = [...new Set(userIds)].filter(Boolean);
   if (!recipients.length) return 0;
   for (const userId of recipients) {
     await db.query(
-      "INSERT INTO notifications (id, user_id, kind, actor_name, title, detail) VALUES ($1, $2, $3, $4, $5, $6)",
-      [newId(), userId, kind, String(actorName).slice(0, 120), String(title).slice(0, 300), String(detail).slice(0, 500)]
+      "INSERT INTO notifications (id, user_id, kind, actor_name, title, detail, note_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
+      [newId(), userId, kind, String(actorName).slice(0, 120), String(title).slice(0, 300), String(detail).slice(0, 500), noteId]
     );
   }
   return recipients.length;
@@ -97,6 +97,7 @@ const serializeNotification = row => ({
   actorName: row.actor_name,
   title: row.title,
   detail: row.detail,
+  noteId: row.note_id ?? null,
   read: Boolean(row.read_at),
   createdAt: row.created_at
 });

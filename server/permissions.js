@@ -25,6 +25,12 @@
 //                status and password. Their name and e-mail address are changed
 //                only by an admin, shift leader or right hand.
 //
+// Anteckningar (notes): everyone has a private board. Admins, shift leaders and right
+// hands also write group notes and choose exactly who sees each one: shift leaders and
+// right hands people in their own shift, admins anyone. Nobody else sees a group note,
+// admins included. Only the author changes a note's text, color and recipients; its
+// priority mark is set by the author and, on a group note they can see, by an admin.
+//
 // Personal documents ("Att göra") belong to one user, whatever their role above
 // operator, and only that user reads and writes them – admins included. The owner can share
 // single tasks with chosen users, who then see those tasks read-only. Backups
@@ -277,6 +283,26 @@ function canDeleteChatMessage(user, message) {
   return isAdmin(user) || (Boolean(message.user_id) && message.user_id === user?.id);
 }
 
+// Who may write group notes, and the shifts whose people they may share them with
+// (null means every shift).
+function canShareNotes(user) {
+  return isShiftManager(user);
+}
+
+function noteShareShifts(user) {
+  if (isAdmin(user)) return null;
+  return canShareNotes(user) && user.shiftId ? [user.shiftId] : [];
+}
+
+function canEditNote(user, note) {
+  return Boolean(user?.id) && note?.author_id === user.id;
+}
+
+// `note` must be one the user can see.
+function canPrioritizeNote(user, note) {
+  return canEditNote(user, note) || (note?.kind === "group" && isAdmin(user));
+}
+
 function canDeleteAccount(user) {
   return isAdmin(user);
 }
@@ -329,5 +355,9 @@ module.exports = {
   canChangeRole,
   canChangeUsername,
   canDeleteAccount,
-  canExportShiftBackup
+  canExportShiftBackup,
+  canShareNotes,
+  noteShareShifts,
+  canEditNote,
+  canPrioritizeNote
 };

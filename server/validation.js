@@ -69,6 +69,8 @@ const PREFERENCE_RULES = Object.freeze({
   showTips: value => typeof value === "boolean",
   soundNotifications: value => typeof value === "boolean",
   scheduleView: value => ["day", "week"].includes(value),
+  // Anteckningar: how the board is sorted.
+  notesSort: value => ["priority", "newest", "oldest"].includes(value),
   // Overview: "Dagens ändringar" hides events up to this time for this user only. Nothing is deleted.
   auditClearedAt: value => typeof value === "string" && value.length <= 40 && Number.isFinite(Date.parse(value))
 });

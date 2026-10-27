@@ -14,6 +14,8 @@ function canReceive(user, change) {
   if (change.type === "document") return canReadDocument(user, change.scope, change.key);
   if (change.type === "chat") return canUseChat(user);
   if (change.type === "notification") return Boolean(user?.id) && change.userId === user.id;
+  // Only says that notes changed; each page fetches the notes it may see.
+  if (change.type === "notes") return Boolean(user?.id);
   return change.type === "people" || change.type === "shifts";
 }
 
