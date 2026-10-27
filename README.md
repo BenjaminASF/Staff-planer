@@ -154,7 +154,7 @@ Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan r
 
 Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De är ett komplement till notiserna i appen, som finns kvar precis som förut. En pushnotis skickas bara till dem det gäller, aldrig till den som själv gjorde ändringen:
 
-- **Schema och placering:** när ens egen plats, utbildning eller extra plats i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
+- **Schema och placering:** när ens egen plats, utbildning eller extra plats i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Notisen kommer cirka 30 sekunder efter den senaste ändringen, så flera ändringar i rad blir en enda notis. Pågår ändringarna längre kommer den senast två minuter efter den första.
 - **Raster:** när ens rast eller dagens rasttider ändras, på samma sätt.
 - **Chatt** (admin, skiftledare och höger hand): privata meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
 - **Anteckningar:** när en lapp delas med en.

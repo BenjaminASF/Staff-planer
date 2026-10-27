@@ -14,13 +14,14 @@ const { newId, readDocuments, currentWeekKey, isoWeekNumber, NOTE_VISIBLE_SQL, i
 // never contains names or message contents; the app shows the details after sign-in.
 
 // What each kind of notice says and how often it may come.
-//   delay:     seconds to wait, so a burst of changes becomes one notice
+//   delay:     seconds of quiet to wait for, so a burst of changes becomes one notice;
+//              each further change waits again, but never past maxWait from the first
 //   interval:  at least this many seconds between two notices with the same key
 //   important: sent also to users who chose "Endast viktiga"
 // The links carry push=1, so the page opens there also after signing in.
 const KINDS = Object.freeze({
-  schedule: { important: true, delay: 120, url: "index.html?push=1", text: ref => `Ditt schema för vecka ${isoWeekNumber(ref.week)} har ändrats.` },
-  breaks: { delay: 120, url: "rast.html?push=1", text: ref => `Rasterna för vecka ${isoWeekNumber(ref.week)} har ändrats.` },
+  schedule: { important: true, delay: 30, maxWait: 120, url: "index.html?push=1", text: ref => `Ditt schema för vecka ${isoWeekNumber(ref.week)} har ändrats.` },
+  breaks: { delay: 30, maxWait: 120, url: "rast.html?push=1", text: ref => `Rasterna för vecka ${isoWeekNumber(ref.week)} har ändrats.` },
   share: { important: true, url: "index.html?push=1", text: ref => `Schemat för vecka ${isoWeekNumber(ref.week)} finns nu.` },
   placement: { important: true, url: "index.html?push=1", text: () => "Din placering har ändrats." },
   chat: { important: true, url: "index.html?chat=1&push=1", urgency: "high", text: () => "Du har fått ett privat meddelande." },
@@ -98,7 +99,9 @@ async function withoutFailing(db, label, work) {
 const wakers = new Set();
 
 // Queues one notice per user. Users without a device, turned off by an admin or who
-// do not want this kind of notice are skipped right away. While a notice with the same key waits, no second one is added.
+// do not want this kind of notice are skipped right away. While a notice with the same
+// key waits, no second one is added; for kinds with maxWait the waiting one is put off
+// until the changes stop.
 // targets: user ids, or { userId, notificationId, messageId }.
 async function queuePush(db, targets, { kind, key = kind, ref = {}, exceptUserId = null }) {
   const config = KINDS[kind];
@@ -119,10 +122,12 @@ async function queuePush(db, targets, { kind, key = kind, ref = {}, exceptUserId
        JOIN users u ON u.id = t.user_id
       WHERE NOT u.push_blocked AND u.push_enabled AND (u.push_level = 'all' OR $9)
         AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.user_id = u.id)
-     ON CONFLICT (user_id, dedupe_key) WHERE sent_at IS NULL DO NOTHING`,
+     ON CONFLICT (user_id, dedupe_key) WHERE sent_at IS NULL DO UPDATE
+       SET send_after = LEAST(EXCLUDED.send_after, push_outbox.created_at + make_interval(secs => $10))
+       WHERE $10 > 0`,
     [
       items.map(item => item.userId), items.map(item => item.notificationId ?? null), items.map(item => item.messageId ?? null),
-      kind, key, JSON.stringify(ref), config.delay || 0, config.interval || 0, Boolean(config.important)
+      kind, key, JSON.stringify(ref), config.delay || 0, config.interval || 0, Boolean(config.important), config.maxWait || 0
     ]
   )).rowCount);
   if (queued) wakers.forEach(wake => wake(config.delay || 0));

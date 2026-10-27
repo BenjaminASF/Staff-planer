@@ -150,6 +150,22 @@ describe("pushnotiser", () => {
     assert.deepEqual(sent.map(item => item.endpoint), [endpointFor("olle")], "only the operator moved; the shift leader keeps their place");
   });
 
+  test("a schedule notice comes about 30 seconds after the last change, and at most two minutes after the first", async () => {
+    const laterWeek = weekAfter(week, 2);
+    const wait = async () => Number((await server.pool.query(
+      "SELECT extract(epoch FROM send_after - now()) AS wait FROM push_outbox WHERE user_id = $1 AND kind = 'schedule' AND sent_at IS NULL", [rightHandUser.id]
+    )).rows[0].wait);
+    await save(leader, dayShift.id, `schedule:${laterWeek}`, { "Linje 1": { mon: rightHandPerson.id } });
+    assert.ok(Math.abs(await wait() - 30) < 5, "about 30 seconds after a single change");
+
+    // Still changing after 100 seconds: the notice waits again, but not past two minutes.
+    await server.pool.query("UPDATE push_outbox SET created_at = now() - interval '100 seconds' WHERE user_id = $1 AND sent_at IS NULL", [rightHandUser.id]);
+    await save(leader, dayShift.id, `schedule:${laterWeek}`, { "Linje 1": { tue: rightHandPerson.id } });
+    assert.ok(Math.abs(await wait() - 20) < 5, "never more than two minutes after the first change");
+    await flush();
+    assert.equal(sentTo("hand").length, 1, "still one notice");
+  });
+
   test("break times concern everyone working that day; other weeks' history does not push", async () => {
     const schedule = { "Linje 1": { mon: "a", tue: "b" }, Träning: { mon: "c" } };
     assert.deepEqual([...changedPeople("breakPlan:2026-01-05", { mon: { togetherStart: "10:00" } }, { mon: { togetherStart: "10:30" } }, schedule)].sort(), ["a", "c"]);
