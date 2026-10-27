@@ -60,5 +60,30 @@ function cleanPersonFields(body, allowedFields) {
   return columns;
 }
 
+// Personal settings each user keeps for themselves, and the values each may take.
+// null removes a setting, so the app's default applies again.
+const AUTO_LOCK_MINUTES = [0, 5, 15, 30, 60];
+const PREFERENCE_RULES = Object.freeze({
+  theme: value => ["light", "dark", "system"].includes(value),
+  autoLockMinutes: value => AUTO_LOCK_MINUTES.includes(value),
+  showTips: value => typeof value === "boolean",
+  soundNotifications: value => typeof value === "boolean",
+  scheduleView: value => ["day", "week"].includes(value)
+});
+
+// Returns { set, remove }: the settings to store and the ones to clear.
+function cleanPreferences(body) {
+  if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "Ogiltiga inställningar.");
+  const set = {};
+  const remove = [];
+  for (const [name, value] of Object.entries(body)) {
+    if (!Object.hasOwn(PREFERENCE_RULES, name)) throw new HttpError(400, "Okänd inställning.");
+    if (value === null) remove.push(name);
+    else if (PREFERENCE_RULES[name](value)) set[name] = value;
+    else throw new HttpError(400, "Ogiltigt värde för inställningen.");
+  }
+  return { set, remove };
+}
+
 module.exports = {
-  SHIFT_COLOR_LABELS, availabilityLabel, cleanText, cleanEmail, cleanShiftColor, cleanPersonFields, SHIFT_COLORS };
+  SHIFT_COLOR_LABELS, availabilityLabel, cleanText, cleanEmail, cleanShiftColor, cleanPersonFields, cleanPreferences, SHIFT_COLORS };

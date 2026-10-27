@@ -7,7 +7,7 @@ const {
 const { withTransaction } = require("../db");
 const { ROLES, editablePersonFields } = require("../permissions");
 const { newId, serializeShift, getPersonById, addAuditEvent } = require("../store");
-const { availabilityLabel, cleanPersonFields } = require("../validation");
+const { availabilityLabel, cleanPersonFields, cleanPreferences } = require("../validation");
 
 function buildDismissedMessages(user) {
   return [...new Set([...(user.dismissedMessages || []), ...(user.sessionDismissedMessages || [])])];
@@ -22,7 +22,8 @@ async function buildMePayload(db, user) {
     user: { id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword },
     person,
     shifts: shifts.rows.map(serializeShift),
-    dismissedMessages: buildDismissedMessages(user)
+    dismissedMessages: buildDismissedMessages(user),
+    preferences: user.preferences || {}
   };
 }
 
@@ -80,7 +81,7 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     const ip = req.ip || "";
     loginLimiter.check(ip, username);
     const { rows } = await pool.query(
-      "SELECT id, username, password_hash, role, must_change_password, person_id, dismissed_messages FROM users WHERE username = $1",
+      "SELECT id, username, password_hash, role, must_change_password, person_id, dismissed_messages, preferences FROM users WHERE username = $1",
       [username]
     );
     const row = rows[0];
@@ -95,7 +96,7 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     await createSession(pool, req, res, row.id);
     res.json(await buildMePayload(pool, {
       id: row.id, username: row.username, role: row.role, mustChangePassword: row.must_change_password, personId: row.person_id,
-      dismissedMessages: row.dismissed_messages
+      dismissedMessages: row.dismissed_messages, preferences: row.preferences
     }));
   });
 
@@ -165,6 +166,17 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
       req.user.sessionDismissedMessages = [...req.user.sessionDismissedMessages, id];
     }
     res.json({ dismissedMessages: buildDismissedMessages(req.user) });
+  });
+
+  // Own settings: theme, automatic sign-out and the like. They are stored on the login,
+  // so they follow the user to every device and never change anyone else's.
+  router.patch("/me/preferences", requireUser, async (req, res) => {
+    const { set, remove } = cleanPreferences(req.body);
+    const { rows } = await pool.query(
+      "UPDATE users SET preferences = (preferences - $3::text[]) || $2::jsonb WHERE id = $1 RETURNING preferences",
+      [req.user.id, JSON.stringify(set), remove]
+    );
+    res.json({ preferences: rows[0].preferences });
   });
 
   return router;
