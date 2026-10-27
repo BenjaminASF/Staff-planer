@@ -61,6 +61,21 @@ describe("personal settings", () => {
     assert.deepEqual(await preferences(ada), { theme: "dark", autoLockMinutes: 5, scheduleView: "day" });
   });
 
+  test("clearing today's changes hides them for that user only and deletes nothing", async () => {
+    await ada.post("/api/audit", { scope: "global", type: "settings", title: "Ändrade inställningar" });
+    const audit = async client => (await client.get(`/api/audit?scopes=global&since=${encodeURIComponent(new Date(Date.now() - 3600_000).toISOString())}`)).data.events;
+    const [event] = await audit(ada);
+    const saved = await ada.patch("/api/me/preferences", { auditClearedAt: event.createdAt });
+    assert.equal(saved.status, 200);
+    assert.equal(saved.data.preferences.auditClearedAt, event.createdAt);
+    assert.equal((await preferences(bea)).auditClearedAt, undefined);
+    assert.ok((await audit(ada)).some(item => item.id === event.id));
+    assert.ok((await audit(bea)).some(item => item.id === event.id));
+    assert.equal((await ada.patch("/api/me/preferences", { auditClearedAt: "igår" })).status, 400);
+    assert.equal((await ada.patch("/api/me/preferences", { auditClearedAt: 123 })).status, 400);
+    await ada.patch("/api/me/preferences", { auditClearedAt: null });
+  });
+
   test("shared settings are still changed centrally by an admin", async () => {
     const saved = await ada.put("/api/documents/global/appSettings", { value: { organizationName: "Fabriken" }, baseVersion: 0 });
     assert.equal(saved.status, 200);

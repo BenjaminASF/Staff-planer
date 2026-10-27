@@ -5858,8 +5858,60 @@ function getDepartmentNeed(lineIds) {
   return need;
 }
 
-function auditCardHtml(events) {
-  return `<section class="card audit-card"><div class="audit-heading"><div><h3>Dagens ändringar</h3><p>Aktiviteter som registrerats idag</p></div><span>${events.length}</span></div><div class="audit-list">${events.map(event => `<article><span class="audit-dot"></span><div><strong>${escapeHtml(event.title)}</strong><p>${escapeHtml(event.detail || "")}</p><small>${new Date(event.createdAt).toLocaleString("sv-SE")}${event.userName ? ` · ${escapeHtml(event.userName)}` : ""}</small></div>${event.undo && (isAdmin() || event.undo.action === "availability") ? `<button class="audit-undo" data-audit-id="${escapeHtml(event.id)}" type="button">Återställ</button>` : ""}</article>`).join("") || '<div class="empty-state">Inga ändringar registrerade idag.</div>'}</div></section>`;
+function auditCardHtml(events, { clearable = false } = {}) {
+  const clearButton = clearable && events.length ? '<button class="btn audit-clear" type="button" data-audit-clear>Rensa historik</button>' : "";
+  return `<section class="card audit-card"><div class="audit-heading"><div><h3>Dagens ändringar</h3><p>Aktiviteter som registrerats idag</p></div><div class="audit-heading-actions">${clearButton}<span>${events.length}</span></div></div><div class="audit-list">${events.map(event => `<article><span class="audit-dot"></span><div><strong>${escapeHtml(event.title)}</strong><p>${escapeHtml(event.detail || "")}</p><small>${new Date(event.createdAt).toLocaleString("sv-SE")}${event.userName ? ` · ${escapeHtml(event.userName)}` : ""}</small></div>${event.undo && (isAdmin() || event.undo.action === "availability") ? `<button class="audit-undo" data-audit-id="${escapeHtml(event.id)}" type="button">Återställ</button>` : ""}</article>`).join("") || '<div class="empty-state">Inga ändringar registrerade idag.</div>'}</div></section>`;
+}
+
+// A shift leader can clear "Dagens ändringar" on their overview. Only their own view is cleared:
+// the time of the newest event shown is saved in their personal settings and earlier events are
+// hidden from then on. The events stay in the database, and new ones show up as usual.
+// The server's own timestamp is used, so a wrong clock on the device cannot hide new events.
+function hideClearedAuditEvents(events) {
+  const clearedAt = Date.parse(getPreference("auditClearedAt", ""));
+  return Number.isFinite(clearedAt) ? events.filter(event => Date.parse(event.createdAt) > clearedAt) : events;
+}
+
+function confirmAuditClear() {
+  return new Promise(resolve => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+    overlay.innerHTML = `<section class="replacement-modal">
+      <h3>Rensa dagens ändringar?</h3>
+      <p>Listan töms bara i din egen översikt. Aktiviteterna sparas fortfarande och syns för andra som vanligt. Nya aktiviteter visas här när de registreras.</p>
+      <div><button class="btn" type="button" data-action="cancel">Avbryt</button><button class="btn primary" type="button" data-action="confirm">Rensa historik</button></div>
+    </section>`;
+    document.body.appendChild(overlay);
+    let cleanupFocus;
+    const close = value => { overlay.remove(); cleanupFocus?.(); resolve(value); };
+    cleanupFocus = manageDialogFocus(overlay.querySelector(".replacement-modal"), () => close(false));
+    overlay.addEventListener("click", event => {
+      if (event.target === overlay || event.target.closest('[data-action="cancel"]')) close(false);
+      else if (event.target.closest('[data-action="confirm"]')) close(true);
+    });
+  });
+}
+
+function bindAuditClear(root, events) {
+  root.querySelector("[data-audit-clear]")?.addEventListener("click", async event => {
+    const newest = events.reduce((latest, item) => Date.parse(item.createdAt) > Date.parse(latest) ? item.createdAt : latest, events[0]?.createdAt);
+    if (!newest || !await confirmAuditClear()) return;
+    const button = event.target;
+    button.disabled = true;
+    try {
+      await saveUserPreferences({ auditClearedAt: newest });
+      const section = root.querySelector("#adminAuditSection");
+      if (section) {
+        section.innerHTML = auditCardHtml(hideClearedAuditEvents(events), { clearable: true });
+        bindAuditUndo(section, events);
+        bindAuditClear(section, events);
+      }
+      showAppToast("Dagens ändringar har rensats från din översikt.");
+    } catch (error) {
+      button.disabled = false;
+      showAppToast(error instanceof ApiError ? error.message : "Listan kunde inte rensas. Försök igen.", "error");
+    }
+  });
 }
 
 function bindAuditUndo(root, events) {
@@ -6165,7 +6217,7 @@ async function renderAdminDashboard(root) {
       <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Operatörer som är ej tillgängliga eller lediga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
     </section>
     ${leader && ownShift ? shiftBackupCardHtml() : ""}
-    <section id="adminAuditSection"${adminAuditOpen || leader ? "" : " hidden"}>${auditCardHtml(events)}</section>
+    <section id="adminAuditSection"${adminAuditOpen || leader ? "" : " hidden"}>${leader ? auditCardHtml(hideClearedAuditEvents(events), { clearable: true }) : auditCardHtml(events)}</section>
   `;
   root.querySelector("#exportShiftBackupBtn")?.addEventListener("click", event => void downloadShiftBackup(event.currentTarget));
   const toolbar = root.querySelector(".admin-toolbar");
@@ -6220,6 +6272,7 @@ async function renderAdminDashboard(root) {
   placeBesideTitle(toolbar);
   setupDataTools();
   bindAuditUndo(root, events);
+  if (leader) bindAuditClear(root, events);
   renderAdminContextBar();
   void renderProductionSummary();
 }

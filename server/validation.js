@@ -68,7 +68,9 @@ const PREFERENCE_RULES = Object.freeze({
   autoLockMinutes: value => AUTO_LOCK_MINUTES.includes(value),
   showTips: value => typeof value === "boolean",
   soundNotifications: value => typeof value === "boolean",
-  scheduleView: value => ["day", "week"].includes(value)
+  scheduleView: value => ["day", "week"].includes(value),
+  // Overview: "Dagens ändringar" hides events up to this time for this user only. Nothing is deleted.
+  auditClearedAt: value => typeof value === "string" && value.length <= 40 && Number.isFinite(Date.parse(value))
 });
 
 // Returns { set, remove }: the settings to store and the ones to clear.
