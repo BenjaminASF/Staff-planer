@@ -5944,7 +5944,9 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
   const stats = [
     ["Bemannade linjer", `${staffed} av ${lines.length}`, capacityState(staffed, lines.length)],
     ["Personalen räcker till", unknown ? "Okänt" : `${capacity.runnable} av ${lines.length}`, unknown ? "warn" : capacityState(capacity.runnable, lines.length)],
-    [`Behövs för alla ${lines.length} linjer`, unknown ? "Okänt" : `${capacity.places} ${capacity.places === 1 ? "person" : "personer"}`, unknown ? "warn" : available.length >= capacity.places ? "good" : "bad"],
+    // The operators the places need, plus the shift leader on top of them.
+    [`Behövs för alla ${lines.length} linjer`, unknown ? "Okänt" : `${capacity.places} + skiftledare`, unknown ? "warn" : available.length >= capacity.places ? "good" : "bad",
+      unknown ? "" : `${capacity.places + 1} personer totalt`],
     ["Tillgänglig personal", `${available.length} av ${operators.length}`, unknown ? "warn" : capacityState(available.length, capacity.places)]
   ];
   const missing = unknown ? 0 : capacity.places - available.length;
@@ -5961,7 +5963,7 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
     <details class="admin-section admin-capacity-block" data-admin-section="capacity:${escapeHtml(shift.id)}"${adminSectionOpen(`capacity:${shift.id}`)}>
       <summary class="admin-section-toggle"><span class="admin-label">Produktionskapacitet</span><span class="admin-muted">${escapeHtml(formatLinesDate(linesDate, today))}</span></summary>
       <div class="admin-capacity-content">
-      <div class="admin-capacity-stats">${stats.map(([label, value, state]) => `<div class="admin-stat ${state}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>
+      <div class="admin-capacity-stats">${stats.map(([label, value, state, note]) => `<div class="admin-stat ${state}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ""}</div>`).join("")}</div>
       <details class="admin-capacity-details" data-admin-section="details:${escapeHtml(shift.id)}"${adminSectionOpen(`details:${shift.id}`)}>
         <summary><span class="show-label">Visa detaljer</span><span class="hide-label">Dölj detaljer</span></summary>
         <div class="admin-capacity-body">
