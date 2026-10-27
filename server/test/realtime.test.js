@@ -73,15 +73,10 @@ describe("live updates", () => {
     const adminStream = await open(admin);
     const operatorStream = await open(operator);
     await settle();
-    await leader.put(`/api/documents/user:${leaderUser.id}/todos`, { value: [], baseVersion: 0 });
     await admin.post("/api/chat/messages", { text: "Hej" });
     await admin.post("/api/shifts", { name: "Natt" });
     await operatorStream.waitFor(event => event.data.type === "shifts");
     await adminStream.waitFor(event => event.data.type === "chat");
-    assert.ok(!adminStream.events.some(event => event.data.key === "todos"), "nobody else learns about a personal list");
-    const hint = await adminStream.waitFor(event => event.data.type === "sharedTodos");
-    assert.deepEqual(hint.data, { type: "sharedTodos" }, "others with a list only hear to look for shared tasks again");
-    assert.ok(!operatorStream.events.some(event => event.data.type === "sharedTodos"), "operators have no list to look in");
     assert.ok(!operatorStream.events.some(event => event.data.type === "chat"), "chat is for admins and shift leaders");
   });
 

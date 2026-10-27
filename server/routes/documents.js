@@ -2,16 +2,16 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  isAdmin, isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScope, personalScopeOwner,
+  isAdmin, isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScopeOwner,
   sharedFlagKey, weekRequiringShare, mayChangeProductionTargets, evaluatesEveryone
 } = require("../permissions");
 const { isPersonScoped, evaluatedPersonIds, onlyFor, mergeFor } = require("../evaluations");
 const {
-  readDocuments, writeDocument, mergeIntoPersonalList, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot,
+  readDocuments, writeDocument, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot,
   addAuditEvent
 } = require("../store");
 const { cleanText } = require("../validation");
-const { notifyScheduleShared, notifyAdminChange, notifyTodosShared } = require("../notifications");
+const { notifyScheduleShared, notifyAdminChange } = require("../notifications");
 
 // Personal scopes are not looked up: only their owner, who is signed in, gets
 // past the permission check, and others must not learn which user ids exist.
@@ -64,12 +64,6 @@ function documentRoutes({ pool, mailer, appUrl }) {
   // Saves one document. baseVersion is the version the client last read (0 if it did not exist).
   router.put("/documents/:scope/:key", async (req, res) => {
     const { scope, key } = req.params;
-    // Pages opened before "Att göra" became personal still save it to the shift.
-    // Until they reload, their items join the user's own list so nothing is lost.
-    if (key === "todos" && scope !== "global" && !personalScopeOwner(scope)
-      && canWriteDocument(req.user, personalScope(req.user.id), key) && Array.isArray(req.body?.value)) {
-      return res.json(await withTransaction(pool, client => mergeIntoPersonalList(client, req.user.id, key, req.body.value)));
-    }
     if (!documentCategory(scope, key)) throw new HttpError(400, "Okänd datatyp.");
     if (!canWriteDocument(req.user, scope, key)) {
       throw new HttpError(403, "Du har inte behörighet att ändra det här. Du kan bara ändra ditt eget skift.");
@@ -91,9 +85,6 @@ function documentRoutes({ pool, mailer, appUrl }) {
     }
     const sharedWeek = sharedWeekKey(key);
     const wasShared = sharedWeek ? (await readDocuments(pool, scope, [key]))[key]?.value?.shared === true : false;
-    // Tasks the owner shares now are told to their new recipients once the list is saved.
-    const isOwnTodos = key === "todos" && personalScopeOwner(scope) === req.user.id;
-    const todosBefore = isOwnTodos ? (await readDocuments(pool, scope, [key]))[key]?.value : null;
     let saved;
     try {
       saved = await writeDocument(pool, { scope, key, value, baseVersion, userId: req.user.id });
@@ -113,10 +104,6 @@ function documentRoutes({ pool, mailer, appUrl }) {
       saved.notified = await notifyScheduleShared({
         pool, mailer, shiftId: scope, weekKey: sharedWeek, appUrl: appUrl || `${req.protocol}://${req.get("host")}`
       });
-    }
-    if (isOwnTodos) {
-      await notifyTodosShared(pool, { user: req.user, scope, before: todosBefore, after: value })
-        .catch(error => console.error("To-do share notification failed:", error));
     }
     res.json(saved);
   });

@@ -2,9 +2,9 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  isAdmin, normalizeAvailability, documentCategory, personalScope, PERSONAL_SCOPE_PREFIX, canReadDocument, canExportShiftBackup
+  isAdmin, normalizeAvailability, documentCategory, PERSONAL_SCOPE_PREFIX, canReadDocument, canExportShiftBackup
 } = require("../permissions");
-const { putDocument, mergeIntoPersonalList, isPlainObject, serializeShift, addAuditEvent } = require("../store");
+const { putDocument, newId, isPlainObject, serializeShift, addAuditEvent } = require("../store");
 const { evaluatedPersonIds, onlyFor } = require("../evaluations");
 const { cleanText, cleanEmail, SHIFT_COLORS } = require("../validation");
 
@@ -91,13 +91,14 @@ function adminRoutes({ pool }) {
     const validDocs = payload.documents.filter(doc =>
       doc && typeof doc.scope === "string" && typeof doc.key === "string" && (doc.scope === "global" || shiftIds.has(doc.scope)));
     const documents = validDocs.filter(doc => documentCategory(doc.scope, doc.key));
-    // Version 2 backups kept one to-do list per shift. Those items join the importing
-    // admin's own list, in shift order, instead of being dropped.
+    // Version 2 backups kept one to-do list per shift. Its open tasks become the importing
+    // admin's own notes under Anteckningar, in shift order, instead of being dropped.
     const shiftOrder = [...shiftIds];
     const oldTodos = payload.version === 2
       ? validDocs.filter(doc => doc.scope !== "global" && doc.key === "todos" && Array.isArray(doc.value))
         .sort((a, b) => shiftOrder.indexOf(a.scope) - shiftOrder.indexOf(b.scope))
         .flatMap(doc => doc.value)
+        .filter(item => !item?.completedAt && cleanText(item?.text, 1000))
       : [];
     // Each color belongs to one shift: if a backup gives several shifts the same color, the first keeps it.
     const importedColors = new Set();
@@ -131,7 +132,9 @@ function adminRoutes({ pool }) {
       }
       await client.query(`DELETE FROM documents WHERE ${NOT_PERSONAL_SQL}`, [PERSONAL_SCOPE_PATTERN]);
       for (const doc of documents) await putDocument(client, doc.scope, doc.key, doc.value, req.user.id);
-      if (oldTodos.length) await mergeIntoPersonalList(client, req.user.id, "todos", oldTodos);
+      for (const item of oldTodos) {
+        await client.query("INSERT INTO notes (id, author_id, kind, body) VALUES ($1, $2, 'personal', $3)", [newId(), req.user.id, cleanText(item.text, 1000)]);
+      }
     });
     res.json({ ok: true, shifts: shiftIds.size, people: payload.people.length, documents: documents.length, todos: oldTodos.length });
   });
@@ -144,9 +147,9 @@ function adminRoutes({ pool }) {
     if (!rows.length) throw new HttpError(400, "Välj vilket skift den gamla datan ska höra till.");
     const globalDocs = Object.entries(isPlainObject(global) ? global : {}).filter(([key]) => documentCategory("global", key));
     const shiftDocs = Object.entries(isPlainObject(shift) ? shift : {}).filter(([key]) => documentCategory(shiftId, key));
-    // The old version had one to-do list; its items join the importing admin's own list.
-    const personalDocs = Object.entries(isPlainObject(shift) ? shift : {})
-      .filter(([key, value]) => documentCategory(personalScope(req.user.id), key) && Array.isArray(value));
+    // The old version had one to-do list; its open tasks become the importing admin's own notes.
+    const oldTodos = (isPlainObject(shift) && Array.isArray(shift.todos) ? shift.todos : [])
+      .filter(item => !item?.completedAt && cleanText(item?.text, 1000));
     const peopleList = Array.isArray(people) ? people : [];
     let importedPeople = 0;
     await withTransaction(pool, async client => {
@@ -155,9 +158,11 @@ function adminRoutes({ pool }) {
       }
       for (const [key, value] of globalDocs) await putDocument(client, "global", key, value, req.user.id);
       for (const [key, value] of shiftDocs) await putDocument(client, shiftId, key, value, req.user.id);
-      for (const [key, value] of personalDocs) await mergeIntoPersonalList(client, req.user.id, key, value);
+      for (const item of oldTodos) {
+        await client.query("INSERT INTO notes (id, author_id, kind, body) VALUES ($1, $2, 'personal', $3)", [newId(), req.user.id, cleanText(item.text, 1000)]);
+      }
     });
-    res.json({ ok: true, people: importedPeople, documents: globalDocs.length + shiftDocs.length + personalDocs.length });
+    res.json({ ok: true, people: importedPeople, documents: globalDocs.length + shiftDocs.length + oldTodos.length });
   });
 
   return router;

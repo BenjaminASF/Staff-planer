@@ -30,11 +30,6 @@
 // right hands people in their own shift, admins anyone. Nobody else sees a group note,
 // admins included. Only the author changes a note's text, color and recipients; its
 // priority mark is set by the author and, on a group note they can see, by an admin.
-//
-// Personal documents ("Att göra") belong to one user, whatever their role above
-// operator, and only that user reads and writes them – admins included. The owner can share
-// single tasks with chosen users, who then see those tasks read-only. Backups
-// leave the lists out.
 
 const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" });
 const ROLE_VALUES = Object.values(ROLES);
@@ -87,11 +82,9 @@ const SHIFT_DOCUMENTS = [
   [/^(scheduleTemplates|productionRecords)$/, "shiftWork"]
 ];
 
-// Documents that belong to one user (scope = "user:<user id>").
+// Scopes once used for each user's own "Att göra" list (scope = "user:<user id>").
+// No document lives there any more; backups and shift data still leave them out.
 const PERSONAL_SCOPE_PREFIX = "user:";
-const PERSONAL_DOCUMENTS = ["todos"];
-
-const personalScope = userId => `${PERSONAL_SCOPE_PREFIX}${userId}`;
 const personalScopeOwner = scope => scope.startsWith(PERSONAL_SCOPE_PREFIX) ? scope.slice(PERSONAL_SCOPE_PREFIX.length) : null;
 
 // Marks a shift's week as shared with its operators (scope = shift id).
@@ -112,14 +105,11 @@ const leadsShift = (user, shiftId) => (isLeader(user) || isRightHand(user)) && B
 const canEditShift = (user, shiftId) => isAdmin(user) || leadsShift(user, shiftId);
 // Shift leaders and right hands manage the people in their own shift who rank below them.
 const managesPerson = (user, person) => leadsShift(user, person?.shiftId) && personLevel(person) < roleLevel(user.role);
-// Operators have no "Att göra" list; everyone above them does.
-const hasPersonalList = user => Boolean(user?.id) && Boolean(user.role) && user.role !== ROLES.OPERATOR;
-const ownsPersonalScope = (user, scope) => hasPersonalList(user) && Boolean(user.id) && personalScopeOwner(scope) === user.id;
 
 function documentCategory(scope, key) {
   if (typeof key !== "string" || typeof scope !== "string") return null;
   if (scope === "global") return Object.hasOwn(GLOBAL_DOCUMENTS, key) ? GLOBAL_DOCUMENTS[key] : null;
-  if (personalScopeOwner(scope)) return PERSONAL_DOCUMENTS.includes(key) ? "personal" : null;
+  if (personalScopeOwner(scope)) return null;
   const match = SHIFT_DOCUMENTS.find(([pattern]) => pattern.test(key));
   return match ? match[1] : null;
 }
@@ -137,7 +127,6 @@ function canReadDocument(user, scope, key) {
     case "shiftPlan":
     case "shiftShare": return isAdminOrLeader(user) || (Boolean(user?.shiftId) && user.shiftId === scope);
     case "shiftWork": return canEditShift(user, scope);
-    case "personal": return ownsPersonalScope(user, scope);
     default: return false;
   }
 }
@@ -154,7 +143,6 @@ function canWriteDocument(user, scope, key) {
     case "shiftPlan":
     case "shiftWork":
     case "shiftShare": return canEditShift(user, scope);
-    case "personal": return ownsPersonalScope(user, scope);
     default: return false;
   }
 }
@@ -322,7 +310,6 @@ module.exports = {
   GLOBAL_DOCUMENTS,
   WEEKLY_SCHEDULE_PREFIXES,
   PERSONAL_SCOPE_PREFIX,
-  personalScope,
   personalScopeOwner,
   ROLE_LEVELS,
   roleLevel,
@@ -332,7 +319,6 @@ module.exports = {
   isRightHand,
   isAdminOrLeader,
   isShiftManager,
-  hasPersonalList,
   roleNeedsShift,
   canEditShift,
   canChangeProductionTarget,

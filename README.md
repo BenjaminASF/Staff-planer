@@ -15,7 +15,6 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | |
 | Ändra skiftets dagliga produktionsmål | ✓ | ✓ | | |
-| Egen privat att göra-lista, med delning av enskilda uppgifter | ✓ | ✓ | ✓ | |
 | Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | Eget skift | |
 | Lägga till personal och skapa konton | Alla roller och skift | Höger hand och operatörer, eget skift | Operatörer, eget skift | |
 | Återställa lösenord | Alla | Höger hand och operatörer i eget skift | Operatörer i eget skift | |
@@ -72,6 +71,8 @@ Operatörer ser en veckas schema och rastplan först när admin eller skiftledar
 - **Prioritet**: flaggan uppe till vänster markerar lappen som prioriterad. Markeringen syns för alla som ser lappen och kan ändras av den som skrev den, och av admin på delade lappar som admin ser. Med **Sortera: Prioritet först** (standard) ligger prioriterade lappar överst. Där finns också **Nyaste först** och **Äldsta först**.
 - Lapparna dras dit man vill och storleken ändras i hörnet. Placeringen sparas för varje användare och sortering, och **Ordna lapparna** lägger dem i kolumner igen. På mobilen visas lapparna i en enkel lista.
 
+**Anteckningar** ersätter den tidigare listan **Att göra**. Uppgifter som inte var klara flyttades till ägarens **Mina anteckningar**, och gamla länkar till Att göra leder hit.
+
 ### Mejl när schemat delas
 
 När en vecka delas får skiftets operatörer ett mejl om att schemat finns, med en länk för att logga in. Mejlet går bara till operatörer som har en inloggning och en e-postadress. Adressen fylls i under **Min profil** eller av admin eller skiftledaren under **Redigera** på personalsidan. Om veckan sparas igen medan den är delad skickas inget nytt mejl, men om den slutar delas och delas igen skickas ett nytt. Efter delningen visar appen hur många som fick mejlet.
@@ -88,8 +89,6 @@ Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas
 Skiftledare kan aldrig ändra uppgifter (namn, företag, telefon, status eller inloggning) för admin eller en annan skiftledare, inte ens i samma skift. Höger hand kan bara ändra uppgifter för operatörer och personal utan inloggning.
 
 **Höger hand** är skiftledarens assistent och tar över ansvaret när skiftledaren inte är på plats. Höger hand arbetar bara i sitt eget skift: ändrar schemat, lägger till operatörer, läser och skriver i chatten och registrerar dagens produktion, men kan inte ändra det dagliga målet eller maskiner och inställningar som gäller alla skift. Höger hand kan ändra operatörernas uppgifter i skiftet, men inte skiftledarens eller adminens.
-
-**Att göra** är privat. Alla utom operatörer har en egen lista, och ingen annan kan se den, inte ens admin. Med **Dela** på en uppgift väljer man exakt vilka personer som ska se just den uppgiften. De ser den under **Delade med mig**, med namnet på den som delade den, men kan inte ändra den. Resten av listan förblir privat, och delningen kan tas bort när som helst.
 
 Skiftledare genomför tester och bedömer kompetens för operatörerna i sitt eget skift, och för skiftets Höger hand och personal utan inloggning. De ser bara testresultat och bedömningar för de personerna, och kan inte ändra något för andra skift, andra skiftledare eller admin. Att lägga till eller ta bort avdelningar på sidan Testresultat är fortfarande bara för admin, eftersom det ändrar resultaten i alla skift.
 
@@ -147,7 +146,7 @@ Ljudnotiserna är på från början och stängs av eller slås på under **Min p
 Klockan uppe till höger visar korta notiser, med en röd siffra för olästa:
 
 - **Skiftledare och höger hand** får en notis när en admin ändrar något i deras skift (till exempel schemat, personal eller någons status) eller i gemensamma inställningar och maskiner. Notisen säger vem som ändrade och vad.
-- **Alla som får en uppgift delad** från någons att göra-lista får en notis med uppgiften och vem som delade den. Ett klick på notisen öppnar **Att göra**.
+- **Alla som får en anteckning delad** får en notis med lappens text och vem som delade den. Ett klick på notisen öppnar lappen under **Anteckningar**.
 
 Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan räknas notiserna som lästa, och **Rensa alla** tar bort dem. Notiser äldre än 30 dagar tas bort automatiskt.
 
@@ -159,9 +158,9 @@ Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och 
 
 ### Backup
 
-Admin kan exportera och importera all data under **Inställningar** eller **Översikt → Meny → Data**. E-postadresserna ingår. Lösenord och de egna att göra-listorna ingår aldrig i backupen, och en import lämnar att göra-listorna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
+Admin kan exportera och importera all data under **Inställningar** eller **Översikt → Meny → Data**. E-postadresserna ingår. Lösenord och anteckningar ingår aldrig i backupen, och en import lämnar anteckningarna orörda. Aktivera gärna även Railways egna backuper för Postgres om er plan har det.
 
-Skiftledare kan exportera en backup av sitt eget skift under **Översikt → Backup av skiftet**. Den innehåller skiftet, dess personal, scheman, produktion och gemensamma inställningar, kompetens för skiftets personal samt testresultat och bedömningar för dem skiftledaren bedömer. Andra skift, lösenord och att göra-listor ingår inte. En skiftbackup är en kopia att spara: den kan inte importeras, eftersom den bara innehåller en del av datan. Exporten syns under skiftets ändringar. Höger hand och operatörer kan inte exportera.
+Skiftledare kan exportera en backup av sitt eget skift under **Översikt → Backup av skiftet**. Den innehåller skiftet, dess personal, scheman, produktion och gemensamma inställningar, kompetens för skiftets personal samt testresultat och bedömningar för dem skiftledaren bedömer. Andra skift, lösenord och anteckningar ingår inte. En skiftbackup är en kopia att spara: den kan inte importeras, eftersom den bara innehåller en del av datan. Exporten syns under skiftets ändringar. Höger hand och operatörer kan inte exportera.
 
 ## Utveckling lokalt
 
