@@ -5896,12 +5896,15 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
   const unknown = capacity.canRunAll === null;
   const stats = [
     ["Bemannade linjer", `${staffed} av ${lines.length}`, capacityState(staffed, lines.length)],
-    [`Kan köra alla ${lines.length} linjer`, unknown ? "Okänt" : capacity.canRunAll ? "Ja" : "Nej", unknown ? "warn" : capacity.canRunAll ? "good" : "bad"],
+    ["Personalen räcker till", unknown ? "Okänt" : `${capacity.runnable} av ${lines.length}`, unknown ? "warn" : capacityState(capacity.runnable, lines.length)],
+    [`Behövs för alla ${lines.length} linjer`, unknown ? "Okänt" : `${capacity.places} ${capacity.places === 1 ? "person" : "personer"}`, unknown ? "warn" : available.length >= capacity.places ? "good" : "bad"],
     ["Tillgänglig personal", `${available.length} av ${operators.length}`, unknown ? "warn" : capacityState(available.length, capacity.places)]
   ];
+  const missing = unknown ? 0 : capacity.places - available.length;
   const notes = [
     !linesDay ? "Ingen arbetsdag enligt inställningarna." : !hasSchedule ? "Inget schema är lagt för dagen." : "",
     unknown ? "Regler för linjerna saknas, se Regler för linjebemanning nedan." : "",
+    missing > 0 ? `Det saknas ${missing} ${missing === 1 ? "person" : "personer"} för att köra alla ${lines.length} linjer samtidigt.` : "",
     linesDay && capacity.canRunAll && staffed < lines.length ? `Personalen räcker till alla ${lines.length} linjer, men schemat bemannar ${staffed}.` : "",
     ...capacity.reasons
   ].filter(Boolean);
