@@ -43,7 +43,9 @@ describe("pushnotiser", () => {
   )).rows;
   const versions = new Map();
   const save = async (client, scope, key, value) => {
-    const result = await client.put(`/api/documents/${scope}/${encodeURIComponent(key)}`, { value, baseVersion: versions.get(`${scope}|${key}`) || 0 });
+    let result = await client.put(`/api/documents/${scope}/${encodeURIComponent(key)}`, { value, baseVersion: versions.get(`${scope}|${key}`) || 0 });
+    // The server itself changes schedules when someone moves shift.
+    if (result.status === 409) result = await client.put(`/api/documents/${scope}/${encodeURIComponent(key)}`, { value, baseVersion: result.data.current.version });
     assert.equal(result.status, 200, JSON.stringify(result.data));
     versions.set(`${scope}|${key}`, result.data.version);
     return result.data;
@@ -82,7 +84,7 @@ describe("pushnotiser", () => {
 
   test("devices register only with the browsers' push services", async () => {
     const status = await operator.get("/api/push");
-    assert.deepEqual(status.data, { available: true, publicKey: "BPublicKeyForTests", blocked: false, devices: 1 });
+    assert.deepEqual(status.data, { available: true, publicKey: "BPublicKeyForTests", blocked: false, enabled: true, level: "all", devices: 1 });
     const bad = await operator.post("/api/push/subscriptions", { endpoint: "https://evil.example.com/push", keys: { p256dh: "BKey", auth: "auth" } });
     assert.equal(bad.status, 400);
     assert.equal(isAllowedEndpoint("http://fcm.googleapis.com/x"), false);
@@ -146,6 +148,22 @@ describe("pushnotiser", () => {
     await save(admin, dayShift.id, `schedule:${week}`, { "Linje 1": { tue: operatorPerson.id, wed: rightHandPerson.id }, "Linje 2": { mon: leaderPerson.id } });
     await flush();
     assert.deepEqual(sent.map(item => item.endpoint), [endpointFor("olle")], "only the operator moved; the shift leader keeps their place");
+  });
+
+  test("a schedule notice comes about 30 seconds after the last change, and at most two minutes after the first", async () => {
+    const laterWeek = weekAfter(week, 2);
+    const wait = async () => Number((await server.pool.query(
+      "SELECT extract(epoch FROM send_after - now()) AS wait FROM push_outbox WHERE user_id = $1 AND kind = 'schedule' AND sent_at IS NULL", [rightHandUser.id]
+    )).rows[0].wait);
+    await save(leader, dayShift.id, `schedule:${laterWeek}`, { "Linje 1": { mon: rightHandPerson.id } });
+    assert.ok(Math.abs(await wait() - 30) < 5, "about 30 seconds after a single change");
+
+    // Still changing after 100 seconds: the notice waits again, but not past two minutes.
+    await server.pool.query("UPDATE push_outbox SET created_at = now() - interval '100 seconds' WHERE user_id = $1 AND sent_at IS NULL", [rightHandUser.id]);
+    await save(leader, dayShift.id, `schedule:${laterWeek}`, { "Linje 1": { tue: rightHandPerson.id } });
+    assert.ok(Math.abs(await wait() - 20) < 5, "never more than two minutes after the first change");
+    await flush();
+    assert.equal(sentTo("hand").length, 1, "still one notice");
   });
 
   test("break times concern everyone working that day; other weeks' history does not push", async () => {
@@ -255,6 +273,98 @@ describe("pushnotiser", () => {
       await server.pool.query("ALTER TABLE push_outbox_away RENAME TO push_outbox");
       await admin.patch(`/api/people/${operatorPerson.id}`, { shiftId: dayShift.id });
     }
+  });
+
+  test("push goes on after signing out, after automatic sign-out and with no page open", async () => {
+    assert.equal((await rightHand.post("/api/logout")).status, 200);
+    await leader.post("/api/chat/messages", { text: "Efter utloggning", recipientId: rightHandUser.id });
+    await flush();
+    assert.equal(sentTo("hand").length, 1, "after signing out");
+
+    // Automatic sign-out and expired sessions leave no session at all.
+    sent.length = 0;
+    await server.pool.query("DELETE FROM sessions WHERE user_id = $1", [rightHandUser.id]);
+    await leader.post("/api/chat/messages", { text: "Utan session", recipientId: rightHandUser.id });
+    await flush();
+    assert.equal(sentTo("hand").length, 1, "without any session");
+    assert.equal(sentTo("hand")[0].payload.url, "index.html?chat=1&push=1", "the link brings the user back to the page after signing in");
+    await rightHand.login("hanna", PASSWORD);
+  });
+
+  test("each user turns push on or off and chooses all notices or only important ones", async () => {
+    assert.equal((await subscribe(operator, "olle")).status, 201);
+    assert.equal((await operator.patch("/api/push/settings", { level: "everything" })).status, 400);
+    assert.deepEqual((await operator.patch("/api/push/settings", { level: "important" })).data, { enabled: true, level: "important" });
+
+    // Only important: the schedule yes; breaks and shared notes no.
+    const breakKey = `breakPlan:${week}`;
+    await save(leader, dayShift.id, breakKey, { mon: { groups: { [operatorPerson.id]: 1, [rightHandPerson.id]: 1 } } });
+    await leader.post("/api/notes", { kind: "group", text: "Bara för alla-läget", people: [operatorUser.id, rightHandUser.id] });
+    await save(leader, dayShift.id, `schedule:${week}`, { "Linje 1": { thu: operatorPerson.id } });
+    await flush();
+    assert.deepEqual(sentTo("olle").map(item => item.payload.tag), ["schedule"]);
+    assert.ok(["breaks", "note"].every(tag => sentTo("hand").some(item => item.payload.tag === tag)), "everyone else still gets all");
+    assert.match(sentTo("hand").find(item => item.payload.tag === "breaks").payload.body, /^Rasterna för vecka \d+ har ändrats\.$/);
+    assert.ok((await operator.get("/api/notifications")).data.notifications.some(note => note.kind === "noteShared"), "in-app notifications are unchanged");
+
+    // Off: nothing, and what happened meanwhile is not sent when it is turned on again.
+    sent.length = 0;
+    assert.deepEqual((await operator.patch("/api/push/settings", { enabled: false })).data, { enabled: false, level: "important" });
+    await save(leader, dayShift.id, `schedule:${week}`, { "Linje 1": { fri: operatorPerson.id } });
+    await flush();
+    assert.equal(sentTo("olle").length, 0);
+    assert.equal((await operator.patch("/api/push/settings", { enabled: true })).status, 200);
+    await flush();
+    assert.equal(sentTo("olle").length, 0, "nothing from while push was off");
+    assert.equal((await operator.get("/api/push")).data.level, "important", "the level is kept");
+  });
+
+  test("an admin's block comes before the user's own choice, which applies again afterwards", async () => {
+    assert.equal((await admin.patch(`/api/people/${operatorPerson.id}/account`, { pushBlocked: true })).status, 200);
+    assert.equal((await operator.patch("/api/push/settings", { enabled: true })).status, 403);
+    await save(leader, dayShift.id, `schedule:${week}`, { "Linje 1": { mon: operatorPerson.id } });
+    await flush();
+    assert.equal(sentTo("olle").length, 0);
+    assert.equal((await admin.patch(`/api/people/${operatorPerson.id}/account`, { pushBlocked: false })).status, 200);
+    await flush();
+    assert.equal(sentTo("olle").length, 0, "nothing from while blocked");
+    const status = (await operator.get("/api/push")).data;
+    assert.deepEqual([status.blocked, status.enabled, status.level], [false, true, "important"]);
+    await operator.patch("/api/push/settings", { level: "all" });
+  });
+
+  test("removing a user stops their push, ends their sessions and shuts them out", async () => {
+    for (const [name, removeWholePerson] of [["dora", false], ["dan", true]]) {
+      const person = (await admin.post("/api/people", {
+        name: `Test ${name}`, shiftId: dayShift.id, account: { username: name, password: PASSWORD, role: "operator", mustChangePassword: false }
+      })).data.person;
+      const client = server.client();
+      const user = (await client.login(name, PASSWORD)).user;
+      assert.equal((await subscribe(client, name)).status, 201);
+      await leader.post("/api/notes", { kind: "group", text: "Väntar", people: [user.id] });
+      const count = async table => (await server.pool.query(`SELECT count(*)::int AS n FROM ${table} WHERE user_id = $1`, [user.id])).rows[0].n;
+      assert.equal(await count("push_outbox"), 1);
+
+      const removed = removeWholePerson ? await admin.delete(`/api/people/${person.id}`) : await admin.delete(`/api/people/${person.id}/account`);
+      assert.equal(removed.status, 200);
+      assert.deepEqual([await count("push_subscriptions"), await count("push_outbox"), await count("sessions")], [0, 0, 0]);
+      assert.equal((await client.get("/api/me")).status, 401);
+      await flush();
+      assert.equal(sentTo(name).length, 0);
+    }
+  });
+
+  test("a device can be disconnected without signing in, but only with its own address", async () => {
+    const anonymous = server.client();
+    assert.equal((await anonymous.post("/api/push/disconnect", { endpoint: endpointFor("not-a-device") })).status, 200);
+    assert.equal((await rightHand.get("/api/push")).data.devices, 1);
+    assert.equal((await anonymous.post("/api/push/disconnect", { endpoint: endpointFor("hand") })).status, 200);
+    assert.equal((await rightHand.get("/api/push")).data.devices, 0);
+    await leader.post("/api/chat/messages", { text: "Bortkopplad", recipientId: rightHandUser.id });
+    await flush();
+    assert.equal(sentTo("hand").length, 0);
+    anonymous.sendAppHeader = false;
+    assert.equal((await anonymous.post("/api/push/disconnect", { endpoint: endpointFor("olle") })).status, 403, "needs the app's own header");
   });
 
   test("without VAPID keys push stays off and everything else works", async () => {
