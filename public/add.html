@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Lägg till</title>
-  <script src="theme.js?v=20261027-prefs1"></script>
-  <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700&family=Inter:wght@400;500;600;700&display=swap" /><link rel="stylesheet" href="style.css?v=20261027-prefs1" />
+  <script src="theme.js?v=20261027-machines1"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700&family=Inter:wght@400;500;600;700&display=swap" /><link rel="stylesheet" href="style.css?v=20261027-machines1" />
 </head>
 <body class="app-booting">
   <div id="authScreen" class="auth-screen">
@@ -31,6 +31,7 @@
           <a class="nav-link" href="personal.html">Personal</a>
           <a class="nav-link" href="testresultat.html">Testresultat</a>
           <a class="nav-link" href="maskiner.html">Kompetens</a>
+          <a class="nav-link" href="maskinhantering.html">Maskinhantering</a>
           <a class="nav-link" href="bedomning.html">Bedömning</a>
           <a class="nav-link" href="todo.html">Att göra</a>
           <a class="nav-link active" href="add.html">Lägg till</a>
@@ -41,12 +42,7 @@
       <main class="main">
         <div class="header">
           <h2>Lägg till</h2>
-          <p>Hantera personal, arbetsplatser och uppgifter för extra personer.</p>
-          <nav class="add-page-shortcuts" aria-label="Gå till formulär">
-            <a href="#addPersonSection">Personal</a>
-            <a href="#workItemForm">Arbetsplatser</a>
-            <a href="#extraAssignmentManager">Extrauppgifter</a>
-          </nav>
+          <p>Lägg till personal. Maskiner, stationer, linjer och uppgifter för extra personer hanteras under <a href="maskinhantering.html">Maskinhantering</a>.</p>
         </div>
 
         <section id="addPersonSection" class="card form-card">
@@ -67,35 +63,9 @@
           <div id="message" class="message hidden" role="status" aria-live="polite">Person tillagd</div>
         </section>
 
-        <section class="card work-item-manager">
-          <div class="work-item-manager-heading">
-            <div><h3>Arbetsplatser och schemarader</h3><p>Lägg till maskiner, avdelningar, utbildning och extra personer. Välj var de ska visas.</p></div>
-          </div>
-          <form id="workItemForm" class="work-item-form">
-            <div class="work-item-fields">
-              <label><span>Namn</span><input id="workItemName" placeholder="Exempel: GD5 eller Ny avdelning" required /><small aria-hidden="true">&nbsp;</small></label>
-              <label><span>Placering i schemat</span><select id="workItemAfter"></select><small>Den nya raden placeras direkt efter ditt val.</small></label>
-              <label><span>Typ</span><select id="workItemType"><option value="machine">Maskin</option><option value="department">Avdelning</option><option value="training">Utbildning</option><option value="extra">Extra person</option></select><small>Extra person får val av person och uppgift i schemat.</small></label>
-              <label><span>Antal personer</span><input id="workItemStaffCount" type="number" min="1" max="20" value="1" /><small>Minsta bemanning som behövs.</small></label>
-              <label class="work-item-skills-field"><span>Kompetenser som krävs</span><input id="workItemRequiredSkills" placeholder="Exempel: GD, Truckkort" /><small>Separera flera kompetenser med kommatecken.</small></label>
-            </div>
-            <fieldset class="work-item-destinations">
-              <legend>Var ska den visas?</legend>
-              <label><input id="workItemSchema" type="checkbox" /><span><strong>Schema</strong><small>Skapa en egen rad i veckoschemat.</small></span></label>
-              <label><input id="workItemCompetency" type="checkbox" /><span><strong>Kompetens</strong><small>Registrera behörighet och utbildning.</small></span></label>
-              <label><input id="workItemTestResults" type="checkbox" /><span><strong>Testresultat</strong><small>Registrera resultat för stationen.</small></span></label>
-              <label><input id="workItemAutoSchedule" type="checkbox" /><span><strong>Autoschema</strong><small>Bemanna automatiskt. Kräver Schema och Kompetens.</small></span></label>
-            </fieldset>
-            <div class="work-item-submit"><span>Välj var stationen ska användas. Utan val sparas den bara här. Du kan ändra valen senare.</span><div class="work-item-form-actions"><button id="cancelWorkItemEdit" class="btn hidden" type="button">Avbryt</button><button id="saveWorkItemBtn" class="btn primary" type="submit">+ Lägg till</button></div></div>
-          </form>
-          <p id="workItemMessage" class="inline-message" aria-live="polite"></p>
-          <div id="workItemList" class="work-item-list"></div>
-          <details class="work-item-trash"><summary>Papperskorg <span id="workItemTrashCount">0</span></summary><div id="workItemTrashList" class="work-item-list"></div></details>
-        </section>
-        <section id="extraAssignmentManager" class="card extra-assignment-manager" aria-label="Uppgifter för extra personer"></section>
       </main>
     </div>
   </div>
-<script src="app.js?v=20261027-prefs1"></script>
+<script src="app.js?v=20261027-machines1"></script>
 </body>
 </html>

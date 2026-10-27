@@ -113,6 +113,8 @@ const DEFAULT_APP_SETTINGS = {
   organizationName: "",
   feedbackEmail: "",
   productionMachines: ["GD1", "GD2", "GD3", "GD4"],
+  // Built-in work places that are paused: they leave the schedule but keep their data.
+  hiddenTasks: [],
   extraAssignments: ["GD-rummet", "Lock & dosor", "ETIKETT-rummet", "Hjälp till på packavdelningen"],
   breakLines: [
     { id: "GD1", label: "Linje 1", workplaces: ["GD1", "ETIKETTO", "Packa L1"] },
@@ -138,6 +140,7 @@ const PAGE_ACCESS = {
   "anvandare.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "testresultat.html": [ROLES.ADMIN, ROLES.LEADER],
   "maskiner.html": [ROLES.ADMIN, ROLES.LEADER],
+  "maskinhantering.html": [ROLES.ADMIN, ROLES.LEADER],
   "bedomning.html": [ROLES.ADMIN, ROLES.LEADER],
   "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
@@ -764,6 +767,7 @@ function getTrainingLeadersForDay(trainingLeaders, day, excludedTask = "") {
 function getTaskDepartment(task) {
   const customItem = customWorkItems.find(item => item.name === task);
   if (customItem?.showInCompetency) return customItem.name;
+  if (customItem?.competenceGroup) return customItem.competenceGroup;
   if (/^GD\d+$/i.test(task)) return "GD";
   if (task === "ETIKETTO") return "ETIKETTO";
   if (task === "Logimark" || task === "miniLogimark") return "Logimark";
@@ -1522,6 +1526,7 @@ function normalizeAppSettings(settings) {
   next.productionMachines = normalizeStringList(next.productionMachines, DEFAULT_APP_SETTINGS.productionMachines);
   if (!next.productionMachines.length) next.productionMachines = [...DEFAULT_APP_SETTINGS.productionMachines];
   next.extraAssignments = normalizeStringList(next.extraAssignments, DEFAULT_APP_SETTINGS.extraAssignments);
+  next.hiddenTasks = normalizeStringList(next.hiddenTasks, []).filter(task => DEFAULT_TASKS.includes(task));
   next.workDays = ALL_DAYS.filter(day => Array.isArray(next.workDays) && next.workDays.includes(day));
   if (!next.workDays.length) next.workDays = [...ALL_DAYS];
   const minutes = Number(next.autoLockMinutes);
@@ -1532,8 +1537,9 @@ function normalizeAppSettings(settings) {
     if (!line || typeof line.id !== "string" || typeof line.label !== "string") return [];
     const id = line.id.trim();
     const label = line.label.trim();
-    const workplaces = normalizeStringList(line.workplaces);
-    if (!id || !label || !workplaces.length || seenIds.has(id.toLocaleLowerCase())) return [];
+    // A line may be empty for a while: it is created first and filled in afterwards.
+    const workplaces = normalizeStringList(line.workplaces, []);
+    if (!id || !label || seenIds.has(id.toLocaleLowerCase())) return [];
     seenIds.add(id.toLocaleLowerCase());
     return [{ id, label, workplaces }];
   });
@@ -1675,7 +1681,7 @@ function applyCustomWorkItems(items) {
       updatedAt: item.updatedAt || item.createdAt || new Date().toISOString()
     }))
     : [];
-  TASKS = [...DEFAULT_TASKS];
+  TASKS = DEFAULT_TASKS.filter(task => !appSettings.hiddenTasks?.includes(task));
   customWorkItems.filter(item => item.enabled && item.showInSchema).forEach(item => {
     const existingIndex = TASKS.findIndex(task => task.toLocaleLowerCase() === item.name.toLocaleLowerCase());
     if (existingIndex !== -1) return;
@@ -2296,7 +2302,8 @@ function enhanceAppShell() {
     "dashboard.html": "Här finns senaste status och dagens ändringar för skiftet.",
     "anvandare.html": "Klicka på Hantera för att ändra uppgifter eller lösenord. Skiftledare ser bara sitt eget skift; roller, användarnamn och borttagning hanteras av admin.",
     "personal.html": "Sätt status Tillgänglig, Ej tillgänglig eller Ledig; schemat visar statusen direkt.",
-    "add.html": "Pausa en arbetsplats när den inte används. Då bevaras historiken och den kan aktiveras igen.",
+    "add.html": "Maskiner, stationer och linjer lägger du till under Maskinhantering.",
+    "maskinhantering.html": "Pausa en maskin när den inte används. Då bevaras historiken och den kan aktiveras igen.",
     "maskiner.html": "Registrerad kompetens används för att varna och hjälpa autoschemat.",
     "testresultat.html": "Sök fram en person och registrera resultaten per maskin eller avdelning.",
     "bedomning.html": "Spara återkommande bedömningar för att se utveckling över tid.",
@@ -2547,13 +2554,10 @@ async function renderSettings() {
       <label>Arbetsplatsens namn<input id="organizationNameSetting" value="${escapeHtml(appSettings.organizationName || "")}" placeholder="Företag eller avdelning" /></label>
       <fieldset><legend>Arbetsdagar</legend><div class="settings-day-grid">${ALL_DAYS.map(day => `<label><input type="checkbox" name="workDay" value="${day}"${DAYS.includes(day) ? " checked" : ""} /> ${day}</label>`).join("")}</div></fieldset>
       <label>E-post för feedback<input id="feedbackEmailSetting" type="email" value="${escapeHtml(appSettings.feedbackEmail || "")}" placeholder="namn@foretag.se" /></label>
-      <label>Maskiner i produktion<input id="productionMachinesSetting" value="${escapeHtml(appSettings.productionMachines.join(", "))}" /><small>Separera med kommatecken.</small></label>
-      <label>Uppgifter för extra person<textarea id="extraAssignmentsSetting" rows="3">${escapeHtml(appSettings.extraAssignments.join("\n"))}</textarea><small>En uppgift per rad.</small></label>
-      <label>Rastlinjer<textarea id="breakLinesSetting" rows="5">${escapeHtml(appSettings.breakLines.map(line => `${line.id} | ${line.label} | ${line.workplaces.join(", ")}`).join("\n"))}</textarea><small>Format: ID | Visningsnamn | arbetsplatser separerade med kommatecken.</small></label>
       <div class="settings-actions"><span id="settingsMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara inställningar</button></div>
     </form>
     <section class="card settings-card"><div><h3>Personliga inställningar</h3><p>Tema, automatisk utloggning, tips och ljud väljer varje användare själv under Min profil. De sparas på kontot och påverkar inte någon annan.</p></div><div class="settings-actions"><a class="btn settings-link" href="profil.html#preferencesForm">Mina inställningar</a></div></section>
-    <section class="card settings-card"><div><h3>Maskiner, avdelningar och uppgifter</h3><p>Lägg till, redigera, pausa och ordna arbetsplatser från en samlad vy. De gäller alla skift.</p></div><div class="settings-actions">${isAdmin() ? '<button id="removeDemoDataBtn" class="btn danger" type="button">Ta bort testdata</button>' : ""}<a class="btn primary settings-link" href="add.html#workItemForm">Öppna hanteraren</a></div></section>
+    <section class="card settings-card"><div><h3>Maskiner, linjer och rast</h3><p>Maskiner, stationer, produktionslinjer, rastlinjer och uppgifter för extra personer hanteras under Maskinhantering. De gäller alla skift.</p></div><div class="settings-actions">${isAdmin() ? '<button id="removeDemoDataBtn" class="btn danger" type="button">Ta bort testdata</button>' : ""}<a class="btn primary settings-link" href="maskinhantering.html">Öppna Maskinhantering</a></div></section>
     ${isAdmin() ? `
     <section class="card settings-card" id="shiftSettings"><div><h3>Skift</h3><p>Varje skift har ett eget veckoschema. Personal och skiftledare kopplas till ett skift under Personal.</p></div>
       <div class="shift-settings-list">${shifts.map(shift => `<article>${shiftColorDot(shift.id) || '<span class="shift-dot" aria-hidden="true"></span>'}<input value="${escapeHtml(shift.name)}" aria-label="Namn på skiftet ${escapeHtml(shift.name)}" data-shift-name="${escapeHtml(shift.id)}" maxlength="60" /><select aria-label="Färg på skiftet ${escapeHtml(shift.name)}" data-shift-color="${escapeHtml(shift.id)}">${shiftColorOptions(shift)}</select><button class="btn" type="button" data-rename-shift="${escapeHtml(shift.id)}">Spara</button><button class="btn danger" type="button" data-delete-shift="${escapeHtml(shift.id)}">Ta bort</button></article>`).join("") || '<div class="empty-state">Inga skift ännu. Lägg till det första nedan.</div>'}</div>
@@ -2570,11 +2574,7 @@ async function renderSettings() {
     event.preventDefault();
     const workDays = [...root.querySelectorAll('[name="workDay"]:checked')].map(input => input.value);
     if (!workDays.length) { root.querySelector("#settingsMessage").textContent = "Välj minst en arbetsdag."; root.querySelector("#settingsMessage").className = "inline-message error"; return; }
-    const productionMachines = root.querySelector("#productionMachinesSetting").value.split(",").map(value => value.trim()).filter(Boolean);
-    const extraAssignments = root.querySelector("#extraAssignmentsSetting").value.split("\n").map(value => value.trim()).filter(Boolean);
-    const breakLines = root.querySelector("#breakLinesSetting").value.split("\n").map(value => { const [id, label, workplaces = ""] = value.split("|").map(part => part.trim()); return { id, label: label || id, workplaces: workplaces.split(",").map(part => part.trim()).filter(Boolean) }; }).filter(line => line.id && line.workplaces.length);
-    if (!productionMachines.length || !breakLines.length) { root.querySelector("#settingsMessage").textContent = "Produktion och rastlinjer får inte vara tomma."; root.querySelector("#settingsMessage").className = "inline-message error"; return; }
-    await saveAppSettings({ ...appSettings, workDays, productionMachines, extraAssignments, breakLines, organizationName: root.querySelector("#organizationNameSetting").value.trim(), feedbackEmail: root.querySelector("#feedbackEmailSetting").value.trim() });
+    await saveAppSettings({ ...appSettings, workDays, organizationName: root.querySelector("#organizationNameSetting").value.trim(), feedbackEmail: root.querySelector("#feedbackEmailSetting").value.trim() });
     root.querySelector("#settingsMessage").textContent = "Inställningarna har sparats.";
     root.querySelector("#settingsMessage").className = "inline-message success";
     await addAuditEvent("settings", "Inställningar uppdaterade", appSettings.organizationName);
@@ -2640,7 +2640,8 @@ async function renderSettings() {
     const snapshot = snapshots.find(item => item.id === button.dataset.restoreSnapshot);
     if (!snapshot || !confirm(`Återställ säkerhetspunkten "${snapshot.reason}"?`)) return;
     await createWorkItemSafetySnapshot("Före återställning");
-    await Promise.all([saveCustomWorkItems(snapshot.data.workItems || []), saveWorkItemTrash(snapshot.data.trash || []), saveDepartments(snapshot.data.departments || []), saveTestResults(snapshot.data.results || {}), saveMachineSkills(snapshot.data.skills || {}), saveMachineSkillDetails(snapshot.data.details || {})]);
+    await Promise.all([saveCustomWorkItems(snapshot.data.workItems || []), saveWorkItemTrash(snapshot.data.trash || []), saveDepartments(snapshot.data.departments || []), saveTestResults(snapshot.data.results || {}), saveMachineSkills(snapshot.data.skills || {}), saveMachineSkillDetails(snapshot.data.details || {}),
+      ...snapshot.data.machineSetup ? [saveAppSettings({ ...appSettings, ...snapshot.data.machineSetup })] : []]);
     await addAuditEvent("backup", "Säkerhetspunkt återställd", snapshot.reason);
     location.reload();
   }));
@@ -2658,7 +2659,7 @@ function renderHelpPage() {
     ]
     : [
       ["Lägg till personal", "Öppna Lägg till, registrera namn, företag och skift. Skapa en inloggning om personen ska kunna se schemat själv."],
-      ["Bygg arbetsplatser", "Lägg till maskiner, avdelningar, utbildningar och extraplatser. De gäller alla skift och kan pausas och ordnas."],
+      ["Bygg arbetsplatser", "Under Maskinhantering lägger du till maskiner och stationer och kopplar dem till linjer. Schema, bemanning och rast följer kopplingarna. De gäller alla skift och kan pausas."],
       ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
       ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
       ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas att göra-listor är privata."],
@@ -2741,7 +2742,7 @@ function canCoverBreakWorkplace(personId, workplace, skills, restrictions) {
 function getRequiredBreakWorkplaces(priorityLines) {
   return [...new Set(
     priorityLines.flatMap(line => BREAK_LINE_WORKPLACES[line] || [])
-  )];
+  )].filter(workplace => !isPausedWorkplace(workplace));
 }
 
 function compareBreakWorkplaces(firstWorkplace, secondWorkplace) {
@@ -6477,7 +6478,7 @@ function formatDateRange(monday) {
 // shift switcher and logout move into its menu, so every page is still one click away.
 const ADMIN_QUICK_PAGES = ["dashboard.html", "index.html", "produktion.html", "personal.html"];
 const ADMIN_MENU_GROUPS = [
-  ["Planering", ["dashboard.html", "index.html", "rast.html", "produktion.html", "todo.html"]],
+  ["Planering", ["dashboard.html", "index.html", "rast.html", "produktion.html", "maskinhantering.html", "todo.html"]],
   ["Personal och kompetens", ["personal.html", "anvandare.html", "add.html", "maskiner.html", "testresultat.html", "bedomning.html"]],
   ["Konto och system", ["profil.html", "installningar.html", "hjalp.html"]]
 ];
@@ -6937,6 +6938,7 @@ async function refreshAppViews() {
   await renderProduction();
   await renderTodoList();
   renderExtraAssignmentManager();
+  await renderMachineManagement();
 }
 
 // "Användare": every login in one place. Admins see everyone; shift leaders see
@@ -7460,183 +7462,741 @@ function renderExtraAssignmentManager(statusText = "") {
   }));
 }
 
-async function setupWorkItemManager() {
-  const form = document.getElementById("workItemForm");
-  if (form && !canChangeSharedSettings()) {
-    form.closest(".work-item-manager")?.remove();
+// Maskinhantering: machines, stations and the lines that tie them together. A line is
+// what the schedule's "Vilka linjer ska köras?" and the break planner choose from, so
+// every change here reaches scheduling, staffing and breaks without other edits.
+const MACHINE_TABS = [
+  ["maskiner", "Maskiner och stationer"],
+  ["linjer", "Linjer och rast"],
+  ["oversikt", "Översikt"],
+  ["paverkan", "Påverkan"],
+  ["ovrigt", "Extra personer och produktion"]
+];
+const WORK_ITEM_TYPE_LABELS = { machine: "Maskin", department: "Station", training: "Utbildning", extra: "Extra person" };
+const OWN_COMPETENCE = "__own";
+const NO_COMPETENCE = "__none";
+const machineView = { tab: "", filter: "", query: "", focus: "", confirm: "", scheduleLines: null, breakLines: null, busy: false };
+
+const sameName = (first, second) => String(first).toLocaleLowerCase() === String(second).toLocaleLowerCase();
+const linesWithWorkplace = name => appSettings.breakLines.filter(line => line.workplaces.includes(name));
+const isProductionType = type => type === "machine" || type === "department";
+const machineLineColor = lineId => `var(--mm-line-${(appSettings.breakLines.findIndex(line => line.id === lineId) % 6) + 1})`;
+
+function builtinWorkItemType(name) {
+  if (isExtraPersonTaskName(name)) return "extra";
+  if (name.includes("Utbildning")) return "training";
+  return /^GD\d+$/i.test(name) ? "machine" : "department";
+}
+
+// Every work place: the built-in ones first, then the ones added here, in their order.
+function getMachineCatalogue() {
+  const builtins = DEFAULT_TASKS.map(name => ({
+    name, builtin: true, item: null, type: builtinWorkItemType(name), enabled: !appSettings.hiddenTasks.includes(name)
+  }));
+  const custom = customWorkItems.filter(item => !DEFAULT_TASKS.some(task => sameName(task, item.name)))
+    .map(item => ({ name: item.name, builtin: false, item, type: item.type || "machine", enabled: item.enabled }));
+  return [...builtins, ...custom];
+}
+
+// A paused work place stays in its lines, so it comes back with them, but nobody is placed there.
+function isPausedWorkplace(name) {
+  return appSettings.hiddenTasks?.includes(name) || customWorkItems.some(item => item.name === name && !item.enabled);
+}
+
+function getMachineTab() {
+  const hash = location.hash.slice(1);
+  if (MACHINE_TABS.some(([id]) => id === hash)) return hash;
+  return machineView.tab || "maskiner";
+}
+
+function newLineLabel() {
+  let number = appSettings.breakLines.length + 1;
+  while (appSettings.breakLines.some(line => sameName(line.label, `Linje ${number}`))) number += 1;
+  return `Linje ${number}`;
+}
+
+// Saves lines, paused built-ins and production machines together and redraws the page.
+async function saveMachineSetup(changes, toastText, auditDetail = "") {
+  if (machineView.busy) return false;
+  machineView.busy = true;
+  try {
+    await saveAppSettings({ ...appSettings, ...changes });
+    applyCustomWorkItems(customWorkItems);
+    if (toastText) {
+      showAppToast(toastText);
+      await addAuditEvent("settings", toastText, auditDetail);
+    }
+    return true;
+  } catch (error) {
+    console.error("Machine setup save failed:", error);
+    showAppToast(error instanceof ApiError && error.status === 409
+      ? "Någon annan ändrade samtidigt. Sidan har laddats om, gör ändringen igen."
+      : "Ändringen kunde inte sparas. Försök igen.", "error");
+    return false;
+  } finally {
+    machineView.busy = false;
+    await renderMachineManagement();
+  }
+}
+
+function setLineMembership(lines, name, lineIds) {
+  return lines.map(line => {
+    const wanted = lineIds.includes(line.id);
+    const has = line.workplaces.includes(name);
+    if (wanted && !has) return { ...line, workplaces: [...line.workplaces, name] };
+    if (!wanted && has) return { ...line, workplaces: line.workplaces.filter(workplace => workplace !== name) };
+    return line;
+  });
+}
+
+async function renderMachineManagement() {
+  const root = document.getElementById("machineManagement");
+  if (!root || !currentUser) return;
+  const extraPanel = document.getElementById("extraAssignmentManager");
+  if (!canChangeSharedSettings()) {
+    root.innerHTML = '<div class="empty-state">Maskinhantering är bara för admin och skiftledare.</div>';
+    extraPanel?.remove();
     return;
   }
-  const nameInput = document.getElementById("workItemName");
-  const afterSelect = document.getElementById("workItemAfter");
-  const schemaCheckbox = document.getElementById("workItemSchema");
-  const competencyCheckbox = document.getElementById("workItemCompetency");
-  const testResultsCheckbox = document.getElementById("workItemTestResults");
-  const autoScheduleCheckbox = document.getElementById("workItemAutoSchedule");
-  const typeSelect = document.getElementById("workItemType");
-  const staffCountInput = document.getElementById("workItemStaffCount");
-  const requiredSkillsInput = document.getElementById("workItemRequiredSkills");
-  const cancelButton = document.getElementById("cancelWorkItemEdit");
-  const saveButton = document.getElementById("saveWorkItemBtn");
-  const message = document.getElementById("workItemMessage");
-  const list = document.getElementById("workItemList");
-  const trashList = document.getElementById("workItemTrashList");
-  const trashCount = document.getElementById("workItemTrashCount");
-  if (!form || !nameInput || !afterSelect || !list) return;
-  let editingId = "";
+  if (!machineView.listening) {
+    machineView.listening = true;
+    window.addEventListener("hashchange", () => { machineView.focus = ""; machineView.confirm = ""; void renderMachineManagement(); });
+  }
+  const tab = getMachineTab();
+  machineView.tab = tab;
+  const catalogue = getMachineCatalogue();
+  const production = catalogue.filter(entry => isProductionType(entry.type));
+  const counts = { maskiner: catalogue.length, linjer: appSettings.breakLines.length };
+  let body = "";
+  if (tab === "maskiner") body = await machineStationsView(catalogue);
+  if (tab === "linjer") body = machineLinesView(production);
+  if (tab === "oversikt") body = machineOverviewView(production);
+  if (tab === "paverkan") body = await machineImpactView(production);
+  if (tab === "ovrigt") body = machineOtherView(production);
+  root.innerHTML = `
+    <div class="mm-top">
+      <nav class="mm-tabs" aria-label="Delar av Maskinhantering">${MACHINE_TABS.map(([id, label]) => `<a class="mm-tab${id === tab ? " active" : ""}" href="#${id}"${id === tab ? ' aria-current="page"' : ""}>${label}${counts[id] ? `<span>${counts[id]}</span>` : ""}</a>`).join("")}</nav>
+      <button class="btn primary" type="button" data-mm-add>+ Ny maskin eller station</button>
+    </div>
+    ${body}`;
+  if (extraPanel) extraPanel.hidden = tab !== "ovrigt";
+  root.querySelector("[data-mm-add]").addEventListener("click", () => openMachineEditor(null));
+  bindMachineStations(root);
+  bindMachineLines(root);
+  bindMachineOverview(root);
+  bindMachineImpact(root);
+  bindMachineOther(root);
+}
 
-  const showMessage = (text, type = "success") => {
-    message.textContent = text;
-    message.className = `inline-message ${type}`;
+// ---------- Maskiner och stationer ----------
+
+async function machineStationsView(catalogue) {
+  const trash = await getWorkItemTrash();
+  const filters = [["", "Alla"], ["machine", "Maskiner"], ["department", "Stationer"], ["shared", "Delade mellan linjer"], ["unlinked", "Utan linje"], ["paused", "Pausade"], ["other", "Utbildning och extra"]];
+  return `<section class="card mm-section">
+    <div class="mm-section-head"><div><h3>Maskiner och stationer</h3><p>Alla arbetsplatser i produktionen. Färgerna visar vilka linjer de hör till. Gult betyder att platsen delas mellan flera linjer.</p></div></div>
+    <div class="mm-toolbar"><input id="mmSearch" type="search" placeholder="Sök maskin eller station" value="${escapeHtml(machineView.query)}" aria-label="Sök maskin eller station" /><select id="mmFilter" aria-label="Visa">${filters.map(([value, label]) => `<option value="${value}"${machineView.filter === value ? " selected" : ""}>${label}</option>`).join("")}</select></div>
+    <div class="mm-station-grid">${catalogue.map(machineStationCard).join("")}</div>
+    <p class="mm-no-match empty-state" hidden>Inget matchar sökningen.</p>
+    <details class="mm-trash"><summary>Papperskorg <span>${trash.length}</span></summary>
+      <div class="mm-trash-list">${trash.map(item => `<div class="mm-row"><span><strong>${escapeHtml(item.name)}</strong><small>Borttagen ${new Date(item.deletedAt || Date.now()).toLocaleDateString("sv-SE")}${item.lines?.length ? ` · var kopplad till ${escapeHtml(item.lines.map(id => appSettings.breakLines.find(line => line.id === id)?.label).filter(Boolean).join(", ") || "en linje som inte finns kvar")}` : ""}</small></span><button class="btn" type="button" data-mm-restore="${escapeHtml(item.id)}">Återställ</button></div>`).join("") || '<div class="empty-state">Papperskorgen är tom.</div>'}</div>
+    </details>
+  </section>`;
+}
+
+function machineMatchesFilter(entry) {
+  const lines = linesWithWorkplace(entry.name);
+  switch (machineView.filter) {
+    case "machine": return entry.type === "machine";
+    case "department": return entry.type === "department";
+    case "shared": return lines.length > 1;
+    case "unlinked": return isProductionType(entry.type) && entry.enabled && !lines.length;
+    case "paused": return !entry.enabled;
+    case "other": return !isProductionType(entry.type);
+    default: return true;
+  }
+}
+
+function machineStationCard(entry) {
+  const lines = linesWithWorkplace(entry.name);
+  const department = getTaskDepartment(entry.name);
+  const staff = entry.item ? Math.max(1, Number(entry.item.staffCount) || 1) : 1;
+  const index = entry.item ? customWorkItems.findIndex(item => item.id === entry.item.id) : -1;
+  const confirming = machineView.confirm === entry.name;
+  const lineChips = isProductionType(entry.type)
+    ? lines.length
+      ? lines.map(line => `<span class="mm-chip${lines.length > 1 ? " shared" : ""}" style="--c:${machineLineColor(line.id)}"><i></i>${escapeHtml(line.label)}</span>`).join("")
+      : '<span class="mm-chip none">Inte kopplad till någon linje</span>'
+    : '<span class="mm-chip">Egen rad i schemat</span>';
+  return `<article class="mm-station${entry.enabled ? "" : " paused"}" data-mm-name="${escapeHtml(entry.name.toLocaleLowerCase())}"${machineMatchesFilter(entry) ? "" : " hidden"}>
+    <div class="mm-station-top">
+      <div><strong>${escapeHtml(entry.name)}</strong><small>${department ? `Kompetens: ${escapeHtml(department)}` : "Ingen kompetens krävs"} · ${staff} ${staff === 1 ? "person" : "personer"}${entry.item?.requiredSkills?.length ? ` · kräver ${escapeHtml(entry.item.requiredSkills.join(", "))}` : ""}</small></div>
+      <span class="mm-kind ${entry.type}">${WORK_ITEM_TYPE_LABELS[entry.type] || "Maskin"}</span>
+    </div>
+    <div class="mm-chips">${lineChips}${entry.enabled ? "" : '<span class="mm-chip paused">Pausad</span>'}${appSettings.productionMachines.includes(entry.name) ? '<span class="mm-chip">Produktion</span>' : ""}</div>
+    ${confirming ? `<div class="mm-confirm"><strong>Ta bort ${escapeHtml(entry.name)}?</strong><span>${lines.length ? `Kopplingen till ${escapeHtml(lines.map(line => line.label).join(", "))} tas bort. ` : ""}Den hamnar i papperskorgen och kan återställas med sina kopplingar. Historiken sparas.</span><div><button class="btn danger" type="button" data-mm-trash="${escapeHtml(entry.item.id)}">Ta bort</button><button class="btn" type="button" data-mm-cancel>Avbryt</button></div></div>`
+      : `<div class="mm-station-actions">
+        ${entry.item || isProductionType(entry.type) ? `<button class="btn" type="button" data-mm-edit="${escapeHtml(entry.name)}">Redigera</button>` : ""}
+        <button class="btn" type="button" data-mm-toggle="${escapeHtml(entry.name)}">${entry.enabled ? "Pausa" : "Aktivera"}</button>
+        ${entry.item ? `<button class="btn mm-icon" type="button" data-mm-move="${escapeHtml(entry.item.id)}" data-direction="-1"${index === 0 ? " disabled" : ""} aria-label="Flytta ${escapeHtml(entry.name)} upp">↑</button><button class="btn mm-icon" type="button" data-mm-move="${escapeHtml(entry.item.id)}" data-direction="1"${index === customWorkItems.length - 1 ? " disabled" : ""} aria-label="Flytta ${escapeHtml(entry.name)} ner">↓</button><button class="btn danger" type="button" data-mm-ask-trash="${escapeHtml(entry.name)}">Ta bort</button>` : ""}
+      </div>`}
+  </article>`;
+}
+
+function bindMachineStations(root) {
+  const search = root.querySelector("#mmSearch");
+  if (!search) return;
+  const applySearch = () => {
+    machineView.query = search.value;
+    const query = search.value.trim().toLocaleLowerCase();
+    let shown = 0;
+    root.querySelectorAll(".mm-station").forEach(card => {
+      const entry = getMachineCatalogue().find(item => item.name.toLocaleLowerCase() === card.dataset.mmName);
+      card.hidden = !(entry && machineMatchesFilter(entry) && (!query || card.dataset.mmName.includes(query)));
+      if (!card.hidden) shown += 1;
+    });
+    root.querySelector(".mm-no-match").hidden = shown > 0;
   };
-  const resetEditor = () => {
-    editingId = "";
-    form.reset();
-    schemaCheckbox.checked = false;
-    competencyCheckbox.checked = false;
-    testResultsCheckbox.checked = false;
-    autoScheduleCheckbox.checked = false;
-    if (typeSelect) typeSelect.value = "machine";
-    if (staffCountInput) staffCountInput.value = "1";
-    if (requiredSkillsInput) requiredSkillsInput.value = "";
-    cancelButton?.classList.add("hidden");
-    if (saveButton) saveButton.textContent = "+ Lägg till";
+  search.addEventListener("input", applySearch);
+  root.querySelector("#mmFilter").addEventListener("change", event => { machineView.filter = event.target.value; applySearch(); });
+  applySearch();
+  root.querySelectorAll("[data-mm-edit]").forEach(button => button.addEventListener("click", () => openMachineEditor(button.dataset.mmEdit)));
+  root.querySelectorAll("[data-mm-ask-trash]").forEach(button => button.addEventListener("click", () => { machineView.confirm = button.dataset.mmAskTrash; void renderMachineManagement(); }));
+  root.querySelectorAll("[data-mm-cancel]").forEach(button => button.addEventListener("click", () => { machineView.confirm = ""; void renderMachineManagement(); }));
+  root.querySelectorAll("[data-mm-toggle]").forEach(button => bindOnce(button, "click", () => toggleMachinePaused(button.dataset.mmToggle)));
+  root.querySelectorAll("[data-mm-move]").forEach(button => bindOnce(button, "click", async () => {
+    const index = customWorkItems.findIndex(item => item.id === button.dataset.mmMove);
+    const target = index + Number(button.dataset.direction);
+    if (index < 0 || target < 0 || target >= customWorkItems.length) return;
+    const next = [...customWorkItems];
+    [next[index], next[target]] = [next[target], next[index]];
+    await saveCustomWorkItems(next);
+    await renderMachineManagement();
+  }));
+  root.querySelectorAll("[data-mm-trash]").forEach(button => bindOnce(button, "click", () => trashMachine(button.dataset.mmTrash)));
+  root.querySelectorAll("[data-mm-restore]").forEach(button => bindOnce(button, "click", () => restoreMachine(button.dataset.mmRestore)));
+}
+
+async function toggleMachinePaused(name) {
+  const item = customWorkItems.find(entry => entry.name === name);
+  if (!item) {
+    const hidden = appSettings.hiddenTasks.includes(name);
+    await saveMachineSetup({ hiddenTasks: hidden ? appSettings.hiddenTasks.filter(task => task !== name) : [...appSettings.hiddenTasks, name] },
+      hidden ? `${name} är aktiv igen` : `${name} har pausats. Befintlig data finns kvar.`);
+    return;
+  }
+  const updated = { ...item, enabled: !item.enabled, updatedAt: new Date().toISOString() };
+  await saveCustomWorkItems(customWorkItems.map(entry => entry.id === item.id ? updated : entry));
+  await syncWorkItemCompetency(updated, item);
+  await addAuditEvent("department", `${item.name} ${updated.enabled ? "aktiverad" : "pausad"}`, "Inställning ändrad");
+  showAppToast(updated.enabled ? `${item.name} är aktiv igen.` : `${item.name} har pausats. Befintlig data finns kvar.`);
+  await renderMachineManagement();
+}
+
+async function trashMachine(itemId) {
+  const item = customWorkItems.find(entry => entry.id === itemId);
+  machineView.confirm = "";
+  if (!item) return renderMachineManagement();
+  const usageCount = await getWorkItemUsageCount(item.name);
+  if (usageCount) {
+    const choice = await chooseWorkItemReplacement(item, usageCount);
+    if (!choice) return renderMachineManagement();
+    if (choice.action === "pause") return toggleMachinePaused(item.name);
+    await createWorkItemSafetySnapshot(`${item.name} ersätts med ${choice.replacement.name}`);
+    await renameWorkItemReferences(item.name, choice.replacement.name);
+    await loadSharedSettings();
+  }
+  await createWorkItemSafetySnapshot(`${item.name} flyttas till papperskorgen`);
+  const lineIds = linesWithWorkplace(item.name).map(line => line.id);
+  const inProduction = appSettings.productionMachines.includes(item.name);
+  const trashItems = await getWorkItemTrash();
+  await saveWorkItemTrash([{ ...item, deletedAt: new Date().toISOString(), lines: lineIds, production: inProduction }, ...trashItems]);
+  await saveCustomWorkItems(customWorkItems.filter(entry => entry.id !== item.id));
+  await syncWorkItemCompetency({ ...item, enabled: false }, item);
+  await saveMachineSetup({
+    breakLines: setLineMembership(appSettings.breakLines, item.name, []),
+    productionMachines: appSettings.productionMachines.filter(name => name !== item.name)
+  }, `${item.name} flyttades till papperskorgen`, "Kan återställas");
+}
+
+async function restoreMachine(itemId) {
+  const trashItems = await getWorkItemTrash();
+  const item = trashItems.find(entry => entry.id === itemId);
+  if (!item) return;
+  if (getMachineCatalogue().some(entry => sameName(entry.name, item.name))) {
+    showAppToast(`Det finns redan en arbetsplats som heter ${item.name}. Byt namn på den först.`, "error");
+    return;
+  }
+  const { deletedAt, lines = [], production = false, ...rest } = item;
+  const restored = { ...rest, enabled: true, updatedAt: new Date().toISOString() };
+  await saveCustomWorkItems([...customWorkItems, restored]);
+  await saveWorkItemTrash(trashItems.filter(entry => entry.id !== item.id));
+  await syncWorkItemCompetency(restored);
+  const lineIds = [...new Set([...lines, ...linesWithWorkplace(item.name).map(line => line.id)])];
+  await saveMachineSetup({
+    breakLines: setLineMembership(appSettings.breakLines, item.name, lineIds),
+    productionMachines: production ? [...new Set([...appSettings.productionMachines, item.name])] : appSettings.productionMachines
+  }, `${item.name} har återställts${lines.length ? " med sina kopplingar" : ""}`, "Från papperskorgen");
+}
+
+// ---------- Linjer och rast ----------
+
+function machineLinesView(production) {
+  const active = production.filter(entry => entry.enabled);
+  return `<section class="card mm-section">
+    <div class="mm-section-head"><div><h3>Linjer och rastkopplingar</h3><p>En linje är maskiner och stationer som körs tillsammans. Samma linjer väljs när veckoschemat skapas och när rasten planeras. En station som finns i flera linjer delas mellan dem och bemannas en gång.</p></div></div>
+    <div class="mm-line-grid">
+      ${appSettings.breakLines.map(line => machineLineCard(line, active)).join("")}
+      <button class="mm-new-line" type="button" data-mm-new-line>+ Ny linje</button>
+    </div>
+    <div class="mm-section-head mm-matrix-head"><div><h3>Snabbredigering</h3><p>Bocka i vilka linjer varje maskin och station hör till. Bra när produktionen läggs om.</p></div></div>
+    ${machineMatrix(production)}
+  </section>`;
+}
+
+function machineLineCard(line, active) {
+  const available = active.filter(entry => !line.workplaces.includes(entry.name));
+  const known = new Set(getMachineCatalogue().map(entry => entry.name));
+  const hasMachine = line.workplaces.some(name => getMachineCatalogue().find(entry => entry.name === name)?.type === "machine");
+  const people = line.workplaces.reduce((sum, name) => sum + getWorkplaceStaffCount(name), 0);
+  const option = entry => {
+    const lines = linesWithWorkplace(entry.name);
+    return `<option value="${escapeHtml(entry.name)}">${escapeHtml(entry.name)}${lines.length ? ` · finns i ${escapeHtml(lines.map(other => other.label).join(", "))}` : ""}</option>`;
   };
-  const startEdit = item => {
-    editingId = item.id;
-    nameInput.value = item.name;
-    afterSelect.value = TASKS.includes(item.after) ? item.after : "Packa L4";
-    schemaCheckbox.checked = item.showInSchema;
-    competencyCheckbox.checked = item.showInCompetency;
-    testResultsCheckbox.checked = item.showInTestResults;
-    autoScheduleCheckbox.checked = item.autoSchedule;
-    if (typeSelect) typeSelect.value = item.type || "machine";
-    if (staffCountInput) staffCountInput.value = String(item.staffCount || 1);
-    if (requiredSkillsInput) requiredSkillsInput.value = (item.requiredSkills || []).join(", ");
-    cancelButton?.classList.remove("hidden");
-    if (saveButton) saveButton.textContent = "Spara ändringar";
-    nameInput.focus();
-    form.scrollIntoView({ behavior: "smooth", block: "center" });
+  return `<article class="mm-line" style="--c:${machineLineColor(line.id)}">
+    <input class="mm-line-name" value="${escapeHtml(line.label)}" maxlength="60" data-mm-rename-line="${escapeHtml(line.id)}" aria-label="Namn på linjen ${escapeHtml(line.label)}" />
+    <div class="mm-members">${line.workplaces.map(name => {
+      const others = linesWithWorkplace(name).filter(other => other.id !== line.id);
+      const status = !known.has(name) ? '<span class="mm-tag warn">finns inte</span>' : isPausedWorkplace(name) ? '<span class="mm-tag">pausad</span>' : "";
+      return `<div class="mm-member"><span>${escapeHtml(name)}</span>${status}${others.length ? `<span class="mm-tag shared">delas med ${escapeHtml(others.map(other => other.label).join(", "))}</span>` : ""}<button type="button" data-mm-unlink="${escapeHtml(line.id)}" data-workplace="${escapeHtml(name)}" aria-label="Ta bort ${escapeHtml(name)} från ${escapeHtml(line.label)}">×</button></div>`;
+    }).join("") || '<div class="empty-state">Inga maskiner ännu. Lägg till nedan.</div>'}</div>
+    <select class="mm-add-member" data-mm-link="${escapeHtml(line.id)}" aria-label="Lägg till i ${escapeHtml(line.label)}">
+      <option value="">+ Lägg till maskin eller station…</option>
+      <optgroup label="Maskiner">${available.filter(entry => entry.type === "machine").map(option).join("")}</optgroup>
+      <optgroup label="Stationer">${available.filter(entry => entry.type === "department").map(option).join("")}</optgroup>
+      <option value="__new">+ Skapa ny maskin eller station…</option>
+    </select>
+    ${line.workplaces.length && !hasMachine ? '<p class="mm-note warn">Linjen har ingen maskin. Lägg till en, t.ex. en GD.</p>' : ""}
+    <div class="mm-line-foot"><small>${line.workplaces.length} arbetsplatser · ${people} ${people === 1 ? "person" : "personer"}</small>
+      ${machineView.confirm === `line:${line.id}`
+        ? `<span class="mm-line-confirm"><button class="btn danger" type="button" data-mm-delete-line="${escapeHtml(line.id)}">Ta bort linjen</button><button class="btn" type="button" data-mm-cancel>Avbryt</button></span>`
+        : `<button class="btn mm-quiet-danger" type="button" data-mm-ask-line="${escapeHtml(line.id)}"${appSettings.breakLines.length === 1 ? ' disabled title="Det måste finnas minst en linje"' : ""}>Ta bort linje</button>`}
+    </div>
+  </article>`;
+}
+
+function machineMatrix(production) {
+  const lines = appSettings.breakLines;
+  return `<div class="mm-matrix-wrap"><table class="mm-matrix">
+    <thead><tr><th scope="col">Maskin / station</th>${lines.map(line => `<th scope="col" style="--c:${machineLineColor(line.id)}"><i></i>${escapeHtml(line.label)}</th>`).join("")}<th scope="col">Status</th></tr></thead>
+    <tbody>${production.map(entry => {
+      const count = linesWithWorkplace(entry.name).length;
+      return `<tr${entry.enabled ? "" : ' class="paused"'}><th scope="row">${escapeHtml(entry.name)}${entry.enabled ? "" : " <small>pausad</small>"}</th>${lines.map(line => `<td><input type="checkbox" data-mm-matrix="${escapeHtml(line.id)}" data-workplace="${escapeHtml(entry.name)}"${line.workplaces.includes(entry.name) ? " checked" : ""} aria-label="${escapeHtml(entry.name)} i ${escapeHtml(line.label)}" /></td>`).join("")}<td>${count > 1 ? '<span class="mm-tag shared">Delad</span>' : count ? "<small>1 linje</small>" : '<span class="mm-tag warn">Ingen linje</span>'}</td></tr>`;
+    }).join("")}</tbody>
+  </table></div>`;
+}
+
+async function linkWorkplace(lineId, name, linked) {
+  const line = appSettings.breakLines.find(entry => entry.id === lineId);
+  if (!line) return;
+  const shared = linked && linesWithWorkplace(name).length > 0;
+  const lines = appSettings.breakLines.map(entry => entry.id !== lineId ? entry : {
+    ...entry, workplaces: linked ? [...new Set([...entry.workplaces, name])] : entry.workplaces.filter(workplace => workplace !== name)
+  });
+  await saveMachineSetup({ breakLines: lines }, linked ? `${name} kopplades till ${line.label}${shared ? " och delas nu" : ""}` : `${name} togs bort från ${line.label}`);
+}
+
+function bindMachineLines(root) {
+  root.querySelectorAll("[data-mm-rename-line]").forEach(input => input.addEventListener("change", async () => {
+    const line = appSettings.breakLines.find(entry => entry.id === input.dataset.mmRenameLine);
+    const label = input.value.trim();
+    if (!line || !label || label === line.label) { input.value = line?.label || ""; return; }
+    if (appSettings.breakLines.some(entry => entry.id !== line.id && sameName(entry.label, label))) {
+      showAppToast(`Det finns redan en linje som heter ${label}.`, "error");
+      input.value = line.label;
+      return;
+    }
+    await saveMachineSetup({ breakLines: appSettings.breakLines.map(entry => entry.id === line.id ? { ...entry, label } : entry) }, `${line.label} heter nu ${label}`);
+  }));
+  root.querySelectorAll("[data-mm-unlink]").forEach(button => bindOnce(button, "click", () => linkWorkplace(button.dataset.mmUnlink, button.dataset.workplace, false)));
+  root.querySelectorAll("[data-mm-link]").forEach(select => select.addEventListener("change", () => {
+    if (select.value === "__new") { select.value = ""; openMachineEditor(null, { lineIds: [select.dataset.mmLink] }); return; }
+    if (select.value) void linkWorkplace(select.dataset.mmLink, select.value, true);
+  }));
+  root.querySelectorAll("[data-mm-matrix]").forEach(checkbox => checkbox.addEventListener("change", () => linkWorkplace(checkbox.dataset.mmMatrix, checkbox.dataset.workplace, checkbox.checked)));
+  root.querySelectorAll("[data-mm-ask-line]").forEach(button => button.addEventListener("click", () => { machineView.confirm = `line:${button.dataset.mmAskLine}`; void renderMachineManagement(); }));
+  root.querySelectorAll(".mm-line [data-mm-cancel]").forEach(button => button.addEventListener("click", () => { machineView.confirm = ""; void renderMachineManagement(); }));
+  root.querySelectorAll("[data-mm-delete-line]").forEach(button => bindOnce(button, "click", async () => {
+    const line = appSettings.breakLines.find(entry => entry.id === button.dataset.mmDeleteLine);
+    machineView.confirm = "";
+    if (!line || appSettings.breakLines.length === 1) return renderMachineManagement();
+    await saveMachineSetup({ breakLines: appSettings.breakLines.filter(entry => entry.id !== line.id) }, `${line.label} togs bort. Maskinerna finns kvar.`);
+  }));
+  const newLine = root.querySelector("[data-mm-new-line]");
+  bindOnce(newLine, "click", async () => {
+    const label = newLineLabel();
+    const id = `line-${makeId()}`;
+    if (await saveMachineSetup({ breakLines: [...appSettings.breakLines, { id, label, workplaces: [] }] }, `${label} skapades`)) {
+      document.querySelector(`[data-mm-rename-line="${id}"]`)?.select();
+    }
+  });
+}
+
+// ---------- Översikt ----------
+
+function machineOverviewView(production) {
+  const lines = appSettings.breakLines;
+  const stations = production.filter(entry => entry.enabled || linesWithWorkplace(entry.name).length);
+  const width = 760, lineRow = 64, stationRow = 46, pad = 20;
+  const height = Math.max(lines.length * lineRow, stations.length * stationRow, 120) + pad * 2;
+  const lineY = index => pad + (height - pad * 2 - lines.length * lineRow) / 2 + index * lineRow + lineRow / 2;
+  const stationY = index => pad + (height - pad * 2 - stations.length * stationRow) / 2 + index * stationRow + stationRow / 2;
+  const lineX = 20, lineWidth = 180, stationX = width - 250, stationWidth = 230;
+  const focus = machineView.focus;
+  const lit = (lineId, name) => !focus || focus === lineId || focus === name;
+  const edges = lines.flatMap((line, lineIndex) => line.workplaces.map(name => {
+    const stationIndex = stations.findIndex(entry => entry.name === name);
+    if (stationIndex < 0) return "";
+    const x1 = lineX + lineWidth, y1 = lineY(lineIndex), x2 = stationX, y2 = stationY(stationIndex), mid = (x1 + x2) / 2;
+    return `<path class="mm-edge${lit(line.id, name) ? "" : " dim"}" style="stroke:${machineLineColor(line.id)}" d="M${x1},${y1} C${mid},${y1} ${mid},${y2} ${x2},${y2}" />`;
+  })).join("");
+  const lineNodes = lines.map((line, index) => {
+    const on = !focus || focus === line.id || line.workplaces.includes(focus);
+    return `<g class="mm-node${on ? "" : " dim"}" data-mm-focus="${escapeHtml(line.id)}" tabindex="0" role="button" aria-label="Visa kopplingarna för ${escapeHtml(line.label)}"><rect x="${lineX}" y="${lineY(index) - 22}" width="${lineWidth}" height="44" rx="12" style="fill:${machineLineColor(line.id)}" opacity=".16" /><rect x="${lineX}" y="${lineY(index) - 22}" width="6" height="44" rx="3" style="fill:${machineLineColor(line.id)}" /><text x="${lineX + 18}" y="${lineY(index) - 2}" class="mm-svg-title">${escapeHtml(line.label)}</text><text x="${lineX + 18}" y="${lineY(index) + 14}" class="mm-svg-sub">${line.workplaces.length} arbetsplatser</text></g>`;
+  }).join("");
+  const stationNodes = stations.map((entry, index) => {
+    const count = linesWithWorkplace(entry.name).length;
+    const on = !focus || focus === entry.name || linesWithWorkplace(entry.name).some(line => line.id === focus);
+    const note = !entry.enabled ? "pausad" : count > 1 ? `delas av ${count}` : count ? (entry.type === "machine" ? "maskin" : "station") : "ingen linje";
+    return `<g class="mm-node${on ? "" : " dim"}" data-mm-focus="${escapeHtml(entry.name)}" tabindex="0" role="button" aria-label="Visa kopplingarna för ${escapeHtml(entry.name)}"><rect class="mm-svg-box${count > 1 ? " shared" : ""}${count ? "" : " orphan"}" x="${stationX}" y="${stationY(index) - 17}" width="${stationWidth}" height="34" rx="10" /><text x="${stationX + 12}" y="${stationY(index) + 5}" class="mm-svg-name">${escapeHtml(entry.name)}</text><text x="${stationX + stationWidth - 12}" y="${stationY(index) + 4}" text-anchor="end" class="mm-svg-sub">${note}</text></g>`;
+  }).join("");
+  return `<section class="card mm-section">
+    <div class="mm-section-head"><div><h3>Visuell översikt</h3><p>Vilka maskiner och stationer varje linje använder. Tryck på en linje eller station för att lyfta fram dess kopplingar.</p></div>${focus ? '<button class="btn" type="button" data-mm-clear-focus>Visa alla</button>' : ""}</div>
+    <div class="mm-diagram-wrap"><svg class="mm-diagram" viewBox="0 0 ${width} ${height}" role="img" aria-label="Kopplingar mellan linjer och stationer">${edges}${lineNodes}${stationNodes}</svg></div>
+    <div class="mm-legend"><span><i></i>Station i en linje</span><span><i class="shared"></i>Delas mellan linjer</span><span><i class="orphan"></i>Inte kopplad</span></div>
+  </section>`;
+}
+
+function bindMachineOverview(root) {
+  root.querySelectorAll("[data-mm-focus]").forEach(node => {
+    const toggle = () => { machineView.focus = machineView.focus === node.dataset.mmFocus ? "" : node.dataset.mmFocus; void renderMachineManagement(); };
+    node.addEventListener("click", toggle);
+    node.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); } });
+  });
+  root.querySelector("[data-mm-clear-focus]")?.addEventListener("click", () => { machineView.focus = ""; void renderMachineManagement(); });
+}
+
+// ---------- Påverkan ----------
+
+async function machineImpactView(production) {
+  // Lines are shared by all shifts, so admin sees everyone; a shift leader sees their own shift.
+  const [people, skills, restrictions] = await Promise.all([isAdmin() ? getAllPeople() : getPeople(), getMachineSkills(), getMachineRestrictions()]);
+  const staff = people.filter(isOperatorStaff);
+  const lines = appSettings.breakLines;
+  const lineIds = lines.map(line => line.id);
+  machineView.scheduleLines = (machineView.scheduleLines || lineIds).filter(id => lineIds.includes(id));
+  machineView.breakLines = (machineView.breakLines || lineIds.slice(0, 2)).filter(id => lineIds.includes(id));
+  const known = new Set(getMachineCatalogue().map(entry => entry.name));
+  const required = ids => [...new Set(ids.flatMap(id => lines.find(line => line.id === id)?.workplaces || []))]
+    .filter(name => known.has(name) && !isPausedWorkplace(name));
+  const canStaffCount = name => staff.filter(person => canStaffWorkplace(person.id, name, skills, restrictions)).length;
+  const scheduled = required(machineView.scheduleLines);
+  const breakPlaces = required(machineView.breakLines);
+  const needed = list => list.reduce((sum, name) => sum + getWorkplaceStaffCount(name), 0);
+  const unlinked = production.filter(entry => entry.enabled && !linesWithWorkplace(entry.name).length);
+  const missing = [...new Set(lines.flatMap(line => line.workplaces))].filter(name => !known.has(name));
+  const noCompetence = production.filter(entry => entry.enabled && linesWithWorkplace(entry.name).length && !getTaskDepartment(entry.name));
+  const nobody = production.filter(entry => entry.enabled && linesWithWorkplace(entry.name).length && getTaskDepartment(entry.name) && !canStaffCount(entry.name));
+  const noMachine = lines.filter(line => !line.workplaces.some(name => getMachineCatalogue().find(entry => entry.name === name)?.type === "machine"));
+  const shared = production.filter(entry => linesWithWorkplace(entry.name).length > 1);
+  const shiftName = isAdmin() ? "alla skift" : getShiftName(getShiftScope()) || "skiftet";
+  const notice = (type, title, text) => `<div class="mm-notice ${type}"><strong>${title}</strong><span>${text}</span></div>`;
+  const picks = key => lines.map(line => `<label class="mm-pick"><input type="checkbox" data-mm-impact="${key}" value="${escapeHtml(line.id)}"${machineView[key].includes(line.id) ? " checked" : ""} /><span><strong>${escapeHtml(line.label)}</strong><small>${escapeHtml(line.workplaces.join(" · ") || "Inga maskiner")}</small></span></label>`).join("");
+  const rows = (list, minimum) => list.map(name => {
+    const count = canStaffCount(name);
+    return `<div class="mm-row${count < minimum ? " warn" : ""}"><span>${escapeHtml(name)}${linesWithWorkplace(name).length > 1 ? " <small>· delad</small>" : ""}</span><strong>${count} kan${count < minimum && minimum > 1 && count ? " · räcker inte till två grupper" : ""}</strong></div>`;
+  }).join("");
+  const groups = [...new Set(production.filter(entry => entry.enabled).map(entry => getTaskDepartment(entry.name)).filter(Boolean))];
+  return `<section class="card mm-section">
+    <div class="mm-section-head"><div><h3>Så påverkas resten av Staff Planner</h3><p>Räknas fram från kopplingarna och kompetensen i ${escapeHtml(shiftName)}. Inget behöver ändras för hand på andra sidor.</p></div></div>
+    <div class="mm-notices">
+      ${unlinked.map(entry => notice("warn", `${escapeHtml(entry.name)} är inte kopplad till någon linje`, "Den kan schemaläggas för hand men tas inte med när linjer väljs i autoschemat eller rasten.")).join("")}
+      ${missing.map(name => notice("warn", `${escapeHtml(name)} finns inte som arbetsplats`, "Den står kvar i en linje men hoppas över. Ta bort den från linjen eller lägg till den som maskin.")).join("")}
+      ${noMachine.map(line => notice("warn", `${escapeHtml(line.label)} har ingen maskin`, "Lägg till en maskin i linjen under Linjer och rast.")).join("")}
+      ${noCompetence.map(entry => notice("warn", `${escapeHtml(entry.name)} saknar kompetensgrupp`, "Välj en kompetens under Redigera, annars kan ingen placeras där automatiskt.")).join("")}
+      ${nobody.length ? notice("warn", `Ingen i ${escapeHtml(shiftName)} kan ${escapeHtml(nobody.map(entry => entry.name).join(", "))} ännu`, `Registrera kompetensen ${escapeHtml([...new Set(nobody.map(entry => getTaskDepartment(entry.name)))].join(", "))} på sidan Kompetens innan linjen körs.`) : ""}
+      ${shared.length ? notice("info", "Delade stationer", `${escapeHtml(shared.map(entry => `${entry.name} (${linesWithWorkplace(entry.name).map(line => line.label).join(" + ")})`).join(", "))} bemannas en gång även när flera av linjerna körs samtidigt.`) : ""}
+      ${!unlinked.length && !missing.length && !noMachine.length && !noCompetence.length && !nobody.length ? notice("ok", "Allt hänger ihop", `Alla aktiva maskiner och stationer tillhör en linje och någon i ${shiftName} kan bemanna dem.`) : ""}
+    </div>
+    <div class="mm-impact-grid">
+      <div class="mm-impact"><h4>Schema · Vilka linjer ska köras?</h4><small>Samma val som visas ovanför veckoschemat.</small>
+        <div class="mm-picks">${picks("scheduleLines")}</div>
+        <div class="mm-stats"><div><b>${scheduled.length}</b><small>arbetsplatser bemannas</small></div><div><b>${needed(scheduled)}</b><small>personer behövs per dag</small></div></div>
+        <div class="mm-rows">${rows(scheduled, 1)}</div>
+      </div>
+      <div class="mm-impact"><h4>Rast · Igång under rasten</h4><small>Rastsidan bemannar de här stationerna först i båda grupperna.</small>
+        <div class="mm-picks">${picks("breakLines")}</div>
+        <div class="mm-stats"><div><b>${breakPlaces.length}</b><small>stationer täcks per grupp</small></div><div><b>${breakPlaces.length * 2}</b><small>personer behövs för två grupper</small></div></div>
+        <div class="mm-rows">${rows(breakPlaces, 2)}</div>
+      </div>
+      <div class="mm-impact"><h4>Kompetens</h4><small>Den som har kompetensgruppen kan bemanna maskinerna i den.</small>
+        <div class="mm-rows">${groups.map(group => `<div class="mm-row"><span><strong>${escapeHtml(group)}</strong><small>${escapeHtml(production.filter(entry => entry.enabled && getTaskDepartment(entry.name) === group).map(entry => entry.name).join(", "))}</small></span><strong>${staff.filter(person => (skills[person.id] || []).includes(group)).length} pers.</strong></div>`).join("")}</div>
+      </div>
+    </div>
+  </section>`;
+}
+
+function bindMachineImpact(root) {
+  root.querySelectorAll("[data-mm-impact]").forEach(checkbox => checkbox.addEventListener("change", () => {
+    const key = checkbox.dataset.mmImpact;
+    machineView[key] = checkbox.checked ? [...machineView[key], checkbox.value] : machineView[key].filter(id => id !== checkbox.value);
+    void renderMachineManagement();
+  }));
+}
+
+// ---------- Extra personer och produktion ----------
+
+function machineOtherView(production) {
+  const names = [...new Set([...production.filter(entry => entry.enabled).map(entry => entry.name), ...appSettings.productionMachines])];
+  return `<section class="card mm-section">
+    <div class="mm-section-head"><div><h3>Produktionsrapport</h3><p>Maskinerna som visas på sidan Produktion. Minst en måste vara vald.</p></div></div>
+    <div class="mm-toggle-chips">${names.map(name => `<label><input type="checkbox" data-mm-production value="${escapeHtml(name)}"${appSettings.productionMachines.includes(name) ? " checked" : ""} />${escapeHtml(name)}</label>`).join("")}</div>
+  </section>`;
+}
+
+function bindMachineOther(root) {
+  root.querySelectorAll("[data-mm-production]").forEach(checkbox => checkbox.addEventListener("change", async () => {
+    const next = checkbox.checked ? [...new Set([...appSettings.productionMachines, checkbox.value])] : appSettings.productionMachines.filter(name => name !== checkbox.value);
+    if (!next.length) { checkbox.checked = true; showAppToast("Minst en maskin måste visas på Produktion.", "error"); return; }
+    await saveMachineSetup({ productionMachines: next }, checkbox.checked ? `${checkbox.value} visas på Produktion` : `${checkbox.value} visas inte längre på Produktion`);
+  }));
+}
+
+// ---------- Ny eller redigerad maskin ----------
+
+async function openMachineEditor(name, preset = {}) {
+  if (document.querySelector(".mm-editor-overlay")) return;
+  const entry = name ? getMachineCatalogue().find(item => item.name === name) : null;
+  const item = entry?.item || null;
+  const departments = await getDepartments();
+  const groupOptions = [...new Set(["GD", "Logimark", "ETIKETTO", "Packa", ...departments])];
+  const currentCompetence = !item ? (entry ? getTaskDepartment(entry.name) : "GD")
+    : item.showInCompetency ? OWN_COMPETENCE : item.competenceGroup || getTaskDepartment(item.name) || NO_COMPETENCE;
+  const form = {
+    name: entry?.name || "",
+    type: entry?.type || preset.type || "machine",
+    staffCount: item?.staffCount || 1,
+    competence: currentCompetence,
+    requiredSkills: (item?.requiredSkills || []).join(", "),
+    after: item?.after || "Packa L4",
+    showInSchema: item ? item.showInSchema : true,
+    showInTestResults: item ? item.showInTestResults : false,
+    autoSchedule: item ? item.autoSchedule : true,
+    production: entry ? appSettings.productionMachines.includes(entry.name) : !preset.lineIds,
+    mode: entry ? (linesWithWorkplace(entry.name).length ? "existing" : "none") : preset.lineIds ? "existing" : "new",
+    lineIds: entry ? linesWithWorkplace(entry.name).map(line => line.id) : preset.lineIds || [],
+    newLineLabel: newLineLabel(),
+    partners: [],
+    newStations: [],
+    error: ""
+  };
+  if (preset.lineIds) form.type = "department";
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay mm-editor-overlay";
+  document.body.appendChild(overlay);
+  let cleanupFocus = null;
+  const close = () => { overlay.remove(); cleanupFocus?.(); };
+  overlay.addEventListener("click", event => { if (event.target === overlay) close(); });
+
+  const sync = () => {
+    const field = id => overlay.querySelector(`#${id}`);
+    if (field("mmName")) form.name = field("mmName").value;
+    if (field("mmStaff")) form.staffCount = Math.max(1, Math.min(20, Number(field("mmStaff").value) || 1));
+    if (field("mmSkills")) form.requiredSkills = field("mmSkills").value;
+    if (field("mmAfter")) form.after = field("mmAfter").value;
+    if (field("mmLineLabel")) form.newLineLabel = field("mmLineLabel").value;
+    ["showInSchema", "showInTestResults", "autoSchedule", "production"].forEach(key => {
+      const checkbox = overlay.querySelector(`[data-mm-flag="${key}"]`);
+      if (checkbox) form[key] = checkbox.checked;
+    });
   };
 
-  const renderManager = async () => {
-    const previousValue = afterSelect.value;
-    afterSelect.innerHTML = TASKS.filter(task => !editingId || customWorkItems.find(item => item.id === editingId)?.name !== task)
-      .map(task => `<option value="${escapeHtml(task)}">${escapeHtml(task)}</option>`).join("");
-    afterSelect.value = [...afterSelect.options].some(option => option.value === previousValue) ? previousValue : "Packa L4";
-    list.innerHTML = customWorkItems.length ? customWorkItems.map((item, index) => `
-      <article class="work-item-row${item.enabled ? "" : " is-disabled"}">
-        <div><strong>${escapeHtml(item.name)}</strong><span>${({ machine: "Maskin", department: "Avdelning", training: "Utbildning", extra: "Extra person" })[item.type] || "Maskin"} · ${item.staffCount || 1} person${Number(item.staffCount) === 1 ? "" : "er"}${item.requiredSkills?.length ? ` · Kräver ${escapeHtml(item.requiredSkills.join(", "))}` : ""}</span><span>${item.showInSchema ? `Schema · efter ${escapeHtml(item.after || "Packa L4")}` : "Inte i Schema"}${item.showInCompetency ? " · Kompetens" : ""}${item.showInTestResults ? " · Testresultat" : ""}${item.autoSchedule ? " · Autoschema" : ""}</span>${item.enabled ? "" : '<span class="work-item-row-status">Pausad</span>'}</div>
-        <div class="work-item-row-actions">
-          <button class="btn" type="button" data-move-work-item="${item.id}" data-direction="-1"${index === 0 ? " disabled" : ""} aria-label="Flytta upp">↑</button>
-          <button class="btn" type="button" data-move-work-item="${item.id}" data-direction="1"${index === customWorkItems.length - 1 ? " disabled" : ""} aria-label="Flytta ner">↓</button>
-          <button class="btn" type="button" data-edit-work-item="${item.id}">Redigera</button>
-          <button class="btn" type="button" data-toggle-work-item="${item.id}">${item.enabled ? "Pausa" : "Aktivera"}</button>
-          <button class="btn danger" type="button" data-trash-work-item="${item.id}">Ta bort</button>
+  const previewText = () => {
+    const label = form.name.trim() || (form.type === "machine" ? "Maskinen" : "Stationen");
+    if (!isProductionType(form.type)) return `${label} får en egen rad i schemat och kopplas inte till linjer.`;
+    if (form.mode === "none") return `${label} sparas utan linje. Den kan schemaläggas för hand men tas inte med när linjer väljs.`;
+    if (form.mode === "new") {
+      const members = [...form.partners, ...form.newStations.map(station => station.name)];
+      const sharedWith = form.partners.flatMap(partner => linesWithWorkplace(partner).map(line => `${partner} delas då med ${line.label}`));
+      return `En ny linje, ${form.newLineLabel.trim() || "Ny linje"}, skapas med ${[label, ...members].join(", ")}.${sharedWith.length ? ` ${[...new Set(sharedWith)].join(". ")}.` : ""}`;
+    }
+    const chosen = appSettings.breakLines.filter(line => form.lineIds.includes(line.id));
+    return chosen.length
+      ? `${label} ingår i ${chosen.map(line => line.label).join(" och ")}.${chosen.length > 1 ? " Den blir en delad station och bemannas en gång." : ""}`
+      : "Välj minst en linje, eller välj Ingen koppling än.";
+  };
+
+  const draw = () => {
+    const builtin = Boolean(entry?.builtin);
+    const production = isProductionType(form.type);
+    const others = getMachineCatalogue().filter(other => isProductionType(other.type) && other.enabled && other.name !== entry?.name);
+    const competenceSelect = `<select id="mmCompetence">${groupOptions.map(group => `<option value="${escapeHtml(group)}"${form.competence === group ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}<option value="${OWN_COMPETENCE}"${form.competence === OWN_COMPETENCE ? " selected" : ""}>Egen kompetens (ny kolumn på Kompetens)</option><option value="${NO_COMPETENCE}"${form.competence === NO_COMPETENCE ? " selected" : ""}>Ingen kompetens krävs</option></select>`;
+    overlay.innerHTML = `<form class="mm-editor" novalidate>
+      <div class="mm-editor-head"><div><h3>${entry ? `Redigera ${escapeHtml(entry.name)}` : "Ny maskin eller station"}</h3><p>${builtin ? "Standardplats. Namnet ligger fast, men du väljer linjer och produktion." : entry ? "Ändra uppgifter och vilka linjer den hör till." : "Fyll i namnet och välj hur den kopplas till resten av produktionen."}</p></div><button class="btn mm-icon" type="button" data-mm-close aria-label="Stäng">×</button></div>
+      ${builtin ? "" : `<div class="mm-field"><span>Typ</span><div class="mm-seg" role="radiogroup" aria-label="Typ">${Object.entries(WORK_ITEM_TYPE_LABELS).map(([value, label]) => `<label><input type="radio" name="mmType" value="${value}"${form.type === value ? " checked" : ""} />${label}</label>`).join("")}</div><small>Maskin är t.ex. en GD. Station är t.ex. märkning, pack eller en avdelning.</small></div>
+      <div class="mm-field-row">
+        <label class="mm-field"><span>Namn</span><input id="mmName" value="${escapeHtml(form.name)}" maxlength="120" placeholder="${form.type === "machine" ? "t.ex. GD5" : "t.ex. Packa L5"}" autocomplete="off" /></label>
+        <label class="mm-field"><span>Antal personer</span><input id="mmStaff" type="number" min="1" max="20" value="${form.staffCount}" /></label>
+      </div>
+      <label class="mm-field"><span>Kompetens som krävs</span>${competenceSelect}<small>Den som har kompetensen kan placeras här i schemat och under rasten.</small></label>`}
+      ${production ? `<div class="mm-field"><span>Koppling</span><div class="mm-choices">
+        ${entry ? "" : `<label class="mm-choice"><input type="radio" name="mmMode" value="new"${form.mode === "new" ? " checked" : ""} /><span><strong>Skapa en ny linje</strong><small>Får en egen linje. Välj vilka stationer som hör till den.</small></span></label>`}
+        <label class="mm-choice"><input type="radio" name="mmMode" value="existing"${form.mode === "existing" ? " checked" : ""} /><span><strong>${entry ? "Linjer" : "Lägg till i befintlig linje"}</strong><small>Välj en eller flera. Flera linjer gör den till en delad station.</small></span></label>
+        <label class="mm-choice"><input type="radio" name="mmMode" value="none"${form.mode === "none" ? " checked" : ""} /><span><strong>Ingen koppling än</strong><small>Kan kopplas senare under Linjer och rast.</small></span></label>
+      </div></div>
+      ${form.mode === "new" ? `<div class="mm-sub">
+        <label class="mm-field"><span>Linjens namn</span><input id="mmLineLabel" value="${escapeHtml(form.newLineLabel)}" maxlength="60" /></label>
+        <div class="mm-field"><span>Koppla till befintliga maskiner och stationer</span><div class="mm-toggle-chips">${others.map(other => `<label><input type="checkbox" data-mm-partner value="${escapeHtml(other.name)}"${form.partners.includes(other.name) ? " checked" : ""} />${escapeHtml(other.name)}${linesWithWorkplace(other.name).length ? `<small>${escapeHtml(linesWithWorkplace(other.name).map(line => line.label).join(", "))}</small>` : ""}</label>`).join("")}</div></div>
+        <div class="mm-field"><span>Eller skapa en ny station till linjen</span>
+          ${form.newStations.length ? `<div class="mm-toggle-chips">${form.newStations.map((station, index) => `<label><input type="checkbox" checked data-mm-drop-station="${index}" />${escapeHtml(station.name)}<small>ny · ${escapeHtml(station.competence)}</small></label>`).join("")}</div>` : ""}
+          <div class="mm-inline-new"><input id="mmNewStation" placeholder="t.ex. Packa L5" maxlength="120" aria-label="Namn på ny station" /><select id="mmNewStationGroup" aria-label="Kompetens för ny station">${groupOptions.map(group => `<option${group === "Packa" ? " selected" : ""}>${escapeHtml(group)}</option>`).join("")}</select><button class="btn" type="button" data-mm-add-station>+ Lägg till</button></div>
         </div>
-      </article>`).join("") : '<div class="empty-state">Inga egna maskiner eller avdelningar har lagts till.</div>';
-
-    const trash = await getWorkItemTrash();
-    if (trashCount) trashCount.textContent = String(trash.length);
-    if (trashList) trashList.innerHTML = trash.length ? trash.map(item => `
-      <article class="work-item-row"><div><strong>${escapeHtml(item.name)}</strong><span>Borttagen ${new Date(item.deletedAt || Date.now()).toLocaleDateString("sv-SE")}</span></div><div class="work-item-row-actions"><button class="btn" type="button" data-restore-work-item="${item.id}">Återställ</button></div></article>`).join("") : '<div class="empty-state">Papperskorgen är tom.</div>';
-
-    list.querySelectorAll("[data-edit-work-item]").forEach(button => button.addEventListener("click", () => {
-      const item = customWorkItems.find(entry => entry.id === button.dataset.editWorkItem);
-      if (item) startEdit(item);
-    }));
-    list.querySelectorAll("[data-move-work-item]").forEach(button => button.addEventListener("click", async () => {
-      const index = customWorkItems.findIndex(entry => entry.id === button.dataset.moveWorkItem);
-      const target = index + Number(button.dataset.direction);
-      if (index < 0 || target < 0 || target >= customWorkItems.length) return;
-      const next = [...customWorkItems];
-      [next[index], next[target]] = [next[target], next[index]];
-      await saveCustomWorkItems(next);
-      showMessage("Ordningen har sparats.");
-      await renderManager();
-    }));
-    list.querySelectorAll("[data-toggle-work-item]").forEach(button => button.addEventListener("click", async () => {
-      const item = customWorkItems.find(entry => entry.id === button.dataset.toggleWorkItem);
-      if (!item) return;
-      const updated = { ...item, enabled: !item.enabled, updatedAt: new Date().toISOString() };
-      await saveCustomWorkItems(customWorkItems.map(entry => entry.id === item.id ? updated : entry));
-      await syncWorkItemCompetency(updated, item);
-      await addAuditEvent("department", `${item.name} ${updated.enabled ? "aktiverad" : "pausad"}`, "Inställning ändrad");
-      showMessage(updated.enabled ? `${item.name} är aktiv igen.` : `${item.name} har pausats. Befintlig data finns kvar.`);
-      await renderManager();
-    }));
-    list.querySelectorAll("[data-trash-work-item]").forEach(button => button.addEventListener("click", async () => {
-      const item = customWorkItems.find(entry => entry.id === button.dataset.trashWorkItem);
-      if (!item) return;
-      const usageCount = await getWorkItemUsageCount(item.name);
-      if (usageCount) {
-        const choice = await chooseWorkItemReplacement(item, usageCount);
-        if (!choice) return;
-        if (choice.action === "pause") {
-          const updated = { ...item, enabled: false, updatedAt: new Date().toISOString() };
-          await saveCustomWorkItems(customWorkItems.map(entry => entry.id === item.id ? updated : entry));
-          await syncWorkItemCompetency(updated, item); showMessage(`${item.name} pausades och historiken finns kvar.`); await renderManager(); return;
-        }
-        await createWorkItemSafetySnapshot(`${item.name} ersätts med ${choice.replacement.name}`);
-        await renameWorkItemReferences(item.name, choice.replacement.name);
-      } else if (!confirm(`Flytta ${item.name} till papperskorgen? Befintlig historik sparas.`)) return;
-      await createWorkItemSafetySnapshot(`${item.name} flyttas till papperskorgen`);
-      const trashItems = await getWorkItemTrash();
-      await saveWorkItemTrash([{ ...item, deletedAt: new Date().toISOString() }, ...trashItems]);
-      await saveCustomWorkItems(customWorkItems.filter(entry => entry.id !== item.id));
-      await syncWorkItemCompetency({ ...item, enabled: false }, item);
-      if (editingId === item.id) resetEditor();
-      await addAuditEvent("department", `${item.name} flyttad till papperskorgen`, "Kan återställas");
-      showMessage(`${item.name} flyttades till papperskorgen.`);
-      await renderManager();
-    }));
-    trashList?.querySelectorAll("[data-restore-work-item]").forEach(button => button.addEventListener("click", async () => {
-      const trashItems = await getWorkItemTrash();
-      const item = trashItems.find(entry => entry.id === button.dataset.restoreWorkItem);
-      if (!item) return;
-      const restored = { ...item, enabled: true, updatedAt: new Date().toISOString() };
-      delete restored.deletedAt;
-      await saveCustomWorkItems([...customWorkItems, restored]);
-      await saveWorkItemTrash(trashItems.filter(entry => entry.id !== item.id));
-      await syncWorkItemCompetency(restored);
-      await addAuditEvent("department", `${item.name} återställd`, "Från papperskorgen");
-      showMessage(`${item.name} har återställts.`);
-      await renderManager();
-    }));
+      </div>` : ""}
+      ${form.mode === "existing" ? `<div class="mm-sub"><div class="mm-toggle-chips">${appSettings.breakLines.map(line => `<label><input type="checkbox" data-mm-line value="${escapeHtml(line.id)}"${form.lineIds.includes(line.id) ? " checked" : ""} />${escapeHtml(line.label)}<small>${escapeHtml(line.workplaces.filter(workplace => workplace !== entry?.name).join(", ") || "tom")}</small></label>`).join("")}</div></div>` : ""}
+      <label class="mm-check"><input type="checkbox" data-mm-flag="production"${form.production ? " checked" : ""} /><span>Visa på sidan Produktion</span></label>` : ""}
+      ${builtin ? "" : `<details class="mm-more"><summary>Fler inställningar</summary>
+        <label class="mm-field"><span>Placering i schemat</span><select id="mmAfter">${TASKS.filter(task => task !== entry?.name).map(task => `<option value="${escapeHtml(task)}"${form.after === task ? " selected" : ""}>Efter ${escapeHtml(task)}</option>`).join("")}</select></label>
+        <label class="mm-field"><span>Fler kompetenser som krävs</span><input id="mmSkills" value="${escapeHtml(form.requiredSkills)}" placeholder="t.ex. Truckkort" /><small>Separera med kommatecken.</small></label>
+        <label class="mm-check"><input type="checkbox" data-mm-flag="showInSchema"${form.showInSchema ? " checked" : ""} /><span>Egen rad i veckoschemat</span></label>
+        <label class="mm-check"><input type="checkbox" data-mm-flag="autoSchedule"${form.autoSchedule ? " checked" : ""} /><span>Bemanna automatiskt i autoschemat</span></label>
+        <label class="mm-check"><input type="checkbox" data-mm-flag="showInTestResults"${form.showInTestResults ? " checked" : ""} /><span>Registrera testresultat för den</span></label>
+      </details>`}
+      <div class="mm-preview"><small>Resultat</small><span>${escapeHtml(previewText())}</span></div>
+      <p class="inline-message error" aria-live="polite">${escapeHtml(form.error)}</p>
+      <div class="mm-editor-actions"><button class="btn" type="button" data-mm-close>Avbryt</button><button class="btn primary" type="submit">${entry ? "Spara ändringar" : "Lägg till"}</button></div>
+    </form>`;
+    const modal = overlay.querySelector(".mm-editor");
+    cleanupFocus?.();
+    cleanupFocus = manageDialogFocus(modal, close);
+    overlay.querySelectorAll("[data-mm-close]").forEach(button => button.addEventListener("click", close));
+    const redraw = change => () => { sync(); change(); form.error = ""; draw(); };
+    overlay.querySelectorAll('[name="mmType"]').forEach(radio => radio.addEventListener("change", redraw(() => {
+      form.type = radio.value;
+      if (!entry) form.competence = radio.value === "machine" ? "GD" : radio.value === "department" ? "Packa" : NO_COMPETENCE;
+      if (!entry) form.production = radio.value === "machine";
+    })));
+    overlay.querySelector("#mmCompetence")?.addEventListener("change", event => { form.competence = event.target.value; });
+    overlay.querySelectorAll('[name="mmMode"]').forEach(radio => radio.addEventListener("change", redraw(() => { form.mode = radio.value; })));
+    overlay.querySelectorAll("[data-mm-partner]").forEach(checkbox => checkbox.addEventListener("change", redraw(() => {
+      form.partners = checkbox.checked ? [...form.partners, checkbox.value] : form.partners.filter(value => value !== checkbox.value);
+    })));
+    overlay.querySelectorAll("[data-mm-line]").forEach(checkbox => checkbox.addEventListener("change", redraw(() => {
+      form.lineIds = checkbox.checked ? [...form.lineIds, checkbox.value] : form.lineIds.filter(value => value !== checkbox.value);
+    })));
+    overlay.querySelectorAll("[data-mm-drop-station]").forEach(checkbox => checkbox.addEventListener("change", redraw(() => {
+      form.newStations.splice(Number(checkbox.dataset.mmDropStation), 1);
+    })));
+    overlay.querySelector("#mmLineLabel")?.addEventListener("change", redraw(() => {}));
+    const addStation = () => {
+      sync();
+      const stationName = overlay.querySelector("#mmNewStation").value.trim();
+      if (!stationName) return;
+      if (getMachineCatalogue().some(other => sameName(other.name, stationName)) || form.newStations.some(station => sameName(station.name, stationName)) || sameName(stationName, form.name)) {
+        form.error = `${stationName} finns redan.`;
+      } else {
+        form.newStations.push({ name: stationName, competence: overlay.querySelector("#mmNewStationGroup").value });
+        form.error = "";
+      }
+      draw();
+      overlay.querySelector("#mmNewStation")?.focus();
+    };
+    overlay.querySelector("[data-mm-add-station]")?.addEventListener("click", addStation);
+    overlay.querySelector("#mmNewStation")?.addEventListener("keydown", event => { if (event.key === "Enter") { event.preventDefault(); addStation(); } });
+    overlay.querySelector("#mmName")?.addEventListener("change", () => { sync(); overlay.querySelector(".mm-preview span").textContent = previewText(); });
+    modal.addEventListener("submit", async event => {
+      event.preventDefault();
+      sync();
+      const submit = modal.querySelector('button[type="submit"]');
+      submit.disabled = true;
+      try {
+        const error = await saveMachineEditor(entry, form);
+        if (error) { form.error = error; draw(); return; }
+        close();
+      } catch (saveError) {
+        console.error("Machine save failed:", saveError);
+        form.error = saveError instanceof ApiError ? saveError.message : "Det gick inte att spara. Försök igen.";
+        draw();
+      }
+    });
   };
+  draw();
+  overlay.querySelector("#mmName")?.focus();
+}
 
-  bindOnce(cancelButton, "click", resetEditor);
-  bindOnce(form, "submit", async event => {
-    event.preventDefault();
-    const name = nameInput.value.trim();
-    const previousItem = customWorkItems.find(item => item.id === editingId) || null;
-    const showInSchema = schemaCheckbox.checked;
-    const showInCompetency = competencyCheckbox.checked;
-    const showInTestResults = testResultsCheckbox.checked;
-    const autoSchedule = autoScheduleCheckbox.checked;
-    const type = isExtraPersonTaskName(name) ? "extra" : typeSelect?.value || "machine";
-    const staffCount = Math.max(1, Math.min(20, Number(staffCountInput?.value) || 1));
-    const requiredSkills = [...new Set((requiredSkillsInput?.value || "").split(",").map(value => value.trim()).filter(Boolean))];
-    if (!name) return showMessage("Ange ett namn.", "error");
-    const duplicate = TASKS.some(task => task.toLocaleLowerCase() === name.toLocaleLowerCase() && task !== previousItem?.name) ||
-      customWorkItems.some(item => item.id !== editingId && item.name.toLocaleLowerCase() === name.toLocaleLowerCase());
-    if (duplicate) return showMessage("Namnet finns redan.", "error");
-    if (autoSchedule && (!showInSchema || !showInCompetency)) return showMessage("Autoschema kräver att både Schema och Kompetens är valda.", "error");
-    const now = new Date().toISOString();
-    const item = previousItem ? { ...previousItem, name, after: afterSelect.value || "Packa L4", type, staffCount, requiredSkills, showInSchema, showInCompetency, showInTestResults, autoSchedule, updatedAt: now }
-      : { id: makeId(), name, after: afterSelect.value || "Packa L4", type, staffCount, requiredSkills, showInSchema, showInCompetency, showInTestResults, autoSchedule, enabled: true, createdAt: now, updatedAt: now };
+// Returns an error message, or nothing when everything was saved.
+async function saveMachineEditor(entry, form) {
+  const production = isProductionType(form.type);
+  const lineChoice = production ? form.mode : "none";
+  if (lineChoice === "existing" && !form.lineIds.length) return "Välj minst en linje, eller välj Ingen koppling än.";
+  if (lineChoice === "new" && !form.newLineLabel.trim()) return "Ge den nya linjen ett namn.";
+  if (lineChoice === "new" && appSettings.breakLines.some(line => sameName(line.label, form.newLineLabel.trim()))) return `Det finns redan en linje som heter ${form.newLineLabel.trim()}.`;
+  const now = new Date().toISOString();
+  let name = entry?.name || "";
+  let lines = appSettings.breakLines;
+  let productionMachines = appSettings.productionMachines;
+
+  if (!entry?.builtin) {
+    name = form.name.trim();
+    const previousItem = entry?.item || null;
+    if (!name) return "Skriv ett namn.";
+    if (getMachineCatalogue().some(other => other.name !== previousItem?.name && sameName(other.name, name))) return `${name} finns redan. Välj ett annat namn.`;
+    const competence = form.competence;
+    const fields = {
+      name,
+      type: isExtraPersonTaskName(name) ? "extra" : form.type,
+      after: form.after || "Packa L4",
+      staffCount: form.staffCount,
+      requiredSkills: [...new Set(form.requiredSkills.split(",").map(value => value.trim()).filter(Boolean))],
+      showInSchema: form.showInSchema,
+      showInCompetency: competence === OWN_COMPETENCE,
+      competenceGroup: competence === OWN_COMPETENCE || competence === NO_COMPETENCE ? "" : competence,
+      showInTestResults: form.showInTestResults,
+      autoSchedule: form.autoSchedule && form.showInSchema && competence !== NO_COMPETENCE,
+      updatedAt: now
+    };
+    const item = previousItem ? { ...previousItem, ...fields } : { id: makeId(), ...fields, enabled: true, createdAt: now };
+    const newStations = lineChoice === "new" ? form.newStations.map(station => ({
+      id: makeId(), name: station.name, type: "department", after: name, staffCount: 1, requiredSkills: [],
+      showInSchema: true, showInCompetency: false, competenceGroup: station.competence, showInTestResults: false,
+      autoSchedule: true, enabled: true, createdAt: now, updatedAt: now
+    })) : [];
     if (previousItem && previousItem.name !== name) {
       await createWorkItemSafetySnapshot(`${previousItem.name} byter namn till ${name}`);
       await renameWorkItemReferences(previousItem.name, name);
+      const rename = list => list.map(value => value === previousItem.name ? name : value);
+      lines = lines.map(line => ({ ...line, workplaces: rename(line.workplaces) }));
+      productionMachines = rename(productionMachines);
     }
-    const nextItems = previousItem ? customWorkItems.map(entry => entry.id === item.id ? item : { ...entry, after: entry.after === previousItem.name ? name : entry.after }) : [...customWorkItems, item];
+    const nextItems = previousItem
+      ? customWorkItems.map(other => other.id === item.id ? item : { ...other, after: other.after === previousItem.name ? name : other.after })
+      : [...customWorkItems, item, ...newStations];
     await saveCustomWorkItems(nextItems);
     await syncWorkItemCompetency(item, previousItem);
-    await addAuditEvent("department", `${name} ${previousItem ? "uppdaterad" : "tillagd"}`, [showInSchema ? "Schema" : "", showInCompetency ? "Kompetens" : "", showInTestResults ? "Testresultat" : ""].filter(Boolean).join(" · "));
-    resetEditor();
-    showMessage(`${name} har ${previousItem ? "uppdaterats" : "lagts till"}.`);
-    await renderManager();
-  });
-  await renderManager();
+    for (const station of newStations) await syncWorkItemCompetency(station);
+    await addAuditEvent("department", `${name} ${previousItem ? "uppdaterad" : "tillagd"}`, "Maskinhantering");
+    if (lineChoice === "new") {
+      lines = [...lines, { id: `line-${makeId()}`, label: form.newLineLabel.trim(), workplaces: [name, ...form.partners, ...newStations.map(station => station.name)] }];
+    }
+  }
+  if (lineChoice !== "new") lines = setLineMembership(lines, name, lineChoice === "existing" ? form.lineIds : []);
+  if (production) {
+    productionMachines = form.production ? [...new Set([...productionMachines, name])] : productionMachines.filter(value => value !== name);
+    if (!productionMachines.length) productionMachines = appSettings.productionMachines;
+  }
+  const lineText = lineChoice === "new" ? ` i ${form.newLineLabel.trim()}`
+    : lineChoice === "existing" ? ` i ${appSettings.breakLines.filter(line => form.lineIds.includes(line.id)).map(line => line.label).join(" och ")}` : "";
+  await saveMachineSetup({ breakLines: lines, productionMachines }, entry ? `${name} har sparats${lineText}` : `${name} har lagts till${lineText}`);
+  return "";
 }
 
 function initializeAppContent() {
@@ -7660,8 +8220,8 @@ function initializeAppContent() {
   void renderProfilePage();
   renderHelpPage();
   setupAddForm();
-  void setupWorkItemManager();
   renderExtraAssignmentManager();
+  void renderMachineManagement();
   setupAutoSchedule();
   setupShareSchedule();
   setupAutoLock();

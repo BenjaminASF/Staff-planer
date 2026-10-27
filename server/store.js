@@ -270,6 +270,21 @@ async function renameWorkItemReferences(db, from, to, userId) {
     });
     return changed;
   }, userId);
+  // The machine's place in lines (schedule and break) and on the production page.
+  await updateDocumentsWhere(db, "scope = 'global' AND key = 'appSettings'", [], value => {
+    if (!isPlainObject(value)) return false;
+    let changed = false;
+    const renameList = list => {
+      if (!Array.isArray(list) || !list.includes(from)) return list;
+      changed = true;
+      return [...new Set(list.map(name => name === from ? to : name))];
+    };
+    value.productionMachines = renameList(value.productionMachines);
+    if (Array.isArray(value.breakLines)) {
+      value.breakLines.forEach(line => { if (isPlainObject(line)) line.workplaces = renameList(line.workplaces); });
+    }
+    return changed;
+  }, userId);
   const weeklyPatterns = WEEKLY_SCHEDULE_PREFIXES.map(prefix => `${prefix}:%`);
   await updateDocumentsWhere(db, `${SHIFT_SCOPE_SQL} AND key LIKE ANY($1::text[])`, [weeklyPatterns], (value, key) => {
     let changed = renameKey(value, from, to);
@@ -296,8 +311,12 @@ async function countWorkItemUsage(db, name) {
 }
 
 async function createSafetySnapshot(db, reason, userId) {
-  const docs = await readDocuments(db, "global", ["workItems", "workItemTrash", "departments", "testResults", "machineSkills", "machineSkillDetails", "safetySnapshots"]);
+  const docs = await readDocuments(db, "global", ["workItems", "workItemTrash", "departments", "testResults", "machineSkills", "machineSkillDetails", "safetySnapshots", "appSettings"]);
   const value = key => docs[key]?.value;
+  const settings = isPlainObject(value("appSettings")) ? value("appSettings") : {};
+  // Lines, paused built-in machines and production machines, as Maskinhantering changes them.
+  const machineSetup = Object.fromEntries(["breakLines", "hiddenTasks", "productionMachines"]
+    .filter(key => Array.isArray(settings[key])).map(key => [key, settings[key]]));
   const snapshots = Array.isArray(value("safetySnapshots")) ? value("safetySnapshots") : [];
   snapshots.unshift({
     id: newId(),
@@ -309,7 +328,8 @@ async function createSafetySnapshot(db, reason, userId) {
       departments: value("departments") || [],
       results: value("testResults") || {},
       skills: value("machineSkills") || {},
-      details: value("machineSkillDetails") || {}
+      details: value("machineSkillDetails") || {},
+      ...Object.keys(machineSetup).length ? { machineSetup } : {}
     }
   });
   await putDocument(db, "global", "safetySnapshots", snapshots.slice(0, 5), userId);
