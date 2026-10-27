@@ -153,6 +153,28 @@ const encoder = new TextEncoder();
 const decoder = new TextDecoder();
 
 let currentUser = null;
+// Personal settings of the signed-in user (theme, automatic sign-out, tips, sounds,
+// schedule view). They are stored on the user's login, so they follow the user to
+// every device and never change anyone else's. Shared settings live in appSettings.
+let userPreferences = {};
+const getPreference = (name, fallback) => userPreferences[name] ?? fallback;
+
+async function saveUserPreferences(changes) {
+  const previous = userPreferences;
+  userPreferences = { ...userPreferences, ...changes };
+  try {
+    userPreferences = (await apiRequest("PATCH", "/me/preferences", changes)).preferences || {};
+  } catch (error) {
+    userPreferences = previous;
+    throw error;
+  }
+}
+
+// Shows the theme at once and saves it to the account when someone is signed in.
+function chooseTheme(preference) {
+  window.staffTheme?.setPreference(preference);
+  if (currentUser) saveUserPreferences({ theme: preference }).catch(error => console.warn("Could not save the theme:", error));
+}
 let currentPerson = null;
 let shifts = [];
 let addMessageTimeoutId = null;
@@ -1445,8 +1467,9 @@ function renderUnassignedPeopleSummary(scheduleRoot, people, schedule, trainingL
     </div>`;
 }
 
-// Admins and shift leaders are signed out after a period of inactivity, like the
-// old app locked itself. Operators mostly use their own phones and stay signed in.
+// Admins, shift leaders and right hands are signed out after a period of inactivity, like the
+// old app locked itself. Each of them picks the time in their own settings; until they do,
+// the time once set for everyone applies. Operators mostly use their own phones and stay signed in.
 // The last activity is shared between tabs so an idle tab does not sign out an active one.
 const LAST_ACTIVITY_KEY = "staff-planner-last-activity";
 let lastActivityWrite = 0;
@@ -1464,7 +1487,7 @@ function getLastActivity() {
 
 function setupAutoLock() {
   clearTimeout(autoLockTimeoutId);
-  const minutes = Number(appSettings.autoLockMinutes);
+  const minutes = Number(getPreference("autoLockMinutes", appSettings.autoLockMinutes));
   if (!minutes || !canManageStaff()) return;
   const limit = minutes * 60 * 1000;
   if (document.body.dataset.autoLockBound !== "true") {
@@ -2282,13 +2305,14 @@ function enhanceAppShell() {
     "rast.html": isOperator()
       ? "Ditt namn är markerat i din grupp. Överst står vilka linjer som ska vara igång under rasten."
       : "Kontrollera att alla valda linjer täcks innan rastplanen används.",
-    "installningar.html": "Inställningarna gäller alla skift och sparas när du trycker Spara.",
-    "profil.html": "Ändra din status här om du är sjuk eller borta, så ser skiftledaren det direkt."
+    "installningar.html": "Inställningarna gäller alla skift och sparas när du trycker Spara. Tema och automatisk utloggning väljer var och en under Min profil.",
+    "profil.html": "Ändra din status här om du är sjuk eller borta, så ser skiftledaren det direkt. Dina inställningar gäller bara dig."
   };
   const header = main?.querySelector(".header");
-  if (!appSettings.showTips) main?.querySelector(".page-tip")?.remove();
+  const showTips = getPreference("showTips", appSettings.showTips);
+  if (!showTips) main?.querySelector(".page-tip")?.remove();
   const tipId = `tip:${currentPage}`;
-  if (appSettings.showTips && header && pageTips[currentPage] && !isMessageDismissed(tipId) && !main.querySelector(".page-tip")) {
+  if (showTips && header && pageTips[currentPage] && !isMessageDismissed(tipId) && !main.querySelector(".page-tip")) {
     header.insertAdjacentHTML("afterend", `<aside class="page-tip"><span>Tips</span><p>${escapeHtml(pageTips[currentPage])}</p><button type="button" aria-label="Dölj tips">×</button></aside>`);
     const tip = main.querySelector(".page-tip");
     tip.querySelector("button").addEventListener("click", () => dismissMessage(tipId, tip));
@@ -2419,14 +2443,45 @@ async function renderProfilePage() {
       <label>Bekräfta nytt lösenord<input name="confirm" type="password" minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" required /></label>
       <div class="settings-actions"><span id="passwordChangeMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara nytt lösenord</button></div>
     </form>
-    <section class="card settings-card">
-      <div><h3>Ljudnotiser</h3><p>Ett kort ljud spelas när någon annan ${canManageStaff() ? "skickar ett meddelande i chatten eller " : ""}ändrar schemat eller rastplanen för ditt skift, utan att du behöver ladda om sidan. Valet gäller den här enheten och sparas direkt. Webbläsaren spelar bara ljud efter att du har klickat någonstans på sidan.</p></div>
-      <label class="settings-switch"><input id="soundNotificationsSetting" type="checkbox"${soundNotificationsEnabled() ? " checked" : ""} /><span>Spela ljud vid ${canManageStaff() ? "nya meddelanden och " : ""}schemaändringar</span></label>
-      <div class="settings-actions"><button id="testSoundBtn" class="btn" type="button">Testa ljudet</button></div>
-    </section>`;
-  root.querySelector("#soundNotificationsSetting").addEventListener("change", event => {
-    setSoundNotificationsEnabled(event.target.checked);
-    if (event.target.checked) playTones("schedule");
+    <form id="preferencesForm" class="card settings-card">
+      <div><h3>Mina inställningar</h3><p>Gäller bara dig och sparas på ditt konto, så de följer med när du loggar in på en annan enhet. Ändringar sparas direkt.</p></div>
+      ${window.staffTheme?.supported
+        ? `<fieldset><legend>Tema</legend><div class="settings-theme-grid">${[["light", "Ljust"], ["dark", "Mörkt"], ["system", "Följ enhetens inställning"]].map(([value, label]) => `<label><input type="radio" name="themePreference" value="${value}"${window.staffTheme.getPreference() === value ? " checked" : ""} /> ${label}</label>`).join("")}</div></fieldset>`
+        : "<p>Mörkt läge stöds inte i den här webbläsaren. Uppdatera webbläsaren för att använda det.</p>"}
+      ${canManageStaff() ? `<label>Automatisk utloggning<select name="autoLockMinutes">${[[5, "Efter 5 minuter"], [15, "Efter 15 minuter"], [30, "Efter 30 minuter"], [60, "Efter 1 timme"], [0, "Aldrig"]].map(([value, label]) => `<option value="${value}"${Number(getPreference("autoLockMinutes", appSettings.autoLockMinutes)) === value ? " selected" : ""}>${label}</option>`).join("")}</select><small>Du loggas ut när du inte har använt Staff Planner så här länge.</small></label>` : ""}
+      <label class="settings-switch"><input name="showTips" type="checkbox"${getPreference("showTips", appSettings.showTips) ? " checked" : ""} /><span>Visa tips och hjälptexter</span></label>
+      <label class="settings-switch"><input name="soundNotifications" type="checkbox"${soundNotificationsEnabled() ? " checked" : ""} /><span>Spela ljud när någon annan ${canManageStaff() ? "skickar ett meddelande i chatten eller " : ""}ändrar schemat eller rastplanen för ditt skift</span></label>
+      <small>Webbläsaren spelar bara ljud efter att du har klickat någonstans på sidan.</small>
+      <div class="settings-actions"><span id="preferencesMessage" class="inline-message" aria-live="polite"></span><button id="testSoundBtn" class="btn" type="button">Testa ljudet</button></div>
+    </form>`;
+  const preferencesForm = root.querySelector("#preferencesForm");
+  const preferencesMessage = root.querySelector("#preferencesMessage");
+  const savePreference = async (changes, afterSave) => {
+    try {
+      await saveUserPreferences(changes);
+      afterSave?.();
+      preferencesMessage.textContent = "Sparat.";
+      preferencesMessage.className = "inline-message success";
+    } catch (error) {
+      preferencesMessage.textContent = error instanceof ApiError ? error.message : "Det gick inte att spara.";
+      preferencesMessage.className = "inline-message error";
+    }
+  };
+  preferencesForm.addEventListener("submit", event => event.preventDefault());
+  preferencesForm.querySelectorAll('[name="themePreference"]').forEach(input => input.addEventListener("change", () => {
+    if (!input.checked) return;
+    window.staffTheme.setPreference(input.value);
+    void savePreference({ theme: input.value });
+  }));
+  preferencesForm.elements.autoLockMinutes?.addEventListener("change", event => {
+    void savePreference({ autoLockMinutes: Number(event.target.value) }, setupAutoLock);
+  });
+  preferencesForm.elements.showTips.addEventListener("change", event => {
+    void savePreference({ showTips: event.target.checked }, enhanceAppShell);
+  });
+  preferencesForm.elements.soundNotifications.addEventListener("change", event => {
+    const enabled = event.target.checked;
+    void savePreference({ soundNotifications: enabled }, () => { if (enabled) playTones("schedule"); });
   });
   root.querySelector("#testSoundBtn").addEventListener("click", () => {
     playTones("schedule");
@@ -2491,15 +2546,13 @@ async function renderSettings() {
       <div><h3>Allmänt</h3><p>Grundinställningar som gäller alla skift.</p></div>
       <label>Arbetsplatsens namn<input id="organizationNameSetting" value="${escapeHtml(appSettings.organizationName || "")}" placeholder="Företag eller avdelning" /></label>
       <fieldset><legend>Arbetsdagar</legend><div class="settings-day-grid">${ALL_DAYS.map(day => `<label><input type="checkbox" name="workDay" value="${day}"${DAYS.includes(day) ? " checked" : ""} /> ${day}</label>`).join("")}</div></fieldset>
-      <label>Automatisk utloggning för admin, skiftledare och höger hand<select id="autoLockSetting"><option value="5">Efter 5 minuter</option><option value="15">Efter 15 minuter</option><option value="30">Efter 30 minuter</option><option value="60">Efter 1 timme</option><option value="0">Aldrig</option></select></label>
       <label>E-post för feedback<input id="feedbackEmailSetting" type="email" value="${escapeHtml(appSettings.feedbackEmail || "")}" placeholder="namn@foretag.se" /></label>
       <label>Maskiner i produktion<input id="productionMachinesSetting" value="${escapeHtml(appSettings.productionMachines.join(", "))}" /><small>Separera med kommatecken.</small></label>
       <label>Uppgifter för extra person<textarea id="extraAssignmentsSetting" rows="3">${escapeHtml(appSettings.extraAssignments.join("\n"))}</textarea><small>En uppgift per rad.</small></label>
       <label>Rastlinjer<textarea id="breakLinesSetting" rows="5">${escapeHtml(appSettings.breakLines.map(line => `${line.id} | ${line.label} | ${line.workplaces.join(", ")}`).join("\n"))}</textarea><small>Format: ID | Visningsnamn | arbetsplatser separerade med kommatecken.</small></label>
-      <label class="settings-switch"><input id="showTipsSetting" type="checkbox"${appSettings.showTips ? " checked" : ""} /><span>Visa tips och hjälptexter</span></label>
       <div class="settings-actions"><span id="settingsMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara inställningar</button></div>
     </form>
-    <section class="card settings-card"><div><h3>Utseende</h3><p>${window.staffTheme?.supported ? "Välj ljust eller mörkt läge. Valet gäller den här enheten och sparas direkt." : "Mörkt läge stöds inte i den här webbläsaren. Uppdatera webbläsaren för att använda det."}</p></div>${window.staffTheme?.supported ? `<fieldset><legend>Tema</legend><div class="settings-theme-grid">${[["light", "Ljust"], ["dark", "Mörkt"], ["system", "Följ enhetens inställning"]].map(([value, label]) => `<label><input type="radio" name="themePreference" value="${value}"${window.staffTheme.getPreference() === value ? " checked" : ""} /> ${label}</label>`).join("")}</div></fieldset>` : ""}</section>
+    <section class="card settings-card"><div><h3>Personliga inställningar</h3><p>Tema, automatisk utloggning, tips och ljud väljer varje användare själv under Min profil. De sparas på kontot och påverkar inte någon annan.</p></div><div class="settings-actions"><a class="btn settings-link" href="profil.html#preferencesForm">Mina inställningar</a></div></section>
     <section class="card settings-card"><div><h3>Maskiner, avdelningar och uppgifter</h3><p>Lägg till, redigera, pausa och ordna arbetsplatser från en samlad vy. De gäller alla skift.</p></div><div class="settings-actions">${isAdmin() ? '<button id="removeDemoDataBtn" class="btn danger" type="button">Ta bort testdata</button>' : ""}<a class="btn primary settings-link" href="add.html#workItemForm">Öppna hanteraren</a></div></section>
     ${isAdmin() ? `
     <section class="card settings-card" id="shiftSettings"><div><h3>Skift</h3><p>Varje skift har ett eget veckoschema. Personal och skiftledare kopplas till ett skift under Personal.</p></div>
@@ -2513,10 +2566,6 @@ async function renderSettings() {
     <section class="card settings-card"><div><h3>Flytta data från den gamla versionen</h3><p>Den gamla versionen sparade allt krypterat i en webbläsare. ${hasLegacyData ? "Det finns gammal data på den här enheten." : "Ingen gammal data hittades på den här enheten."} Du kan också läsa in en backupfil som exporterats från den gamla versionen via Importera backup ovan.</p></div>
       ${hasLegacyData ? '<div class="settings-actions"><button id="importLegacyLocalBtn" class="btn primary" type="button">Flytta in data från den här enheten</button></div>' : ""}
     </section>` : ""}`;
-  root.querySelector("#autoLockSetting").value = String(appSettings.autoLockMinutes);
-  root.querySelectorAll('[name="themePreference"]').forEach(input => input.addEventListener("change", () => {
-    if (input.checked) window.staffTheme.setPreference(input.value);
-  }));
   bindOnce(root.querySelector("#generalSettingsForm"), "submit", async event => {
     event.preventDefault();
     const workDays = [...root.querySelectorAll('[name="workDay"]:checked')].map(input => input.value);
@@ -2525,11 +2574,10 @@ async function renderSettings() {
     const extraAssignments = root.querySelector("#extraAssignmentsSetting").value.split("\n").map(value => value.trim()).filter(Boolean);
     const breakLines = root.querySelector("#breakLinesSetting").value.split("\n").map(value => { const [id, label, workplaces = ""] = value.split("|").map(part => part.trim()); return { id, label: label || id, workplaces: workplaces.split(",").map(part => part.trim()).filter(Boolean) }; }).filter(line => line.id && line.workplaces.length);
     if (!productionMachines.length || !breakLines.length) { root.querySelector("#settingsMessage").textContent = "Produktion och rastlinjer får inte vara tomma."; root.querySelector("#settingsMessage").className = "inline-message error"; return; }
-    await saveAppSettings({ ...appSettings, workDays, productionMachines, extraAssignments, breakLines, organizationName: root.querySelector("#organizationNameSetting").value.trim(), autoLockMinutes: Number(root.querySelector("#autoLockSetting").value), feedbackEmail: root.querySelector("#feedbackEmailSetting").value.trim(), showTips: root.querySelector("#showTipsSetting").checked });
+    await saveAppSettings({ ...appSettings, workDays, productionMachines, extraAssignments, breakLines, organizationName: root.querySelector("#organizationNameSetting").value.trim(), feedbackEmail: root.querySelector("#feedbackEmailSetting").value.trim() });
     root.querySelector("#settingsMessage").textContent = "Inställningarna har sparats.";
     root.querySelector("#settingsMessage").className = "inline-message success";
     await addAuditEvent("settings", "Inställningar uppdaterade", appSettings.organizationName);
-    setupAutoLock();
     enhanceAppShell();
   });
   bindOnce(root.querySelector("#removeDemoDataBtn"), "click", async () => {
@@ -3808,20 +3856,17 @@ async function renderScheduleTools(schedule, people = [], skills = {}, placement
   });
 }
 
-const SCHEDULE_VIEW_KEY = "staff_schedule_view";
 let selectedScheduleDay = "";
 let selectedScheduleDayWeek = "";
 
 function getScheduleView() {
-  try {
-    const stored = localStorage.getItem(SCHEDULE_VIEW_KEY);
-    if (stored === "day" || stored === "week") return stored;
-  } catch { /* Private mode: use the default below. */ }
+  const stored = getPreference("scheduleView", "");
+  if (stored === "day" || stored === "week") return stored;
   return window.matchMedia?.("(max-width: 640px)").matches ? "day" : "week";
 }
 
 function setScheduleView(view) {
-  try { localStorage.setItem(SCHEDULE_VIEW_KEY, view); } catch { /* Private mode: keep it for this render only. */ }
+  saveUserPreferences({ scheduleView: view }).catch(error => console.warn("Could not save the schedule view:", error));
 }
 
 function getTodayScheduleDay() {
@@ -6844,7 +6889,7 @@ function setupThemeToggles() {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `theme-toggle ${extraClass}`;
-    button.addEventListener("click", () => window.staffTheme.setPreference(button.dataset.nextTheme));
+    button.addEventListener("click", () => chooseTheme(button.dataset.nextTheme));
     return button;
   };
   // Top right of the page header on wide screens; on narrow screens the header toggle is
@@ -8144,6 +8189,8 @@ const AUTH_NOTICE_KEY = "staff_auth_notice";
 function setSession(me) {
   currentUser = me.user;
   dismissedMessages = new Set(me.dismissedMessages || []);
+  userPreferences = me.preferences || {};
+  window.staffTheme?.setPreference(userPreferences.theme || "system");
   currentPerson = me.person;
   shifts = Array.isArray(me.shifts) ? me.shifts : [];
   sessionStorage.setItem(SIGNED_IN_HINT_KEY, "1");
@@ -8152,6 +8199,7 @@ function setSession(me) {
 async function signOut(notice = "") {
   clearTimeout(autoLockTimeoutId);
   currentUser = null;
+  userPreferences = {};
   try {
     await apiRequest("POST", "/logout");
   } catch (error) {
@@ -8173,8 +8221,7 @@ async function reloadSharedData() {
 
 // Sound notifications: a short chime when someone else sends a chat message or
 // changes the schedule. The tones are made with Web Audio, so no sound files are
-// needed. The setting belongs to this device and is on by default.
-const SOUND_SETTING_KEY = "staff_sound_notifications";
+// needed. The setting is one of the user's own settings and is on by default.
 const SOUND_LAST_PLAYED_KEY = "staff_sound_last_played";
 const SOUND_CHAT_HEARD_KEY = "staff_sound_chat_id";
 // One save often changes several documents, and several tabs may be open: one chime is enough.
@@ -8187,19 +8234,7 @@ const SCHEDULE_SOUND_KEY = /^(schedule|breakPlan|trainingLeaders|trainingLocatio
 const soundState = { context: null, lastPlayed: {} };
 
 function soundNotificationsEnabled() {
-  try {
-    return localStorage.getItem(SOUND_SETTING_KEY) !== "off";
-  } catch {
-    return true;
-  }
-}
-
-function setSoundNotificationsEnabled(enabled) {
-  try {
-    localStorage.setItem(SOUND_SETTING_KEY, enabled ? "on" : "off");
-  } catch (error) {
-    console.warn("The sound setting could not be saved:", error);
-  }
+  return getPreference("soundNotifications", true) !== false;
 }
 
 function getSoundContext() {

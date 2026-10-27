@@ -1,5 +1,6 @@
 // Light/dark theme. Loaded in <head> so the saved theme is applied before the page is drawn.
-// The choice is a device preference: it is stored unencrypted and is not part of backups.
+// The choice belongs to the user's account and is saved on the server (app.js). This browser
+// keeps a copy of the last one used only to draw the page in that theme before the user is known.
 (function () {
   const STORAGE_KEY = "staff-planner-theme";
   const THEMES = ["light", "dark"];

@@ -116,7 +116,7 @@ function loadUser(pool) {
     const tokenHash = hashToken(token);
     const { rows } = await pool.query(
       `SELECT u.id, u.username, u.role, u.must_change_password, u.person_id, p.shift_id, p.name,
-              u.dismissed_messages, s.dismissed_messages AS session_dismissed_messages,
+              u.dismissed_messages, s.dismissed_messages AS session_dismissed_messages, u.preferences,
               s.last_seen_at < now() - interval '1 hour' AS needs_refresh
          FROM sessions s
          JOIN users u ON u.id = s.user_id
@@ -136,7 +136,8 @@ function loadUser(pool) {
       shiftId: row.shift_id,
       name: row.name,
       dismissedMessages: row.dismissed_messages,
-      sessionDismissedMessages: row.session_dismissed_messages
+      sessionDismissedMessages: row.session_dismissed_messages,
+      preferences: row.preferences
     };
     if (row.needs_refresh) {
       // Sliding expiry: an active session stays valid.
