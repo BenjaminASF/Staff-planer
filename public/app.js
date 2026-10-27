@@ -8043,7 +8043,8 @@ function initializeAppContent() {
   void setupOnboarding();
   setupFilterControls();
   setupNotesPage();
-  void refreshNotesBadge();
+  // The notes page counts unread notes when it loads them.
+  if (!notesBoard()) void refreshNotesBadge();
 }
 
 // Chat for admins and shift leaders: a button in the corner with an unread badge

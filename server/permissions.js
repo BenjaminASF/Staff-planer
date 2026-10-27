@@ -224,11 +224,6 @@ function evaluatesEveryone(user) {
   return isAdmin(user);
 }
 
-function canEvaluatePerson(user, person) {
-  if (isAdmin(user)) return true;
-  return isLeader(user) && managesPerson(user, person);
-}
-
 function canDeletePerson(user) {
   return isAdmin(user);
 }
@@ -323,7 +318,6 @@ module.exports = {
   canChangeProductionTarget,
   EVALUATED_BY_LEADERS,
   evaluatesEveryone,
-  canEvaluatePerson,
   mayChangeProductionTargets,
   documentCategory,
   sharedFlagKey,
