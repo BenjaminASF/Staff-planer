@@ -2227,7 +2227,13 @@ async function renderProfilePage() {
       <label class="settings-switch"><input name="soundNotifications" type="checkbox"${soundNotificationsEnabled() ? " checked" : ""} /><span>Spela ljud när någon annan ${canManageStaff() ? "skickar ett meddelande i chatten eller " : ""}ändrar schemat eller rastplanen för ditt skift</span></label>
       <small>Webbläsaren spelar bara ljud efter att du har klickat någonstans på sidan.</small>
       <div class="settings-actions"><span id="preferencesMessage" class="inline-message" aria-live="polite"></span><button id="testSoundBtn" class="btn" type="button">Testa ljudet</button></div>
-    </form>`;
+    </form>
+    <section id="pushSettings" class="card settings-card">
+      <div><h3>Pushnotiser</h3><p>Få en kort notis i telefonen eller datorn när ditt schema eller din placering ändras, när en anteckning delas med dig${canManageStaff() ? ", när du får chattmeddelanden och vid viktiga uppdateringar" : ""}, även när Staff Planner är stängd. Notisen visar aldrig namn eller meddelandetext.</p></div>
+      <div class="push-settings-body"><p>Hämtar…</p></div>
+      <p class="inline-message push-settings-message" role="status" aria-live="polite"></p>
+    </section>`;
+  void renderPushSettings(root.querySelector("#pushSettings"));
   const preferencesForm = root.querySelector("#preferencesForm");
   const preferencesMessage = root.querySelector("#preferencesMessage");
   const savePreference = async (changes, afterSave) => {
@@ -2422,7 +2428,8 @@ function renderHelpPage() {
       ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
       ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
       ["Ledig eller borta?", "Öppna Min profil och ändra din status till Ledig. Skiftledaren ser ändringen direkt."],
-      ["Lösenord", "Byt lösenord under Min profil. Har du glömt det, be din skiftledare om ett tillfälligt."]
+      ["Lösenord", "Byt lösenord under Min profil. Har du glömt det, be din skiftledare om ett tillfälligt."],
+      ["Pushnotiser", "Slå på pushnotiser under Min profil så får du en notis i telefonen när ditt schema ändras. På iPhone lägger du först till Staff Planner på hemskärmen via Safari: Dela → Lägg till på hemskärmen."]
     ]
     : [
       ["Lägg till personal", "Öppna Lägg till, registrera namn, företag och skift. Skapa en inloggning om personen ska kunna se schemat själv."],
@@ -2430,7 +2437,8 @@ function renderHelpPage() {
       ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
       ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
       ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas egna anteckningar är privata."],
-      ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen."]
+      ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen. På iPhone: Dela → Lägg till på hemskärmen i Safari."],
+      ["Pushnotiser", "Slå på pushnotiser under Min profil för notiser i telefonen om schemaändringar, chatt, anteckningar och viktiga uppdateringar. Admin kan stänga av dem för en användare under Hantera."]
     ];
   root.innerHTML = `<section class="card help-intro"><div><h3>Kom igång</h3><p>All data sparas på servern, så alla ser samma schema från sina egna enheter.</p></div><a class="btn primary" href="${canChangeSharedSettings() ? "installningar.html" : "profil.html"}">${canChangeSharedSettings() ? "Öppna inställningar" : "Öppna min profil"}</a></section><div class="help-grid">${steps.map(([title, text], index) => `<article class="card"><span>${index + 1}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></article>`).join("")}</div><section class="card help-feedback"><div><h3>Förslag eller problem?</h3><p>Skicka feedback till den adress som angetts i Inställningar.</p></div>${appSettings.feedbackEmail ? `<a class="btn" href="mailto:${escapeHtml(appSettings.feedbackEmail)}?subject=Staff%20Planner%20feedback">Skicka feedback</a>` : isOperator() ? "" : '<a class="btn" href="installningar.html">Ange feedbackadress</a>'}</section>`;
 }
@@ -4297,6 +4305,13 @@ function canResetPasswordFor(person) {
   return Boolean(person.account) && canEditPerson(person);
 }
 
+// 🔕 beside someone whose push notifications an admin turned off.
+function pushBlockedMark(person) {
+  return person.account?.pushBlocked && canManageStaff()
+    ? ' <span class="push-blocked-mark" title="Pushnotiser avstängda av admin" role="img" aria-label="Pushnotiser avstängda av admin">🔕</span>'
+    : "";
+}
+
 function describeAccount(person) {
   if (!person.account) return "Ingen inloggning";
   return `${ROLE_LABELS[person.account.role] || "Operatör"} · ${person.account.username}`;
@@ -4411,7 +4426,7 @@ async function renderPeople() {
     meta.innerHTML = `
       <h3 title="${escapeHtml(availabilitySelect.title)}">${escapeHtml(person.name)}</h3>
       <p>${shiftColorDot(person.shiftId)}${escapeHtml(details)}</p>
-      <span class="person-role-badge${person.account ? ` role-${escapeHtml(person.account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>
+      <span class="person-role-badge${person.account ? ` role-${escapeHtml(person.account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${pushBlockedMark(person)}
     `;
 
     availabilityOptionsFor(availability).forEach(([value, label]) => {
@@ -6826,7 +6841,7 @@ async function renderUsersPage() {
       <div class="person-meta">
         <h3>${escapeHtml(person.name)}${person.id === currentPerson?.id ? ' <small class="user-you">(du)</small>' : ""}</h3>
         <p>${details}</p>
-        <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${account?.mustChangePassword ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
+        <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${pushBlockedMark(person)}${account?.mustChangePassword ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
       </div>
       <div class="person-actions">${canEditPerson(person) ? `<button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>` : ""}${isAdmin() && person.id !== currentPerson?.id ? `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>` : ""}</div>
     </div>`;
@@ -6918,6 +6933,9 @@ function renderAccountSection(person) {
       ${isAdmin() ? `<div class="person-account-row"><label>Användarnamn<input name="username" value="${escapeHtml(person.account.username)}" autocomplete="off" maxlength="60" /></label><button class="btn" type="button" data-account-action="username">Spara användarnamn</button></div>` : ""}
       ${canChangeRoleOf(person) ? `<div class="person-account-row"><label>Roll<select name="role">${roleOptionsHtml(person.account.role)}</select></label><button class="btn" type="button" data-account-action="role">Spara roll</button></div>` : ""}
       ${canResetPasswordFor(person) && person.id !== currentPerson?.id ? `<div class="person-account-row"><label>Tillfälligt lösenord<input name="resetPassword" autocomplete="off" minlength="${MIN_PASSWORD_LENGTH}" /></label><button class="btn" type="button" data-account-action="suggest">Föreslå</button><button class="btn" type="button" data-account-action="reset">Återställ lösenord</button></div>` : ""}
+      ${isAdmin()
+        ? `<div class="person-account-row"><span class="person-account-push">Pushnotiser: <strong>${person.account.pushBlocked ? "Av 🔕" : "På"}</strong></span><button class="btn" type="button" data-account-action="push" data-push-blocked="${person.account.pushBlocked}">${person.account.pushBlocked ? "Slå på" : "Stäng av"}</button></div>`
+        : person.account.pushBlocked ? '<p>Pushnotiser: <strong>Av 🔕</strong> (avstängt av admin)</p>' : ""}
       ${isAdmin() && person.id !== currentPerson?.id ? '<div class="person-account-row"><button class="btn danger" type="button" data-account-action="remove">Ta bort inloggning</button></div>' : ""}`;
   }
   if (!canCreateAccountFor(person)) return "<p>Ingen inloggning.</p>";
@@ -7020,6 +7038,10 @@ async function editPerson(id) {
         if (password.length < MIN_PASSWORD_LENGTH) return showStatus(`Lösenordet måste vara minst ${MIN_PASSWORD_LENGTH} tecken.`, "error");
         result = await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { password });
         showStatus(loginInstructions(result.person.account.username, password));
+      } else if (action === "push") {
+        const pushBlocked = button.dataset.pushBlocked !== "true";
+        result = await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { pushBlocked });
+        showStatus(pushBlocked ? `Pushnotiser är avstängda för ${person.name}.` : `Pushnotiser är påslagna för ${person.name}.`);
       } else if (action === "remove") {
         if (!confirm(`Ta bort inloggningen för ${person.name}? Personen finns kvar i personallistan.`)) return;
         result = await apiRequest("DELETE", `/people/${encodeURIComponent(person.id)}/account`);
@@ -8105,6 +8127,7 @@ function setupChat() {
   elements.toggle.addEventListener("click", () => void setChatOpen(!chatState.open));
   elements.widget.querySelector(".chat-close").addEventListener("click", () => void setChatOpen(false));
   elements.preview.addEventListener("click", () => void setChatOpen(true));
+  if (takeLinkParam("chat")) void setChatOpen(true);
   elements.panel.addEventListener("keydown", event => {
     if (event.key === "Escape") { event.preventDefault(); void setChatOpen(false); elements.toggle.focus(); }
   });
@@ -9052,6 +9075,7 @@ function setupNotifications() {
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) void loadNotifications({ announce: true }); });
   void loadNotifications();
+  if (takeLinkParam("notifications")) void setNotificationsOpen(true);
 }
 
 // Fetches the notes. With `announce`, notes that arrived since the last fetch are
@@ -9443,8 +9467,11 @@ function setSession(me) {
   sessionStorage.setItem(SIGNED_IN_HINT_KEY, "1");
 }
 
-async function signOut(notice = "") {
+// forgetDevice: signing out yourself also turns push notifications off on this device,
+// so a shared phone never shows someone else's. Automatic sign-out keeps them.
+async function signOut(notice = "", { forgetDevice = false } = {}) {
   clearTimeout(autoLockTimeoutId);
+  if (forgetDevice) await disablePushOnThisDevice().catch(error => console.warn("Push could not be turned off:", error));
   currentUser = null;
   userPreferences = {};
   try {
@@ -9464,6 +9491,133 @@ async function reloadSharedData() {
   invalidateCachedData();
   await loadSharedSettings();
   await refreshAppViews();
+}
+
+// Removes ?name=… from the address (a link from a push notification) and tells whether it was there.
+function takeLinkParam(name) {
+  const params = new URLSearchParams(location.search);
+  if (!params.has(name)) return false;
+  params.delete(name);
+  history.replaceState(history.state, "", `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`);
+  return true;
+}
+
+// Push notifications (see server/push.js). Each user turns them on and off per device
+// under Min profil. An admin can turn them off for a user; the server then sends nothing.
+const PUSH_CHECKED_KEY = "staff_push_checked";
+const pushSupported = () => "serviceWorker" in navigator && "PushManager" in window && "Notification" in window && location.protocol.startsWith("http");
+const isAppleMobile = () => /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isInstalledApp = () => window.matchMedia?.("(display-mode: standalone)").matches || navigator.standalone === true;
+
+async function getPushSubscription() {
+  if (!pushSupported()) return null;
+  const registration = await navigator.serviceWorker.getRegistration();
+  return registration ? registration.pushManager.getSubscription() : null;
+}
+
+function base64UrlToBytes(value) {
+  const base64 = `${value}${"=".repeat((4 - value.length % 4) % 4)}`.replace(/-/g, "+").replace(/_/g, "/");
+  return Uint8Array.from(atob(base64), char => char.charCodeAt(0));
+}
+
+function describeDevice() {
+  const agent = navigator.userAgent;
+  if (/iPhone/.test(agent)) return "iPhone";
+  if (/iPad/.test(agent) || isAppleMobile()) return "iPad";
+  if (/Android/.test(agent)) return "Android";
+  return "Dator";
+}
+
+async function enablePushOnThisDevice(publicKey) {
+  const permission = await Notification.requestPermission();
+  if (permission !== "granted") {
+    throw new Error(permission === "denied"
+      ? "Notiser är blockerade för Staff Planner. Tillåt notiser i enhetens eller webbläsarens inställningar och försök igen."
+      : "Du behöver tillåta notiser för att få pushnotiser.");
+  }
+  const registration = await navigator.serviceWorker.ready;
+  // A subscription made with an older server key cannot be reused.
+  await (await registration.pushManager.getSubscription())?.unsubscribe();
+  const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64UrlToBytes(publicKey) });
+  try {
+    await apiRequest("POST", "/push/subscriptions", { ...subscription.toJSON(), device: describeDevice() });
+  } catch (error) {
+    await subscription.unsubscribe().catch(() => {});
+    throw error;
+  }
+}
+
+async function disablePushOnThisDevice() {
+  const subscription = await getPushSubscription();
+  if (!subscription) return;
+  await apiRequest("DELETE", "/push/subscriptions", { endpoint: subscription.endpoint }).catch(error => console.warn("Push device could not be removed:", error));
+  await subscription.unsubscribe();
+}
+
+// Once per visit and user: a device that no longer belongs to this user on the server
+// (someone else signed in on it, or it was turned off everywhere) is turned off here too.
+async function checkPushDevice() {
+  const key = `${PUSH_CHECKED_KEY}:${currentUser?.id}`;
+  if (!currentUser || sessionStorage.getItem(key)) return;
+  sessionStorage.setItem(key, "1");
+  const subscription = await getPushSubscription();
+  if (!subscription) return;
+  const { subscribed } = await apiRequest("POST", "/push/subscriptions/check", { endpoint: subscription.endpoint });
+  if (!subscribed) await subscription.unsubscribe();
+}
+
+async function renderPushSettings(card) {
+  let status;
+  try {
+    status = await apiRequest("GET", "/push");
+  } catch {
+    card.querySelector(".push-settings-body").innerHTML = "<p>Inställningen kunde inte hämtas. Försök igen senare.</p>";
+    return;
+  }
+  const subscription = await getPushSubscription().catch(() => null);
+  const otherDevices = status.devices - (subscription ? 1 : 0);
+  const body = card.querySelector(".push-settings-body");
+  let content;
+  if (status.blocked) {
+    content = `<label class="settings-switch"><input type="checkbox" disabled /><span>Pushnotiser 🔕</span></label>
+      <p>En administratör har stängt av pushnotiser för dig, så du kan inte slå på dem. Du ser fortfarande dina notiser här i Staff Planner.</p>`;
+  } else if (!status.available) {
+    content = "<p>Pushnotiser är inte aktiverade på servern ännu. Du ser dina notiser här i Staff Planner.</p>";
+  } else if (!pushSupported()) {
+    content = isAppleMobile() && !isInstalledApp()
+      ? "<p>På iPhone och iPad fungerar pushnotiser när Staff Planner är tillagd på hemskärmen (iOS 16.4 eller senare): öppna sidan i Safari, tryck på <strong>Dela</strong> och välj <strong>Lägg till på hemskärmen</strong>. Öppna sedan Staff Planner från hemskärmen och slå på pushnotiser här.</p>"
+      : "<p>Den här webbläsaren kan inte ta emot pushnotiser. Prova Chrome, Edge, Firefox eller Safari i en nyare version.</p>";
+  } else {
+    content = `<label class="settings-switch"><input name="pushEnabled" type="checkbox"${subscription ? " checked" : ""} /><span>Pushnotiser på den här enheten</span></label>
+      <small>Loggar du ut stängs pushnotiserna av på den här enheten.</small>
+      ${Notification.permission === "denied" ? "<p>Notiser är blockerade för Staff Planner i enhetens eller webbläsarens inställningar. Tillåt dem där för att kunna slå på pushnotiser.</p>" : ""}`;
+  }
+  body.innerHTML = `${content}
+    ${otherDevices > 0 ? `<div class="settings-actions"><span>Påslaget på ${otherDevices} ${otherDevices === 1 ? "annan enhet" : "andra enheter"}.</span><button class="btn" type="button" data-push-off-everywhere>Stäng av på alla enheter</button></div>` : ""}`;
+  const message = card.querySelector(".push-settings-message");
+  const show = (text, type) => { message.textContent = text; message.className = `inline-message push-settings-message ${type}`; };
+  body.querySelector('[name="pushEnabled"]')?.addEventListener("change", async event => {
+    const input = event.target;
+    input.disabled = true;
+    try {
+      if (input.checked) await enablePushOnThisDevice(status.publicKey);
+      else await disablePushOnThisDevice();
+      show(input.checked ? "Pushnotiser är påslagna på den här enheten." : "Pushnotiser är avstängda på den här enheten.", "success");
+    } catch (error) {
+      show(error.message || "Det gick inte att ändra pushnotiserna.", "error");
+    }
+    await renderPushSettings(card);
+  });
+  body.querySelector("[data-push-off-everywhere]")?.addEventListener("click", async () => {
+    try {
+      await apiRequest("DELETE", "/push/subscriptions", { all: true });
+      await (await getPushSubscription())?.unsubscribe();
+      show("Pushnotiser är avstängda på alla dina enheter.", "success");
+    } catch (error) {
+      show(error.message || "Det gick inte att stänga av pushnotiserna.", "error");
+    }
+    await renderPushSettings(card);
+  });
 }
 
 // Sound notifications: a short chime when someone else sends a chat message or
@@ -9742,7 +9896,8 @@ async function openAppUI(justSignedIn = false) {
   const firstPageThisVisit = !sessionStorage.getItem(ADMIN_LANDED_KEY);
   sessionStorage.setItem(ADMIN_LANDED_KEY, "1");
   if (isAdmin() && firstPageThisVisit && !linked && getCurrentPage() === "index.html") {
-    location.replace("dashboard.html");
+    // Keeps ?chat=1 and the like from a push notification.
+    location.replace(`dashboard.html${location.search}`);
     return;
   }
   setupShareSchedule(); // Before the page is shown, so operators never see the share button.
@@ -9751,8 +9906,9 @@ async function openAppUI(justSignedIn = false) {
   document.getElementById("authScreen")?.classList.add("hidden");
   document.getElementById("appShell")?.classList.remove("hidden");
   finishInitialViewSetup();
-  bindOnce(document.getElementById("logoutBtn"), "click", () => signOut());
+  bindOnce(document.getElementById("logoutBtn"), "click", () => signOut("", { forgetDevice: true }));
   if ("serviceWorker" in navigator && location.protocol.startsWith("http")) navigator.serviceWorker.register("./service-worker.js").catch(error => console.warn("Offline cache could not start", error));
+  void checkPushDevice().catch(error => console.warn("Push check failed:", error));
 
   await loadSharedSettings();
   initializeAppContent();
@@ -9822,7 +9978,7 @@ function renderAuthForm(mode, onSubmit) {
       button.disabled = false;
     }
   });
-  form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut());
+  form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut("", { forgetDevice: true }));
   form.querySelector("input")?.focus();
 }
 

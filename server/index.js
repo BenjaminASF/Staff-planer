@@ -1,6 +1,7 @@
 const { createPool, runMigrations } = require("./db");
 const { createApp } = require("./app");
 const { purgeExpiredProductionRecords } = require("./store");
+const { cleanupPush } = require("./push");
 
 const AUDIT_RETENTION_DAYS = 30;
 const NOTIFICATION_RETENTION_DAYS = 30;
@@ -10,6 +11,7 @@ async function cleanup(pool) {
   await pool.query("DELETE FROM audit_events WHERE created_at < now() - make_interval(days => $1)", [AUDIT_RETENTION_DAYS]);
   await pool.query("DELETE FROM notifications WHERE created_at < now() - make_interval(days => $1)", [NOTIFICATION_RETENTION_DAYS]);
   await purgeExpiredProductionRecords(pool);
+  await cleanupPush(pool);
 }
 
 async function main() {
@@ -22,6 +24,9 @@ async function main() {
   if (!process.env.SETUP_CODE) {
     console.warn("SETUP_CODE är inte satt. Det första admin-kontot kan inte skapas förrän variabeln finns.");
   }
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    console.warn("VAPID_PUBLIC_KEY och VAPID_PRIVATE_KEY är inte satta. Pushnotiser är avstängda tills de finns (se README).");
+  }
 
   const port = Number(process.env.PORT) || 3000;
   const app = createApp({ pool });
@@ -30,6 +35,7 @@ async function main() {
   const shutdown = () => {
     server.close(() => pool.end().finally(() => process.exit(0)));
     void app.locals.realtime.close();
+    void app.locals.push.close();
     setTimeout(() => process.exit(0), 10_000).unref();
   };
   process.on("SIGTERM", shutdown);

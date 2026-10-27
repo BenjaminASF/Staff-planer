@@ -3,7 +3,7 @@ const { HttpError, hashPassword, normalizeUsername, validateUsername, validatePa
 const { withTransaction } = require("../db");
 const {
   ROLES, ROLE_VALUES, normalizeAvailability, isAdmin, roleNeedsShift, canSeeAllPeople, canCreatePerson, editablePersonFields,
-  canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canChangeUsername, canDeleteAccount
+  canDeletePerson, canCreateAccount, canResetPassword, canChangeRole, canChangeUsername, canDeleteAccount, canManagePush
 } = require("../permissions");
 const {
   newId, serializePerson, PERSON_SELECT, getPersonById, purgePersonFromDocuments, deletePersonalDocuments,
@@ -11,6 +11,7 @@ const {
 } = require("../store");
 const { availabilityLabel, cleanPersonFields, cleanText, cleanEmail } = require("../validation");
 const { notifyAdminChange } = require("../notifications");
+const { queuePlacementChange } = require("../push");
 
 async function requirePerson(db, id) {
   const person = await getPersonById(db, id);
@@ -110,6 +111,9 @@ function peopleRoutes({ pool }) {
       if ("shift_id" in changes && person.shiftId && changes.shift_id !== person.shiftId) {
         await clearPersonFromShiftSchedules(client, person.id, person.shiftId, req.user.id);
       }
+      if ("shift_id" in changes && changes.shift_id !== person.shiftId && person.account) {
+        await queuePlacementChange(client, { personId: person.id, actorId: req.user.id });
+      }
       if (changes.availability && changes.availability !== person.availability && person.shiftId) {
         const event = {
           scope: person.shiftId,
@@ -183,6 +187,15 @@ function peopleRoutes({ pool }) {
         const { rows } = await client.query("SELECT 1 FROM users WHERE username = $1", [username]);
         if (rows.length) throw new HttpError(409, "Användarnamnet är redan upptaget.");
         await client.query("UPDATE users SET username = $2, updated_at = now() WHERE person_id = $1", [person.id, username]);
+      }
+      // Only admins turn push notifications off (or on again) for someone else.
+      if ("pushBlocked" in body && body.pushBlocked !== person.account.pushBlocked) {
+        if (!canManagePush(req.user)) throw new HttpError(403, "Endast admin kan stänga av eller slå på pushnotiser för en användare.");
+        if (typeof body.pushBlocked !== "boolean") throw new HttpError(400, "Ogiltigt värde för pushnotiser.");
+        await client.query("UPDATE users SET push_blocked = $2, updated_at = now() WHERE person_id = $1", [person.id, body.pushBlocked]);
+        if (body.pushBlocked) {
+          await client.query("DELETE FROM push_outbox WHERE sent_at IS NULL AND user_id = (SELECT id FROM users WHERE person_id = $1)", [person.id]);
+        }
       }
       if ("password" in body) {
         if (!canResetPassword(req.user, person, person.account)) {

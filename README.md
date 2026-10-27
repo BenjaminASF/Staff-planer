@@ -150,6 +150,30 @@ Klockan uppe till höger visar korta notiser, med en röd siffra för olästa:
 
 Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan räknas notiserna som lästa, och **Rensa alla** tar bort dem. Notiser äldre än 30 dagar tas bort automatiskt.
 
+### Pushnotiser
+
+Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De är ett komplement till notiserna i appen, som finns kvar precis som förut. En pushnotis skickas bara till dem det gäller, aldrig till den som själv gjorde ändringen:
+
+- **Schema och placering:** när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
+- **Chatt** (admin, skiftledare och höger hand): privata meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
+- **Anteckningar:** när en lapp delas med en.
+- **Viktiga uppdateringar:** samma som notiserna i appen om admins ändringar, högst en var femte minut.
+
+Notisen visar bara en kort text som "Ditt schema för vecka 45 har ändrats", aldrig namn eller meddelandetext, och ett tryck på den öppnar rätt sida. Precis innan varje notis skickas kontrollerar servern att personen fortfarande får se det notisen gäller. Chattmeddelanden och notiser som redan har lästs i appen ger ingen pushnotis. Notiser som inte hunnit skickas inom en timme slängs, så ingen får gamla händelser i efterhand.
+
+Varje användare slår på och stänger av pushnotiser för sina egna enheter under **Min profil → Pushnotiser**, och kan också stänga av dem på alla sina enheter på en gång. Den som loggar ut stänger samtidigt av dem på den enheten (inte vid automatisk utloggning). Loggar någon annan in på samma enhet går enhetens notiser inte längre till den förra användaren.
+
+**Admin** kan stänga av pushnotiser för en enskild användare under **Hantera** i användarlistan (Pushnotiser: På/Av). Då får användaren inga pushnotiser alls, oavsett eget val, och kan inte slå på dem själv förrän admin slår på dem igen. Användaren ser fortfarande sina notiser i appen. 🔕 visas vid användaren i personal- och användarlistan för admin, skiftledare och höger hand. Skiftledare och höger hand kan inte ändra inställningen.
+
+**Android** (Chrome, Edge, Firefox, Samsung Internet) och datorer fungerar direkt i webbläsaren. **iPhone och iPad** kräver iOS/iPadOS 16.4 eller senare och att Staff Planner har lagts till på hemskärmen via Safari (**Dela → Lägg till på hemskärmen**). Pushnotiserna slås sedan på inifrån appen på hemskärmen. Telefonens energisparläge och "Stör ej" kan fördröja eller tysta notiser.
+
+Pushnotiserna går via webbläsarnas egna, kostnadsfria pushtjänster (Google, Apple, Mozilla, Microsoft) och är krypterade hela vägen till enheten. Så här slår du på dem:
+
+1. Skapa nycklar en gång: `npx web-push generate-vapid-keys`.
+2. Lägg till variablerna `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` och `VAPID_SUBJECT` (till exempel `mailto:it@er-doman.se`) i Railway.
+
+Utan nycklarna är pushnotiser avstängda, och allt annat fungerar som vanligt. Byt inte nycklarna i onödan: då måste alla slå på pushnotiser igen.
+
 ### Chatt
 
 Admin och skiftledare har en gemensam chatt bakom knappen i nedre högra hörnet. Där kan man skicka text och bilder, och man kan också klistra in en bild direkt. Nya meddelanden visas med en röd siffra på knappen och en kort förhandsvisning. Nya meddelanden syns direkt; som reserv kollar appen också var 15:e sekund, och var 4:e sekund när chatten är öppen.
@@ -188,6 +212,8 @@ TEST_DATABASE_URL=postgres://postgres@localhost:5432/staffplanner_test npm test
 | `RESEND_API_KEY` | API-nyckel från Resend. Behövs för mejl när schemat delas. |
 | `MAIL_FROM` | Avsändare för mejlen, till exempel `Staff Planner <schema@er-doman.se>`. Domänen måste vara verifierad i Resend. |
 | `APP_URL` | Appens adress, som länkas i mejlen. Utan den används adressen som skiftledaren delade schemat från. |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Nycklar för pushnotiser, skapas med `npx web-push generate-vapid-keys`. Utan dem är pushnotiser avstängda. |
+| `VAPID_SUBJECT` | Kontaktadress för pushtjänsterna, till exempel `mailto:it@er-doman.se`. Utan den används `APP_URL` om den börjar med `https://`. |
 
 ## Struktur
 
@@ -195,6 +221,7 @@ TEST_DATABASE_URL=postgres://postgres@localhost:5432/staffplanner_test npm test
 - `server/` innehåller Express-servern:
   - `permissions.js` samlar alla rollregler.
   - `realtime.js` skickar ändringar till öppna sidor i realtid.
+  - `push.js` köar och skickar pushnotiser.
   - `routes/` innehåller API:t.
   - `migrations/` innehåller databasschemat.
   - `test/` innehåller testerna.

@@ -9,16 +9,23 @@ const { adminRoutes, shiftBackupRoutes } = require("./routes/admin");
 const { chatRoutes } = require("./routes/chat");
 const { notificationRoutes } = require("./routes/notifications");
 const { noteRoutes } = require("./routes/notes");
+const { pushRoutes } = require("./routes/push");
 const { createMailer } = require("./mailer");
 const { createRealtimeHub } = require("./realtime");
+const { createPushSender, createPushService } = require("./push");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
-function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy = true, mailer = createMailer(), appUrl = process.env.APP_URL || "" } = {}) {
+function createApp({
+  pool, setupCode = process.env.SETUP_CODE || "", trustProxy = true, mailer = createMailer(), appUrl = process.env.APP_URL || "",
+  pushSender = createPushSender(), pushAutoStart = true
+} = {}) {
   const app = express();
   const realtime = createRealtimeHub(pool);
   // Lets the server end open event streams when it shuts down.
   app.locals.realtime = realtime;
+  // Sends queued push notifications in the background (see push.js).
+  app.locals.push = createPushService({ pool, sender: pushSender, autoStart: pushAutoStart });
   // Railway terminates HTTPS in front of the app; this makes req.secure and req.ip correct.
   if (trustProxy) app.set("trust proxy", 1);
   app.disable("x-powered-by");
@@ -45,6 +52,7 @@ function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy 
   api.use("/chat", chatRoutes({ pool }));
   api.use("/notifications", notificationRoutes({ pool }));
   api.use("/notes", noteRoutes({ pool }));
+  api.use("/push", pushRoutes({ pool, sender: pushSender }));
   api.use(documentRoutes({ pool, mailer, appUrl }));
   api.use((req, res) => res.status(404).json({ error: "Okänd adress." }));
   // eslint-disable-next-line no-unused-vars

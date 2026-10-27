@@ -3,7 +3,7 @@ const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const { canShareNotes, noteShareShifts, canEditNote, canPrioritizeNote } = require("../permissions");
 const { addNotifications } = require("../notifications");
-const { newId } = require("../store");
+const { newId, NOTE_VISIBLE_SQL } = require("../store");
 const { cleanText } = require("../validation");
 
 const MAX_TEXT_LENGTH = 1000;
@@ -13,9 +13,7 @@ const SORT_MODES = ["priority", "newest", "oldest"];
 const LAYOUT_ZONES = ["prio", "rest", "all"];
 
 // Notes the user may see. $1 is the user's id, $2 their shift id (or null).
-const VISIBLE = `(n.author_id = $1 OR (n.kind = 'group' AND (
-  EXISTS (SELECT 1 FROM note_people np WHERE np.note_id = n.id AND np.user_id = $1)
-  OR $2::text = ANY(n.whole_shifts))))`;
+const VISIBLE = NOTE_VISIBLE_SQL;
 
 // Everyone a group note is shared with, apart from its author.
 const RECIPIENTS = `

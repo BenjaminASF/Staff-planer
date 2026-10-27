@@ -5333,6 +5333,7 @@ button {
 .person-account-row { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .person-account-row label { flex: 1 1 170px; }
 .person-account .inline-message { margin-top: 10px; overflow-wrap: anywhere; }
+.person-account-row .person-account-push { flex: 1 1 170px; align-self: center; font-size: 13px; }
 
 .shift-settings-list { display: grid; gap: 8px; }
 .shift-settings-list article,
@@ -5387,6 +5388,7 @@ button {
 .users-filter-bar { flex-wrap: wrap; }
 .users-filter-bar .btn { white-space: nowrap; text-decoration: none; }
 .person-meta .person-role-badge.user-waiting { background: #fff4d6; background: light-dark(#fff4d6, #3a2f12); color: #8a5a00; color: light-dark(#8a5a00, #f3c96b); }
+.person-meta .push-blocked-mark { margin-left: 4px; font-size: 14px; cursor: help; }
 .user-you { color: var(--muted); font-size: 12px; font-weight: 600; }
 @media (max-width: 1050px) { .users-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
 @media (max-width: 640px) { .users-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

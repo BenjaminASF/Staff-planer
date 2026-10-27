@@ -1,14 +1,6 @@
 const { ROLES, isAdmin } = require("./permissions");
-const { newId } = require("./store");
-
-// ISO week number of a "YYYY-MM-DD" date.
-function isoWeekNumber(dateKey) {
-  const date = new Date(`${dateKey}T00:00:00Z`);
-  const thursday = new Date(date);
-  thursday.setUTCDate(date.getUTCDate() + 3 - ((date.getUTCDay() + 6) % 7));
-  const firstThursday = new Date(Date.UTC(thursday.getUTCFullYear(), 0, 4));
-  return 1 + Math.round(((thursday - firstThursday) / 86_400_000 - 3 + ((firstThursday.getUTCDay() + 6) % 7)) / 7);
-}
+const { newId, isoWeekNumber } = require("./store");
+const { queuePush } = require("./push");
 
 // E-mails the operators in a shift that the week's schedule is ready.
 // Operators without a login or e-mail address are skipped.
@@ -47,15 +39,23 @@ const NOTIFICATION_PAGE_SIZE = 50;
 // Logged events that are not changes, so nobody is told about them.
 const NOT_A_CHANGE = new Set(["backup:Backup exporterad"]);
 
+// Each note is also sent as a push notification to the user's devices (see push.js).
+const PUSH_KINDS = Object.freeze({ noteShared: "note", noteAdded: "note", adminChange: "update" });
+
 async function addNotifications(db, userIds, { kind, actorName = "", title = "", detail = "", noteId = null }) {
   const recipients = [...new Set(userIds)].filter(Boolean);
   if (!recipients.length) return 0;
+  const added = [];
   for (const userId of recipients) {
+    const id = newId();
     await db.query(
       "INSERT INTO notifications (id, user_id, kind, actor_name, title, detail, note_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-      [newId(), userId, kind, String(actorName).slice(0, 120), String(title).slice(0, 300), String(detail).slice(0, 500), noteId]
+      [id, userId, kind, String(actorName).slice(0, 120), String(title).slice(0, 300), String(detail).slice(0, 500), noteId]
     );
+    added.push({ userId, notificationId: id });
   }
+  const pushKind = PUSH_KINDS[kind];
+  if (pushKind) await queuePush(db, added, { kind: pushKind, key: pushKind === "note" ? `note:${noteId}` : pushKind });
   return recipients.length;
 }
 

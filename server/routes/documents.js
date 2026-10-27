@@ -12,6 +12,7 @@ const {
 } = require("../store");
 const { cleanText } = require("../validation");
 const { notifyScheduleShared, notifyAdminChange } = require("../notifications");
+const { placementWeek, queueScheduleChange, queueScheduleShared } = require("../push");
 
 // Personal scopes are not looked up: only their owner, who is signed in, gets
 // past the permission check, and others must not learn which user ids exist.
@@ -84,7 +85,9 @@ function documentRoutes({ pool, mailer, appUrl }) {
       if (!value) throw new HttpError(403, "Du kan bara testa och bedöma operatörerna i ditt eget skift.");
     }
     const sharedWeek = sharedWeekKey(key);
-    const wasShared = sharedWeek ? (await readDocuments(pool, scope, [key]))[key]?.value?.shared === true : false;
+    // The version before this save: whether the week was shared, or whose placements change.
+    const previous = sharedWeek || placementWeek(key) ? (await readDocuments(pool, scope, [key]))[key]?.value : undefined;
+    const wasShared = sharedWeek ? previous?.shared === true : false;
     let saved;
     try {
       saved = await writeDocument(pool, { scope, key, value, baseVersion, userId: req.user.id });
@@ -99,12 +102,14 @@ function documentRoutes({ pool, mailer, appUrl }) {
       }
       throw new HttpError(409, "Någon annan har ändrat samma sak samtidigt. Sidan uppdateras med den senaste versionen.", { current });
     }
-    // Sharing a week tells the shift's operators by e-mail. Saving it again while shared does not.
+    // Sharing a week tells the shift's operators by e-mail and push. Saving it again while shared does not.
     if (sharedWeek && !wasShared && req.body.value?.shared === true) {
       saved.notified = await notifyScheduleShared({
         pool, mailer, shiftId: scope, weekKey: sharedWeek, appUrl: appUrl || `${req.protocol}://${req.get("host")}`
       });
+      await queueScheduleShared(pool, { scope, week: sharedWeek, actorId: req.user.id });
     }
+    if (placementWeek(key)) await queueScheduleChange(pool, { scope, key, before: previous, after: value, actorId: req.user.id });
     res.json(saved);
   });
 
