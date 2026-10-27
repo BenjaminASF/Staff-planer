@@ -2,17 +2,16 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  isAdmin, normalizeAvailability, documentCategory, PERSONAL_SCOPE_PREFIX, canReadDocument, canExportShiftBackup
+  isAdmin, normalizeAvailability, documentCategory, canReadDocument, canExportShiftBackup
 } = require("../permissions");
-const { putDocument, newId, isPlainObject, serializeShift, addAuditEvent } = require("../store");
+const { putDocument, isPlainObject, serializeShift, addAuditEvent } = require("../store");
+const { addTodosAsNotes } = require("./notes");
 const { evaluatedPersonIds, onlyFor } = require("../evaluations");
 const { cleanText, cleanEmail, SHIFT_COLORS } = require("../validation");
 
-// Version 3 leaves personal lists out. Version 2 backups kept "Att göra" per shift.
+// Version 2 backups kept "Att göra" per shift; its open tasks are imported as notes.
 const EXPORT_VERSION = 3;
 const IMPORT_VERSIONS = [2, 3];
-const NOT_PERSONAL_SQL = "scope NOT LIKE $1";
-const PERSONAL_SCOPE_PATTERN = `${PERSONAL_SCOPE_PREFIX}%`;
 // A backup of one shift holds only part of the shared documents, so it cannot be imported.
 const SHIFT_BACKUP_KIND = "shift";
 
@@ -56,13 +55,12 @@ function adminRoutes({ pool }) {
   const router = express.Router();
   router.use(requireUser, requireAdmin);
 
-  // Full backup of shifts, staff and app data. Passwords and personal lists
-  // ("Att göra", which only their owner may read) are never exported.
+  // Full backup of shifts, staff and app data. Passwords and notes are never exported.
   router.get("/export", async (req, res) => {
     const [shifts, people, documents] = await Promise.all([
       pool.query("SELECT id, name, color, sort_order FROM shifts ORDER BY sort_order"),
       pool.query("SELECT id, name, company, phone, email, availability, shift_id, demo, created_at FROM people ORDER BY name"),
-      pool.query(`SELECT scope, key, value FROM documents WHERE ${NOT_PERSONAL_SQL} ORDER BY scope, key`, [PERSONAL_SCOPE_PATTERN])
+      pool.query("SELECT scope, key, value FROM documents ORDER BY scope, key")
     ]);
     res.setHeader("Content-Disposition", `attachment; filename="staff-planner-backup-${new Date().toISOString().slice(0, 10)}.json"`);
     res.json({
@@ -98,7 +96,6 @@ function adminRoutes({ pool }) {
       ? validDocs.filter(doc => doc.scope !== "global" && doc.key === "todos" && Array.isArray(doc.value))
         .sort((a, b) => shiftOrder.indexOf(a.scope) - shiftOrder.indexOf(b.scope))
         .flatMap(doc => doc.value)
-        .filter(item => !item?.completedAt && cleanText(item?.text, 1000))
       : [];
     // Each color belongs to one shift: if a backup gives several shifts the same color, the first keeps it.
     const importedColors = new Set();
@@ -110,6 +107,7 @@ function adminRoutes({ pool }) {
       importedColors.add(shift.color);
       return shift.color;
     };
+    let addedNotes = 0;
     await withTransaction(pool, async client => {
       const shiftColors = new Map(payload.shifts
         .filter(shift => shiftIds.has(shift?.id) && cleanText(shift?.name, 60))
@@ -130,13 +128,11 @@ function adminRoutes({ pool }) {
       for (const person of payload.people) {
         await upsertPerson(client, person, shiftIds.has(person?.shiftId) ? person.shiftId : null);
       }
-      await client.query(`DELETE FROM documents WHERE ${NOT_PERSONAL_SQL}`, [PERSONAL_SCOPE_PATTERN]);
+      await client.query("DELETE FROM documents");
       for (const doc of documents) await putDocument(client, doc.scope, doc.key, doc.value, req.user.id);
-      for (const item of oldTodos) {
-        await client.query("INSERT INTO notes (id, author_id, kind, body) VALUES ($1, $2, 'personal', $3)", [newId(), req.user.id, cleanText(item.text, 1000)]);
-      }
+      addedNotes = await addTodosAsNotes(client, req.user.id, oldTodos);
     });
-    res.json({ ok: true, shifts: shiftIds.size, people: payload.people.length, documents: documents.length, todos: oldTodos.length });
+    res.json({ ok: true, shifts: shiftIds.size, people: payload.people.length, documents: documents.length, todos: addedNotes });
   });
 
   // Moves data from the old single-device version. The browser decrypts the old
@@ -147,22 +143,21 @@ function adminRoutes({ pool }) {
     if (!rows.length) throw new HttpError(400, "Välj vilket skift den gamla datan ska höra till.");
     const globalDocs = Object.entries(isPlainObject(global) ? global : {}).filter(([key]) => documentCategory("global", key));
     const shiftDocs = Object.entries(isPlainObject(shift) ? shift : {}).filter(([key]) => documentCategory(shiftId, key));
-    // The old version had one to-do list; its open tasks become the importing admin's own notes.
-    const oldTodos = (isPlainObject(shift) && Array.isArray(shift.todos) ? shift.todos : [])
-      .filter(item => !item?.completedAt && cleanText(item?.text, 1000));
+    // The old version had one to-do list ("todos" in `shift`, see LEGACY_SHIFT_DOCUMENTS in
+    // app.js); its open tasks become the importing admin's own notes.
+    const oldTodos = isPlainObject(shift) ? shift.todos : [];
     const peopleList = Array.isArray(people) ? people : [];
     let importedPeople = 0;
+    let addedNotes = 0;
     await withTransaction(pool, async client => {
       for (const person of peopleList) {
         if (await upsertPerson(client, person, shiftId)) importedPeople += 1;
       }
       for (const [key, value] of globalDocs) await putDocument(client, "global", key, value, req.user.id);
       for (const [key, value] of shiftDocs) await putDocument(client, shiftId, key, value, req.user.id);
-      for (const item of oldTodos) {
-        await client.query("INSERT INTO notes (id, author_id, kind, body) VALUES ($1, $2, 'personal', $3)", [newId(), req.user.id, cleanText(item.text, 1000)]);
-      }
+      addedNotes = await addTodosAsNotes(client, req.user.id, oldTodos);
     });
-    res.json({ ok: true, people: importedPeople, documents: globalDocs.length + shiftDocs.length + oldTodos.length });
+    res.json({ ok: true, people: importedPeople, documents: globalDocs.length + shiftDocs.length, todos: addedNotes });
   });
 
   return router;

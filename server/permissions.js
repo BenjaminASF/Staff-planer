@@ -83,7 +83,7 @@ const SHIFT_DOCUMENTS = [
 ];
 
 // Scopes once used for each user's own "Att göra" list (scope = "user:<user id>").
-// No document lives there any more; backups and shift data still leave them out.
+// Nothing may be stored there any more, so documents and history in them are refused.
 const PERSONAL_SCOPE_PREFIX = "user:";
 const personalScopeOwner = scope => scope.startsWith(PERSONAL_SCOPE_PREFIX) ? scope.slice(PERSONAL_SCOPE_PREFIX.length) : null;
 
@@ -310,7 +310,6 @@ module.exports = {
   GLOBAL_DOCUMENTS,
   WEEKLY_SCHEDULE_PREFIXES,
   PERSONAL_SCOPE_PREFIX,
-  personalScopeOwner,
   ROLE_LEVELS,
   roleLevel,
   assignableRoles,

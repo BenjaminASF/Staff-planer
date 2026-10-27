@@ -87,6 +87,7 @@ const LEGACY_GLOBAL_DOCUMENTS = {
 };
 const LEGACY_SHIFT_DOCUMENTS = {
   staff_schedule_templates_enc: "scheduleTemplates",
+  // The old "Att göra" list. The server turns its open tasks into the admin's own notes.
   staff_todos_enc: "todos",
   staff_production_records_enc: "productionRecords"
 };
@@ -530,7 +531,7 @@ async function apiRequest(method, path, body) {
 }
 
 // Server documents, cached for the life of the page. Reads started in the same
-// tick are sent as one request per scope ("global", a shift id or "user:<id>").
+// tick are sent as one request per scope ("global" or a shift id).
 const documentCache = new Map();
 const documentBatches = new Map();
 const documentSaveQueues = new Map();
@@ -6615,7 +6616,8 @@ function openLegacyImportDialog(data, source) {
       try {
         const decrypted = await decryptLegacyData(data, form.elements.password.value);
         const shiftName = getShiftName(form.elements.shiftId.value);
-        const documentCount = Object.keys(decrypted.global).length + Object.keys(decrypted.shift).length;
+        // The old to-do list becomes notes, not a data item.
+        const documentCount = Object.keys(decrypted.global).length + Object.keys(decrypted.shift).filter(key => key !== "todos").length;
         if (!confirm(`${decrypted.people.length} personer och ${documentCount} dataposter flyttas till skiftet ${shiftName}. Fortsätt?`)) {
           status.textContent = "";
           return;
@@ -6630,7 +6632,8 @@ function openLegacyImportDialog(data, source) {
         if (source === "local" && confirm("Datan finns nu på servern. Vill du ta bort den gamla krypterade kopian från den här enheten?")) {
           removeLegacyLocalData();
         }
-        showAppToast(`Klart: ${result.people} personer och ${result.documents} dataposter flyttades in${decrypted.skipped ? `, ${decrypted.skipped} skadade poster hoppades över` : ""}.`);
+        const todoNote = result.todos ? ` ${result.todos} öppna uppgifter lades som lappar under Mina anteckningar.` : "";
+        showAppToast(`Klart: ${result.people} personer och ${result.documents} dataposter flyttades in${decrypted.skipped ? `, ${decrypted.skipped} skadade poster hoppades över` : ""}.${todoNote}`);
         close(true);
         setTimeout(() => location.reload(), 900);
       } catch (error) {

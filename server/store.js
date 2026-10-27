@@ -332,11 +332,6 @@ async function addAuditEvent(db, { scope, type = "", title = "", detail = "", un
   return id;
 }
 
-// Removes any documents left in the personal scope of the login that belongs to a person.
-async function deletePersonalDocuments(db, personId) {
-  await db.query("DELETE FROM documents WHERE scope IN (SELECT $2 || id FROM users WHERE person_id = $1)", [personId, PERSONAL_SCOPE_PREFIX]);
-}
-
 module.exports = {
   newId,
   serializeShift,
@@ -347,7 +342,6 @@ module.exports = {
   writeDocument,
   putDocument,
   purgePersonFromDocuments,
-  deletePersonalDocuments,
   clearPersonFromShiftSchedules,
   currentWeekKey,
   productionRetentionStart,
