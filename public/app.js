@@ -5760,7 +5760,7 @@ function getScheduleDayForDate(dateKey) {
 }
 
 // Which lines the schedule mans on one day. A line is manned when every place on it has a scheduled
-// person who is available and has the competence. A person counts on one line only; a place that
+// operator who is available and has the competence. A person counts on one line only; a place that
 // belongs to several lines (Logimark on line 2 and 3) is shared by them, as set in the settings.
 function getScheduledLines({ schedule, trainingLocations, day, peopleById, skills, restrictions, record }) {
   // A person in training at a place staffs it when nobody else is scheduled there.
@@ -5776,6 +5776,8 @@ function getScheduledLines({ schedule, trainingLocations, day, peopleById, skill
       const person = peopleById.get(personId);
       if (!personId) return [`${workplace}: ingen schemalagd`];
       if (!person) return [`${workplace}: den schemalagda personen finns inte längre`];
+      // Shift leaders and admins are not counted as operators on the lines.
+      if (!isOperatorStaff(person)) return [`${workplace}: ${person.name} är ${ROLE_LABELS[person.account.role].toLocaleLowerCase("sv-SE")} och räknas inte som operatör`];
       const status = getPersonAvailability(person);
       if (status !== "available") return [`${workplace}: ${person.name} är ${getAvailabilityLabel(status).toLocaleLowerCase("sv-SE")}`];
       const gaps = workplaceSkillGaps(personId, workplace, skills, restrictions);
@@ -5891,7 +5893,7 @@ async function getAdminDashboardData() {
     const todayRecord = days.find(record => record.date === today);
     return {
       shift, leaders, operators, available,
-      absent: staff.filter(person => getPersonAvailability(person) !== "available"),
+      absent: operators.filter(person => getPersonAvailability(person) !== "available"),
       days,
       todayRecord,
       reportedToday: Boolean(todayRecord),
@@ -5943,7 +5945,9 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
   const stats = [
     ["Bemannade linjer", `${staffed} av ${lines.length}`, capacityState(staffed, lines.length)],
     ["Personalen räcker till", unknown ? "Okänt" : `${capacity.runnable} av ${lines.length}`, unknown ? "warn" : capacityState(capacity.runnable, lines.length)],
-    [`Behövs för alla ${lines.length} linjer`, unknown ? "Okänt" : `${capacity.places} ${capacity.places === 1 ? "person" : "personer"}`, unknown ? "warn" : available.length >= capacity.places ? "good" : "bad"],
+    // The operators the places need, plus the shift leader on top of them.
+    [`Behövs för alla ${lines.length} linjer`, unknown ? "Okänt" : `${capacity.places} + skiftledare`, unknown ? "warn" : available.length >= capacity.places ? "good" : "bad",
+      unknown ? "" : `${capacity.places + 1} personer totalt`],
     ["Tillgänglig personal", `${available.length} av ${operators.length}`, unknown ? "warn" : capacityState(available.length, capacity.places)]
   ];
   const missing = unknown ? 0 : capacity.places - available.length;
@@ -5960,7 +5964,7 @@ function adminLinesHtml(data, { today, linesDate, linesDay }) {
     <details class="admin-section admin-capacity-block" data-admin-section="capacity:${escapeHtml(shift.id)}"${adminSectionOpen(`capacity:${shift.id}`)}>
       <summary class="admin-section-toggle"><span class="admin-label">Produktionskapacitet</span><span class="admin-muted">${escapeHtml(formatLinesDate(linesDate, today))}</span></summary>
       <div class="admin-capacity-content">
-      <div class="admin-capacity-stats">${stats.map(([label, value, state]) => `<div class="admin-stat ${state}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong></div>`).join("")}</div>
+      <div class="admin-capacity-stats">${stats.map(([label, value, state, note]) => `<div class="admin-stat ${state}"><span>${escapeHtml(label)}</span><strong>${escapeHtml(value)}</strong>${note ? `<small>${escapeHtml(note)}</small>` : ""}</div>`).join("")}</div>
       <details class="admin-capacity-details" data-admin-section="details:${escapeHtml(shift.id)}"${adminSectionOpen(`details:${shift.id}`)}>
         <summary><span class="show-label">Visa detaljer</span><span class="hide-label">Dölj detaljer</span></summary>
         <div class="admin-capacity-body">
@@ -5999,7 +6003,7 @@ function adminLineRulesHtml() {
   return `<details class="card admin-rules"${gaps.length ? " open" : ""}>
     <summary><h3>Regler för linjebemanning</h3>${gaps.length ? `<span class="admin-pill warn">${gaps.length} ${gaps.length === 1 ? "regel behöver" : "regler behöver"} definieras</span>` : '<span class="admin-muted">Från inställningar och kompetens</span>'}</summary>
     ${gaps.length ? `<div class="admin-rules-gaps"><strong>Behöver definieras innan linjerna kan räknas:</strong><ul>${gaps.map(gap => `<li>${escapeHtml(gap)}</li>`).join("")}</ul></div>` : ""}
-    <p class="admin-sub">En linje är bemannad när varje plats på linjen har en schemalagd operatör som är Tillgänglig och har platsens kompetens, utan GD-begränsning på GD. En operatör med Utbildning på platsen i schemat bemannar den också, men får ingen kompetens av utbildningen; saknad kompetens visas under Under utbildning. En operatör räknas bara på en linje, utom på en plats som delas av flera linjer. I produktion betyder att produktion är rapporterad för linjens maskin den dagen. Om skiftet kan köra alla linjer räknas fram från alla tillgängliga operatörer och deras kompetens.${sharedText} Platserna per linje ändras under Inställningar → Rastlinjer, och kompetenskraven under Kompetens.</p>
+    <p class="admin-sub">En linje är bemannad när varje plats på linjen har en schemalagd operatör som är Tillgänglig och har platsens kompetens, utan GD-begränsning på GD. En operatör med Utbildning på platsen i schemat bemannar den också, men får ingen kompetens av utbildningen; saknad kompetens visas under Under utbildning. En operatör räknas bara på en linje, utom på en plats som delas av flera linjer. I produktion betyder att produktion är rapporterad för linjens maskin den dagen. Om skiftet kan köra alla linjer räknas fram från alla tillgängliga operatörer och deras kompetens. Skiftledare och admin räknas inte.${sharedText} Platserna per linje ändras under Inställningar → Rastlinjer, och kompetenskraven under Kompetens.</p>
     <div class="admin-rules-lines">${lineIds.map(lineId => `<div><h4>${escapeHtml(lineLabel(lineId))}</h4><ul>${getLineWorkplaces(lineId).map(workplace => placeHtml(workplace, lineId)).join("") || "<li>Inga platser</li>"}</ul></div>`).join("")}</div>
   </details>`;
 }
@@ -6013,7 +6017,6 @@ function adminShiftCardHtml(data, context) {
   const target = isToday ? data.todayTarget : data.monthTarget;
   const progress = target ? produced / target : 0;
   const notReported = isToday && !data.reportedToday;
-  const absentOperators = operators.length - available.length;
   return `<article class="card admin-shift-card${shiftColorClass(shift)}${shift.id === getShiftScope() ? " is-active-shift" : ""}" data-shift-id="${escapeHtml(shift.id)}">
     <div class="admin-shift-head">
       <div><h3>${shiftColorDot(shift.id)}Skift ${escapeHtml(shift.name)}</h3><small>${leaders.length ? `Skiftledare: ${leaders.map(person => escapeHtml(person.name)).join(", ")}` : "Ingen skiftledare"}</small></div>
@@ -6030,7 +6033,7 @@ function adminShiftCardHtml(data, context) {
     </div>
     ${adminLinesHtml(data, context)}
     <div class="admin-shift-footer">
-    <div><span class="admin-pill ${absent.length ? "bad" : "good"}">${absent.length ? `${absent.length} frånvarande` : "Alla på plats"}</span>${absentOperators !== absent.length && absent.length ? ` <span class="admin-muted">varav ${absentOperators} operatörer</span>` : ""}</div>
+    <div><span class="admin-pill ${absent.length ? "bad" : "good"}">${absent.length ? `${absent.length} frånvarande` : "Alla på plats"}</span></div>
     <div class="admin-shift-actions">
       <details class="admin-shift-menu" data-popover>
         <summary class="btn">Fler inställningar</summary>
@@ -6151,7 +6154,7 @@ async function renderAdminDashboard(root) {
     </section>
     <section class="admin-columns">
       <details class="card admin-section admin-section-card" data-admin-section="competence"${adminSectionOpen("competence")}><summary class="admin-section-toggle"><h3>Kompetens per skift</h3></summary><p class="admin-sub">Tillgängliga med kompetensen / alla operatörer på skiftet. Grönt = marginal, gult = precis, rött = räcker inte för alla linjer.</p>${adminCompetenceTableHtml(data)}</details>
-      <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Ej tillgängliga och lediga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
+      <div class="card"><h3>Frånvaro idag</h3><p class="admin-sub">Operatörer som är ej tillgängliga eller lediga.</p><div class="admin-absence">${adminAbsenceHtml(shiftData)}</div></div>
     </section>
     <section id="adminAuditSection"${adminAuditOpen ? "" : " hidden"}>${auditCardHtml(events)}</section>
   `;
