@@ -187,20 +187,62 @@ describe("anteckningar", () => {
     assert.ok(!(await operator.get("/api/notifications")).data.notifications.some(note => note.noteId === id));
   });
 
-  test("open tasks from the old Att göra list become personal notes", async () => {
+  test("open tasks from the old Att göra list become notes, shared ones still shared", async () => {
     const task = (text, extra = {}) => ({ id: text, text, createdAt: "2026-10-14T08:00:00.000Z", completedAt: "", ...extra });
     await server.pool.query("INSERT INTO documents (scope, key, value) VALUES ($1, 'todos', $2)", [
-      `user:${leaderUser.id}`, JSON.stringify([task("Beställ handskar", { sharedWith: [adminUser.id] }), task("Klar sak", { completedAt: "2026-10-15T08:00:00.000Z" }), task("  ")])
+      `user:${leaderUser.id}`, JSON.stringify([
+        task("Beställ handskar", { sharedWith: [adminUser.id, operatorUser.id, "no-such-user", leaderUser.id] }),
+        task("Fel datum", { createdAt: "2026-02-30T10:00:00Z" }),
+        task("Inget datum", { createdAt: 42 }),
+        task("Klar sak", { completedAt: "2026-10-15T08:00:00.000Z" }),
+        task("  "),
+        "inte en uppgift"
+      ])
     ]);
     await server.pool.query("INSERT INTO notifications (id, user_id, kind, title) VALUES ('old', $1, 'todoShared', 'Beställ handskar')", [adminUser.id]);
-    await server.pool.query(fs.readFileSync(path.join(__dirname, "..", "migrations", "016_todos_to_notes.sql"), "utf8"));
-    const mine = (await notesOf(leader)).notes.filter(note => note.kind === "personal");
-    assert.deepEqual(mine.map(note => note.text), ["Beställ handskar"]);
-    assert.ok(!(await notesOf(admin)).notes.some(note => note.text === "Beställ handskar"), "the moved note is private");
+    const migration = fs.readFileSync(path.join(__dirname, "..", "migrations", "016_todos_to_notes.sql"), "utf8");
+    await server.pool.query(migration);
+    await server.pool.query(migration);
+
+    const moved = (await notesOf(leader)).notes.filter(note => ["Beställ handskar", "Fel datum", "Inget datum", "Klar sak"].includes(note.text));
+    assert.deepEqual(moved.map(note => [note.text, note.kind]).sort(), [["Beställ handskar", "group"], ["Fel datum", "personal"], ["Inget datum", "personal"]]);
+    const shared = moved.find(note => note.kind === "group");
+    assert.equal(shared.authorId, leaderUser.id, "the owner of the list writes the note");
+    assert.deepEqual(shared.recipients.map(person => person.id), [adminUser.id], "only those who could see the task: not operators, not unknown ids");
+    const adminView = (await notesOf(admin)).notes.find(note => note.id === shared.id);
+    assert.equal(adminView?.unread, false, "it was already seen, so it is not new");
+    assert.ok(!ids((await notesOf(operator)).notes).includes(shared.id));
     assert.equal((await server.pool.query("SELECT count(*)::int AS n FROM documents WHERE key = 'todos'")).rows[0].n, 0);
     assert.ok(!(await admin.get("/api/notifications")).data.notifications.some(note => note.kind === "todoShared"));
     assert.equal((await leader.put(`/api/documents/user:${leaderUser.id}/todos`, { value: [], baseVersion: 0 })).status, 400, "the old list can no longer be saved");
+    assert.equal((await leader.get(`/api/documents?scope=user:${leaderUser.id}&keys=todos`)).status, 404);
     assert.equal((await leader.get("/api/todos/shared")).status, 404);
+
+    // The leader may keep the admin, who is outside their shift, but not add someone new from outside.
+    const kept = await leader.patch(`/api/notes/${shared.id}`, { people: [adminUser.id, operatorUser.id] });
+    assert.equal(kept.status, 200, JSON.stringify(kept.data));
+    assert.deepEqual(kept.data.note.recipients.map(person => person.id).sort(), [adminUser.id, operatorUser.id].sort());
+    assert.equal((await leader.patch(`/api/notes/${shared.id}`, { people: [adminUser.id, otherOperatorUser.id] })).status, 403);
+  });
+
+  test("restoring the same old backup again does not duplicate its tasks", async () => {
+    const backup = (await admin.get("/api/admin/export")).data;
+    backup.version = 2;
+    backup.documents.push({ scope: dayShift.id, key: "todos", value: [
+      { id: "a", text: "Byt filter på GD1", completedAt: "" },
+      { id: "b", text: "Byt filter på GD1", completedAt: "" },
+      { id: "c", text: "Klar", completedAt: "2026-10-01T08:00:00.000Z" }
+    ] });
+    const first = await admin.post("/api/admin/import", backup);
+    assert.equal(first.status, 200, JSON.stringify(first.data));
+    assert.equal(first.data.todos, 2, "two open tasks, kept as two notes");
+    const second = await admin.post("/api/admin/import", backup);
+    assert.equal(second.data.todos, 0);
+    const legacy = await admin.post("/api/admin/import-legacy", { shiftId: dayShift.id, people: [], global: {}, shift: { todos: [{ text: "Byt filter på GD1" }, { text: "Ring leverantören" }] } });
+    assert.equal(legacy.status, 200, JSON.stringify(legacy.data));
+    assert.deepEqual([legacy.data.documents, legacy.data.todos], [0, 1], "the old list is not counted as a data item");
+    const texts = (await notesOf(admin)).notes.filter(note => note.kind === "personal").map(note => note.text).sort();
+    assert.deepEqual(texts, ["Byt filter på GD1", "Byt filter på GD1", "Ring leverantören"]);
   });
 
   test("the sort order is a personal preference", async () => {

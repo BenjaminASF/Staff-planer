@@ -2,7 +2,7 @@ const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
-  isAdmin, isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScopeOwner,
+  isAdmin, isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope,
   sharedFlagKey, weekRequiringShare, mayChangeProductionTargets, evaluatesEveryone
 } = require("../permissions");
 const { isPersonScoped, evaluatedPersonIds, onlyFor, mergeFor } = require("../evaluations");
@@ -13,10 +13,8 @@ const {
 const { cleanText } = require("../validation");
 const { notifyScheduleShared, notifyAdminChange } = require("../notifications");
 
-// Personal scopes are not looked up: only their owner, who is signed in, gets
-// past the permission check, and others must not learn which user ids exist.
 async function assertScopeExists(db, scope) {
-  if (scope === "global" || personalScopeOwner(scope)) return;
+  if (scope === "global") return;
   const { rows } = await db.query("SELECT 1 FROM shifts WHERE id = $1", [scope]);
   if (!rows.length) throw new HttpError(404, "Skiftet finns inte.");
 }

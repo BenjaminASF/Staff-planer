@@ -112,7 +112,9 @@ const idList = (value, label) => {
 };
 
 // Checks the chosen people and whole shifts against what the user may share with.
-async function cleanSharing(db, user, body) {
+// Recipients already on the note (`kept`) may stay even if they are outside those shifts
+// now, for example after moving shift or when the note came from a shared to-do task.
+async function cleanSharing(db, user, body, kept = { people: [], wholeShifts: [] }) {
   if (!canShareNotes(user)) throw new HttpError(403, "Bara admin, skiftledare och höger hand kan dela anteckningar.");
   const people = idList(body.people, "personer").filter(id => id !== user.id);
   const wholeShifts = idList(body.wholeShifts, "skift");
@@ -120,7 +122,7 @@ async function cleanSharing(db, user, body) {
   if (wholeShifts.length) {
     const { rows } = await db.query("SELECT id FROM shifts WHERE id = ANY($1::text[])", [wholeShifts]);
     if (rows.length !== wholeShifts.length) throw new HttpError(400, "Skiftet finns inte.");
-    if (allowed && !wholeShifts.every(id => allowed.includes(id))) throw new HttpError(403, "Du kan bara dela med personer i ditt eget skift.");
+    if (allowed && !wholeShifts.every(id => allowed.includes(id) || kept.wholeShifts.includes(id))) throw new HttpError(403, "Du kan bara dela med personer i ditt eget skift.");
   }
   if (people.length) {
     const { rows } = await db.query(
@@ -128,7 +130,7 @@ async function cleanSharing(db, user, body) {
       [people]
     );
     if (rows.length !== people.length) throw new HttpError(400, "En av mottagarna finns inte.");
-    if (allowed && !rows.every(row => allowed.includes(row.shift_id))) throw new HttpError(403, "Du kan bara dela med personer i ditt eget skift.");
+    if (allowed && !rows.every(row => allowed.includes(row.shift_id) || kept.people.includes(row.id))) throw new HttpError(403, "Du kan bara dela med personer i ditt eget skift.");
   }
   return { people, wholeShifts };
 }
@@ -147,6 +149,24 @@ function cleanLayout(value) {
     mode: value.mode,
     position: { zone: position.zone, x: number("x", 0, 20000), y: number("y", 0, 50000), w: number("w", 120, 800), h: number("h", 120, 800), z: number("z", 0, 1e9) }
   };
+}
+
+// Open tasks from an old "Att göra" list become the user's own notes, in order. A task
+// that already is one of the user's own notes is skipped, so importing the same backup
+// again adds nothing twice. Returns how many notes were added.
+async function addTodosAsNotes(db, userId, items) {
+  const texts = (Array.isArray(items) ? items : [])
+    .filter(item => item && typeof item === "object" && !item.completedAt)
+    .map(item => cleanText(item.text, MAX_TEXT_LENGTH))
+    .filter(Boolean);
+  if (!texts.length) return 0;
+  const { rows } = await db.query("SELECT body FROM notes WHERE author_id = $1 AND kind = 'personal'", [userId]);
+  const existing = new Set(rows.map(row => row.body));
+  const added = texts.filter(text => !existing.has(text));
+  for (const text of added) {
+    await db.query("INSERT INTO notes (id, author_id, kind, body) VALUES ($1, $2, 'personal', $3)", [newId(), userId, text]);
+  }
+  return added.length;
 }
 
 const snippet = text => text.length > 120 ? `${text.slice(0, 119)}…` : text;
@@ -237,7 +257,7 @@ function noteRoutes({ pool }) {
         const sharing = await cleanSharing(db, req.user, {
           people: body.people ?? previousPeople,
           wholeShifts: body.wholeShifts ?? current.whole_shifts
-        });
+        }, { people: previousPeople, wholeShifts: current.whole_shifts });
         await db.query("UPDATE notes SET whole_shifts = $2 WHERE id = $1", [current.id, sharing.wholeShifts]);
         await db.query("DELETE FROM note_people WHERE note_id = $1", [current.id]);
         for (const userId of sharing.people) await db.query("INSERT INTO note_people (note_id, user_id) VALUES ($1, $2)", [current.id, userId]);
@@ -310,4 +330,4 @@ function noteRoutes({ pool }) {
   return router;
 }
 
-module.exports = { noteRoutes };
+module.exports = { noteRoutes, addTodosAsNotes };
