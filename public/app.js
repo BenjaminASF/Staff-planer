@@ -142,7 +142,6 @@ const PAGE_ACCESS = {
   "maskiner.html": [ROLES.ADMIN, ROLES.LEADER],
   "maskinhantering.html": [ROLES.ADMIN, ROLES.LEADER],
   "bedomning.html": [ROLES.ADMIN, ROLES.LEADER],
-  "todo.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "anteckningar.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
   "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
@@ -2048,239 +2047,6 @@ async function saveScheduleTemplates(templates) {
   await saveShiftDocument("scheduleTemplates", templates);
 }
 
-// "Att göra" is personal: every user has their own list, which nobody else sees.
-// A task's `sharedWith` lists the user ids it is shared with; they see it read-only.
-const getPersonalScope = () => currentUser ? `user:${currentUser.id}` : "";
-
-async function getTodos() {
-  if (!currentUser) return [];
-  const todos = await getDocument(getPersonalScope(), "todos", []);
-  return Array.isArray(todos) ? todos : [];
-}
-
-async function saveTodos(todos) {
-  await saveDocument(getPersonalScope(), "todos", todos);
-}
-
-function getTodoWeekKey(dateValue = new Date()) {
-  const date = new Date(dateValue);
-  const day = date.getDay();
-  const monday = new Date(date);
-  monday.setDate(date.getDate() - day + (day === 0 ? -6 : 1));
-  monday.setHours(0, 0, 0, 0);
-  return formatDateKey(monday);
-}
-
-function getTodoDayKey(dateValue = new Date()) {
-  return formatDateKey(new Date(dateValue));
-}
-
-async function renderTodoList() {
-  const list = document.getElementById("todoList");
-  const count = document.getElementById("todoCount");
-  const notice = document.getElementById("todoNotice");
-  if (!list) return;
-  void renderSharedTodos();
-
-  const currentWeek = getTodoWeekKey();
-  const currentDay = getTodoDayKey();
-  const storedTodos = await getTodos();
-  const todos = storedTodos
-    .map(todo => ({
-      ...todo,
-      createdWeek: todo.createdWeek || getTodoWeekKey(todo.createdAt || new Date()),
-      completedDay: todo.completedAt
-        ? (todo.completedDay || getTodoDayKey(todo.completedAt))
-        : ""
-    }))
-    .filter(todo => !todo.completedAt || todo.completedDay === currentDay);
-  if (todos.length !== storedTodos.length || todos.some((todo, index) =>
-    todo.createdWeek !== storedTodos[index]?.createdWeek ||
-    todo.completedDay !== (storedTodos[index]?.completedDay || "")
-  )) {
-    await saveTodos(todos);
-  }
-
-  const remaining = todos.filter(todo => !todo.completedAt);
-  const overdue = remaining.filter(todo => todo.createdWeek < currentWeek);
-  list.innerHTML = "";
-  if (count) count.textContent = `${remaining.length} ${remaining.length === 1 ? "uppgift kvar" : "uppgifter kvar"}`;
-  if (notice) {
-    notice.classList.toggle("hidden", overdue.length === 0);
-    notice.textContent = overdue.length === 1
-      ? "Du har 1 uppgift från förra veckan som inte är klar."
-      : `Du har ${overdue.length} uppgifter från tidigare veckor som inte är klara.`;
-  }
-
-  if (!todos.length) {
-    list.innerHTML = '<div class="todo-empty"><strong>Allt är klart!</strong><span>Lägg till en ny uppgift ovan.</span></div>';
-    return;
-  }
-
-  const recipients = await getTodoRecipients();
-  todos.forEach(todo => {
-    const item = document.createElement("div");
-    const label = document.createElement("label");
-    const checkbox = document.createElement("input");
-    const text = document.createElement("span");
-    const isComplete = Boolean(todo.completedAt);
-    const isOverdue = !isComplete && todo.createdWeek < currentWeek;
-    item.className = `todo-item${isComplete ? " is-complete" : ""}${isOverdue ? " is-overdue" : ""}`;
-    label.className = "todo-item-main";
-    checkbox.type = "checkbox";
-    checkbox.checked = isComplete;
-    checkbox.setAttribute("aria-label", `Markera ${todo.text} som klar`);
-    text.textContent = todo.text;
-    label.append(checkbox, text);
-    item.append(label);
-    if (isOverdue) {
-      const overdueLabel = document.createElement("small");
-      overdueLabel.textContent = "Inte klar från förra veckan";
-      item.append(overdueLabel);
-    }
-    const shareButton = document.createElement("button");
-    shareButton.type = "button";
-    shareButton.className = "btn todo-share-button";
-    shareButton.textContent = "Dela";
-    shareButton.setAttribute("aria-label", `Dela ${todo.text}`);
-    shareButton.setAttribute("aria-expanded", "false");
-    shareButton.addEventListener("click", () => toggleTodoSharePanel(item, shareButton, todo, recipients));
-    item.append(shareButton);
-    const sharedNames = getTodoSharedWith(todo).map(id => recipients.find(recipient => recipient.id === id)?.name).filter(Boolean);
-    if (sharedNames.length) {
-      const sharedLabel = document.createElement("p");
-      sharedLabel.className = "todo-shared-with";
-      sharedLabel.textContent = `Delad med ${sharedNames.join(", ")}`;
-      item.append(sharedLabel);
-    }
-    checkbox.addEventListener("change", async () => {
-      todo.completedAt = checkbox.checked ? new Date().toISOString() : "";
-      todo.completedWeek = checkbox.checked ? currentWeek : "";
-      todo.completedDay = checkbox.checked ? currentDay : "";
-      await saveTodos(todos);
-      await renderTodoList();
-    });
-    list.appendChild(item);
-  });
-}
-
-const getTodoSharedWith = todo => Array.isArray(todo.sharedWith) ? todo.sharedWith.filter(id => typeof id === "string") : [];
-
-// The users a task can be shared with: everyone else who has a list of their own.
-async function getTodoRecipients() {
-  try {
-    return (await apiRequest("GET", "/todos/recipients")).recipients || [];
-  } catch (error) {
-    console.warn("Could not load who tasks can be shared with:", error);
-    return [];
-  }
-}
-
-// Picks exactly who one task is shared with. Saved into the latest list so
-// tasks added meanwhile on another device are kept.
-function toggleTodoSharePanel(item, button, todo, recipients) {
-  const open = item.querySelector(".todo-share-panel");
-  if (open) {
-    open.remove();
-    button.setAttribute("aria-expanded", "false");
-    return;
-  }
-  const selected = new Set(getTodoSharedWith(todo));
-  const panel = document.createElement("form");
-  panel.className = "todo-share-panel";
-  panel.innerHTML = recipients.length
-    ? `<fieldset><legend>Dela med</legend>${recipients.map(recipient => `<label><input type="checkbox" value="${escapeHtml(recipient.id)}"${selected.has(recipient.id) ? " checked" : ""} /> ${escapeHtml(recipient.name)}</label>`).join("")}</fieldset>
-      <p class="todo-share-hint">Bara de du väljer ser uppgiften. De kan inte ändra den.</p>
-      <div class="todo-share-actions"><button class="btn" type="button" data-share-cancel>Avbryt</button><button class="btn primary" type="submit">Spara</button></div>`
-    : '<p class="todo-share-hint">Det finns ingen att dela med ännu.</p><div class="todo-share-actions"><button class="btn" type="button" data-share-cancel>Stäng</button></div>';
-  panel.querySelector("[data-share-cancel]").addEventListener("click", () => {
-    panel.remove();
-    button.setAttribute("aria-expanded", "false");
-    button.focus();
-  });
-  panel.addEventListener("submit", async event => {
-    event.preventDefault();
-    const sharedWith = [...panel.querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
-    const todos = await getTodos();
-    const stored = todos.find(entry => entry.id === todo.id);
-    if (!stored) return renderTodoList();
-    if (sharedWith.length) stored.sharedWith = sharedWith;
-    else delete stored.sharedWith;
-    await saveTodos(todos);
-    showAppToast(sharedWith.length ? "Uppgiften är delad." : "Uppgiften delas inte längre.");
-    await renderTodoList();
-  });
-  item.append(panel);
-  button.setAttribute("aria-expanded", "true");
-  panel.querySelector("input, button")?.focus();
-}
-
-// Tasks others have shared with me, grouped by owner. Read-only.
-async function renderSharedTodos() {
-  const list = document.getElementById("sharedTodoList");
-  if (!list) return;
-  const count = document.getElementById("sharedTodoCount");
-  let items;
-  try {
-    items = (await apiRequest("GET", "/todos/shared")).items || [];
-  } catch (error) {
-    console.warn("Could not load shared tasks:", error);
-    return;
-  }
-  const currentDay = getTodoDayKey();
-  const visible = items.filter(item => !item.completedAt || (item.completedDay || getTodoDayKey(item.completedAt)) === currentDay);
-  const remaining = visible.filter(item => !item.completedAt).length;
-  if (count) count.textContent = `${remaining} ${remaining === 1 ? "uppgift kvar" : "uppgifter kvar"}`;
-  if (!visible.length) {
-    list.innerHTML = '<div class="todo-empty"><span>Ingen har delat någon uppgift med dig.</span></div>';
-    return;
-  }
-  const owners = [...new Map(visible.map(item => [item.ownerId, item.ownerName])).entries()];
-  list.innerHTML = owners.map(([ownerId, ownerName]) => `<div class="todo-shared-owner"><h4>Från ${escapeHtml(ownerName)}</h4>${visible
-    .filter(item => item.ownerId === ownerId)
-    .map(item => `<div class="todo-item is-shared${item.completedAt ? " is-complete" : ""}"><span class="todo-shared-state" aria-hidden="true">${item.completedAt ? "✓" : "○"}</span><span>${escapeHtml(item.text)}</span>${item.completedAt ? '<small class="todo-shared-done">Klar</small>' : ""}</div>`)
-    .join("")}</div>`).join("");
-}
-
-function setupTodoPage() {
-  const form = document.getElementById("todoForm");
-  const input = document.getElementById("todoInput");
-  if (!form || !input || form.dataset.bound === "true") return;
-  form.dataset.bound = "true";
-  const scheduleEndOfDayCleanup = () => {
-    const now = new Date();
-    const nextDay = new Date(now);
-    nextDay.setHours(24, 0, 1, 0);
-    window.setTimeout(async () => {
-      await renderTodoList();
-      scheduleEndOfDayCleanup();
-    }, nextDay.getTime() - now.getTime());
-  };
-  scheduleEndOfDayCleanup();
-  form.addEventListener("submit", async event => {
-    event.preventDefault();
-    const text = input.value.trim();
-    if (!text) {
-      input.focus();
-      return;
-    }
-    const todos = await getTodos();
-    todos.push({
-      id: makeId(),
-      text,
-      createdAt: new Date().toISOString(),
-      createdWeek: getTodoWeekKey(),
-      completedAt: "",
-      completedWeek: "",
-      completedDay: ""
-    });
-    await saveTodos(todos);
-    form.reset();
-    await renderTodoList();
-    input.focus();
-  });
-}
-
 function enhanceAppShell() {
   const main = document.querySelector(".main");
   const appShell = document.getElementById("appShell");
@@ -2308,7 +2074,6 @@ function enhanceAppShell() {
     "maskiner.html": "Registrerad kompetens används för att varna och hjälpa autoschemat.",
     "testresultat.html": "Sök fram en person och registrera resultaten per maskin eller avdelning.",
     "bedomning.html": "Spara återkommande bedömningar för att se utveckling över tid.",
-    "todo.html": "Uppgifter som inte blir klara följer med som påminnelser till nästa vecka.",
     "anteckningar.html": "Flaggan uppe till vänster på en lapp markerar den som prioriterad, så hamnar den överst.",
     "produktion.html": "Allt du skriver sparas automatiskt. Förra månadens dagar tas bort den 10:e.",
     "rast.html": isOperator()
@@ -2623,7 +2388,7 @@ async function renderSettings() {
   }));
   root.querySelectorAll("[data-delete-shift]").forEach(button => bindOnce(button, "click", async () => {
     const shift = shifts.find(item => item.id === button.dataset.deleteShift);
-    if (!shift || !confirm(`Ta bort skiftet ${shift.name}? Skiftets scheman, rastplaner och att göra-listor raderas. Personalen finns kvar men saknar skift tills du väljer ett nytt.`)) return;
+    if (!shift || !confirm(`Ta bort skiftet ${shift.name}? Skiftets scheman och rastplaner raderas. Personalen finns kvar men saknar skift tills du väljer ett nytt.`)) return;
     await apiRequest("DELETE", `/shifts/${encodeURIComponent(shift.id)}`);
     shifts = shifts.filter(item => item.id !== shift.id);
     if (sessionStorage.getItem(ACTIVE_SHIFT_KEY) === shift.id) sessionStorage.removeItem(ACTIVE_SHIFT_KEY);
@@ -2664,7 +2429,7 @@ function renderHelpPage() {
       ["Bygg arbetsplatser", "Under Maskinhantering lägger du till maskiner och stationer och kopplar dem till linjer. Schema, bemanning och rast följer kopplingarna. De gäller alla skift och kan pausas."],
       ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
       ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
-      ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas att göra-listor är privata."],
+      ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas egna anteckningar är privata."],
       ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen."]
     ];
   root.innerHTML = `<section class="card help-intro"><div><h3>Kom igång</h3><p>All data sparas på servern, så alla ser samma schema från sina egna enheter.</p></div><a class="btn primary" href="${canChangeSharedSettings() ? "installningar.html" : "profil.html"}">${canChangeSharedSettings() ? "Öppna inställningar" : "Öppna min profil"}</a></section><div class="help-grid">${steps.map(([title, text], index) => `<article class="card"><span>${index + 1}</span><h3>${escapeHtml(title)}</h3><p>${escapeHtml(text)}</p></article>`).join("")}</div><section class="card help-feedback"><div><h3>Förslag eller problem?</h3><p>Skicka feedback till den adress som angetts i Inställningar.</p></div>${appSettings.feedbackEmail ? `<a class="btn" href="mailto:${escapeHtml(appSettings.feedbackEmail)}?subject=Staff%20Planner%20feedback">Skicka feedback</a>` : isOperator() ? "" : '<a class="btn" href="installningar.html">Ange feedbackadress</a>'}</section>`;
@@ -6546,7 +6311,7 @@ function formatDateRange(monday) {
 // shift switcher and logout move into its menu, so every page is still one click away.
 const ADMIN_QUICK_PAGES = ["dashboard.html", "index.html", "produktion.html", "personal.html", "anteckningar.html"];
 const ADMIN_MENU_GROUPS = [
-  ["Planering", ["dashboard.html", "index.html", "rast.html", "produktion.html", "maskinhantering.html", "todo.html", "anteckningar.html"]],
+  ["Planering", ["dashboard.html", "index.html", "rast.html", "produktion.html", "maskinhantering.html", "anteckningar.html"]],
   ["Personal och kompetens", ["personal.html", "anvandare.html", "add.html", "maskiner.html", "testresultat.html", "bedomning.html"]],
   ["Konto och system", ["profil.html", "installningar.html", "hjalp.html"]]
 ];
@@ -6724,9 +6489,9 @@ async function importBackupFile(file) {
     await openLegacyImportDialog(payload.data, "file");
     return;
   }
-  if (!confirm("Importen ersätter scheman, inställningar och övrig data på servern. Personal och skift uppdateras, men ingen tas bort. Allas egna att göra-listor lämnas orörda. Vill du fortsätta?")) return;
+  if (!confirm("Importen ersätter scheman, inställningar och övrig data på servern. Personal och skift uppdateras, men ingen tas bort. Allas anteckningar lämnas orörda. Vill du fortsätta?")) return;
   const result = await apiRequest("POST", "/admin/import", payload);
-  const todoNote = result.todos ? ` ${result.todos} uppgifter från skiftens gamla att göra-listor lades i din egen lista.` : "";
+  const todoNote = result.todos ? ` ${result.todos} öppna uppgifter från skiftens gamla att göra-listor lades som lappar under Mina anteckningar.` : "";
   showAppToast(`Backupen har lästs in: ${result.people} personer och ${result.documents} dataposter.${todoNote}`);
   setTimeout(() => location.reload(), 900);
 }
@@ -6982,7 +6747,6 @@ async function refreshAppViews() {
   await renderTrainingReminders();
   await renderDashboard();
   await renderProduction();
-  await renderTodoList();
   renderExtraAssignmentManager();
   await renderMachineManagement();
 }
@@ -8261,7 +8025,6 @@ function initializeAppContent() {
   void renderTrainingReminders();
   void renderDashboard();
   void renderProduction();
-  void renderTodoList();
   void renderSettings();
   void renderProfilePage();
   renderHelpPage();
@@ -8276,7 +8039,6 @@ function initializeAppContent() {
   setupLiveUpdates();
   void setupOnboarding();
   setupFilterControls();
-  setupTodoPage();
   setupNotesPage();
   void refreshNotesBadge();
 }
@@ -9248,7 +9010,7 @@ async function applyNoteSharing(next) {
 
 // Notes ("Notiser"): a bell in the page header. Shift leaders and right hands get a
 // short note when an admin changes something in their shift or in shared settings;
-// everyone gets one when someone shares a to-do task or an anteckning with them.
+// everyone gets one when someone shares an anteckning with them.
 const BELL_ICON = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>';
 const notificationState = { items: [], unread: 0, open: false, seen: null, loading: null };
 
@@ -9319,7 +9081,6 @@ async function loadNotifications({ announce = false } = {}) {
 }
 
 const NOTIFICATION_HEADINGS = {
-  todoShared: "har delat en uppgift med dig",
   noteShared: "har delat en anteckning med dig",
   noteAdded: "lade till dig på en anteckning"
 };
@@ -9352,8 +9113,7 @@ function renderNotifications() {
       ${note.detail ? `<span class="notification-detail">${escapeHtml(note.detail)}</span>` : ""}
       <time datetime="${escapeHtml(note.createdAt)}">${escapeHtml(formatChatTime(note.createdAt))}</time>`;
     const className = `notification-item${note.read ? "" : " unread"}`;
-    const href = note.noteId ? `anteckningar.html?note=${encodeURIComponent(note.noteId)}` : "todo.html";
-    return shared ? `<a class="${className}" href="${href}">${body}</a>` : `<div class="${className}">${body}</div>`;
+    return shared ? `<a class="${className}" href="anteckningar.html?note=${encodeURIComponent(note.noteId)}">${body}</a>` : `<div class="${className}">${body}</div>`;
   }).join("");
 }
 
@@ -9854,10 +9614,6 @@ function handleLiveChange(change, { fromSave = false } = {}) {
     if (getChatElements()) void pollChat();
     return;
   }
-  if (change.type === "sharedTodos") {
-    void renderSharedTodos();
-    return;
-  }
   if (change.type === "notification") {
     void loadNotifications({ announce: true });
     return;
@@ -9904,7 +9660,6 @@ function isUserBusyEditing() {
   if (productionAutosave.run) return true;
   // The production summary only shows data, so it is redrawn while open.
   if ([...document.querySelectorAll('[aria-modal="true"]')].some(modal => modal.getClientRects().length && !modal.closest("#productionSummary"))) return true;
-  if (document.querySelector(".todo-share-panel")) return true;
   const active = document.activeElement;
   if (!active || active.closest("#chatWidget")) return false;
   if (active.isContentEditable || active.tagName === "TEXTAREA") return true;

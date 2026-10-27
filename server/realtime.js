@@ -1,5 +1,5 @@
 const {
-  canReadDocument, canUseChat, weekRequiringShare, sharedFlagKey, personalScopeOwner, hasPersonalList
+  canReadDocument, canUseChat, weekRequiringShare, sharedFlagKey
 } = require("./permissions");
 const { readDocuments } = require("./store");
 
@@ -17,14 +17,6 @@ function canReceive(user, change) {
   // Only says that notes changed; each page fetches the notes it may see.
   if (change.type === "notes") return Boolean(user?.id);
   return change.type === "people" || change.type === "shifts";
-}
-
-// When someone else's to-do list changes, the others with a list are only told
-// to look again for tasks shared with them. Which list changed, and what is in
-// it, is not sent.
-function sharedTodosHint(user, change) {
-  const owner = change.type === "document" && change.key === "todos" ? personalScopeOwner(change.scope) : null;
-  return owner && owner !== user.id && hasPersonalList(user) ? { type: "sharedTodos" } : null;
 }
 
 // Sends database change notifications to open pages as Server-Sent Events.
@@ -47,11 +39,7 @@ function createRealtimeHub(pool) {
     let shared;
     for (const subscriber of [...subscribers]) {
       if (!subscribers.has(subscriber)) continue;
-      if (!canReceive(subscriber.user, change)) {
-        const hint = sharedTodosHint(subscriber.user, change);
-        if (hint) send(subscriber, "change", hint);
-        continue;
-      }
+      if (!canReceive(subscriber.user, change)) continue;
       const week = change.type === "document" ? weekRequiringShare(subscriber.user, change.scope, change.key) : null;
       if (week) {
         shared ??= await readDocuments(pool, change.scope, [sharedFlagKey(week)])

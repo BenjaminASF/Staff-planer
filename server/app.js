@@ -7,7 +7,6 @@ const { shiftRoutes } = require("./routes/shifts");
 const { documentRoutes } = require("./routes/documents");
 const { adminRoutes, shiftBackupRoutes } = require("./routes/admin");
 const { chatRoutes } = require("./routes/chat");
-const { todoRoutes } = require("./routes/todos");
 const { notificationRoutes } = require("./routes/notifications");
 const { noteRoutes } = require("./routes/notes");
 const { createMailer } = require("./mailer");
@@ -44,7 +43,6 @@ function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy 
   api.use("/admin", adminRoutes({ pool }));
   api.use("/backup", shiftBackupRoutes({ pool }));
   api.use("/chat", chatRoutes({ pool }));
-  api.use("/todos", todoRoutes({ pool }));
   api.use("/notifications", notificationRoutes({ pool }));
   api.use("/notes", noteRoutes({ pool }));
   api.use(documentRoutes({ pool, mailer, appUrl }));
@@ -58,6 +56,9 @@ function createApp({ pool, setupCode = process.env.SETUP_CODE || "", trustProxy 
     res.status(500).json({ error: "Något gick fel på servern. Försök igen." });
   });
   app.use("/api", api);
+
+  // "Att göra" was replaced by Anteckningar; old bookmarks and installed apps land there.
+  app.get("/todo.html", (req, res) => res.redirect(301, "/anteckningar.html"));
 
   app.use(express.static(PUBLIC_DIR, {
     extensions: ["html"],

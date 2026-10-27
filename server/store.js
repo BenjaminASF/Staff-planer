@@ -1,5 +1,5 @@
 const crypto = require("node:crypto");
-const { WEEKLY_SCHEDULE_PREFIXES, PERSONAL_SCOPE_PREFIX, personalScope } = require("./permissions");
+const { WEEKLY_SCHEDULE_PREFIXES, PERSONAL_SCOPE_PREFIX } = require("./permissions");
 
 const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
 
@@ -87,18 +87,6 @@ async function putDocument(db, scope, key, value, userId = null) {
 
 // Adds items to a user's own list without dropping what is already there. An item
 // whose id is already in the list replaces it in place; the rest are appended.
-async function mergeIntoPersonalList(db, userId, key, items) {
-  const scope = personalScope(userId);
-  const { rows } = await db.query("SELECT value FROM documents WHERE scope = $1 AND key = $2 FOR UPDATE", [scope, key]);
-  const list = Array.isArray(rows[0]?.value) ? rows[0].value : [];
-  for (const item of items) {
-    const index = item?.id ? list.findIndex(existing => existing?.id === item.id) : -1;
-    if (index >= 0) list[index] = item;
-    else list.push(item);
-  }
-  return putDocument(db, scope, key, list, userId);
-}
-
 // Loads documents FOR UPDATE, lets `change` edit them in place, and saves the ones it reports as changed.
 async function updateDocumentsWhere(db, whereSql, params, change, userId) {
   const { rows } = await db.query(`SELECT scope, key, value FROM documents WHERE ${whereSql} FOR UPDATE`, params);
@@ -344,7 +332,7 @@ async function addAuditEvent(db, { scope, type = "", title = "", detail = "", un
   return id;
 }
 
-// Removes the personal documents ("Att göra") of the login that belongs to a person.
+// Removes any documents left in the personal scope of the login that belongs to a person.
 async function deletePersonalDocuments(db, personId) {
   await db.query("DELETE FROM documents WHERE scope IN (SELECT $2 || id FROM users WHERE person_id = $1)", [personId, PERSONAL_SCOPE_PREFIX]);
 }
@@ -358,7 +346,6 @@ module.exports = {
   readDocuments,
   writeDocument,
   putDocument,
-  mergeIntoPersonalList,
   purgePersonFromDocuments,
   deletePersonalDocuments,
   clearPersonFromShiftSchedules,

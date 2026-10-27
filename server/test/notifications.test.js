@@ -3,7 +3,6 @@ const assert = require("node:assert/strict");
 const { startTestServer, openStream, SETUP_CODE } = require("./helpers");
 
 const PASSWORD = "losenord123";
-const todo = (text, sharedWith) => ({ id: text, text, createdAt: "2026-10-14T08:00:00.000Z", createdWeek: "2026-10-12", completedAt: "", completedDay: "", ...(sharedWith ? { sharedWith } : {}) });
 
 describe("notifications", () => {
   let server, admin, leader, rightHand, otherLeader, operator;
@@ -92,26 +91,5 @@ describe("notifications", () => {
     assert.equal(unread, 0);
     assert.equal(notifications[0].read, true);
     assert.equal((await notes(rightHand)).unread, 1, "only the reader's own notes");
-  });
-
-  test("sharing a to-do task tells the person it was shared with, once", async () => {
-    await clearAll();
-    const scope = `user:${leaderUser.id}`;
-    let saved = await leader.put(`/api/documents/${scope}/todos`, { value: [todo("Beställ handskar", [adminUser.id])], baseVersion: 0 });
-    assert.equal(saved.status, 200);
-    const { notifications } = await notes(admin);
-    assert.deepEqual(notifications.map(({ kind, actorName, title }) => ({ kind, actorName, title })), [
-      { kind: "todoShared", actorName: "Lisa Ledare", title: "Beställ handskar" }
-    ]);
-
-    saved = await leader.put(`/api/documents/${scope}/todos`, {
-      value: [todo("Beställ handskar", [adminUser.id, rightHandUser.id]), todo("Ny uppgift")], baseVersion: saved.data.version
-    });
-    assert.equal(saved.status, 200);
-    assert.equal((await notes(admin)).notifications.length, 1, "saving again does not repeat the note");
-    assert.equal((await notes(rightHand)).notifications[0]?.title, "Beställ handskar");
-
-    await leader.put(`/api/documents/${scope}/todos`, { value: [todo("Städa GD", [operatorUser.id])], baseVersion: saved.data.version });
-    assert.equal((await notes(operator)).notifications.length, 0, "operators have no list and are not told");
   });
 });

@@ -1,3 +1,5 @@
+const fs = require("node:fs");
+const path = require("node:path");
 const { describe, test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { startTestServer, openStream, SETUP_CODE } = require("./helpers");
@@ -183,6 +185,22 @@ describe("anteckningar", () => {
     assert.equal((await operator.delete(`/api/notes/${id}`)).status, 403);
     assert.equal((await leader.delete(`/api/notes/${id}`)).status, 200);
     assert.ok(!(await operator.get("/api/notifications")).data.notifications.some(note => note.noteId === id));
+  });
+
+  test("open tasks from the old Att göra list become personal notes", async () => {
+    const task = (text, extra = {}) => ({ id: text, text, createdAt: "2026-10-14T08:00:00.000Z", completedAt: "", ...extra });
+    await server.pool.query("INSERT INTO documents (scope, key, value) VALUES ($1, 'todos', $2)", [
+      `user:${leaderUser.id}`, JSON.stringify([task("Beställ handskar", { sharedWith: [adminUser.id] }), task("Klar sak", { completedAt: "2026-10-15T08:00:00.000Z" }), task("  ")])
+    ]);
+    await server.pool.query("INSERT INTO notifications (id, user_id, kind, title) VALUES ('old', $1, 'todoShared', 'Beställ handskar')", [adminUser.id]);
+    await server.pool.query(fs.readFileSync(path.join(__dirname, "..", "migrations", "016_todos_to_notes.sql"), "utf8"));
+    const mine = (await notesOf(leader)).notes.filter(note => note.kind === "personal");
+    assert.deepEqual(mine.map(note => note.text), ["Beställ handskar"]);
+    assert.ok(!(await notesOf(admin)).notes.some(note => note.text === "Beställ handskar"), "the moved note is private");
+    assert.equal((await server.pool.query("SELECT count(*)::int AS n FROM documents WHERE key = 'todos'")).rows[0].n, 0);
+    assert.ok(!(await admin.get("/api/notifications")).data.notifications.some(note => note.kind === "todoShared"));
+    assert.equal((await leader.put(`/api/documents/user:${leaderUser.id}/todos`, { value: [], baseVersion: 0 })).status, 400, "the old list can no longer be saved");
+    assert.equal((await leader.get("/api/todos/shared")).status, 404);
   });
 
   test("the sort order is a personal preference", async () => {
