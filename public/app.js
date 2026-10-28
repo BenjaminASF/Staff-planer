@@ -2210,13 +2210,13 @@ async function renderProfilePage() {
       <label>Status<select name="availability" class="person-availability person-availability-${availability}">${availabilityOptionsFor(availability).map(([value, label]) => `<option value="${value}"${value === availability ? " selected" : ""}>${label}</option>`).join("")}</select><small>Är du sjuk eller borta? Ändra här så ser skiftledaren det direkt.</small></label>
       <div class="settings-actions"><span id="profileMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara</button></div>
     </form>
-    <form id="profilePasswordForm" class="card settings-card">
+    ${currentUser.viaMicrosoft ? "" : `<form id="profilePasswordForm" class="card settings-card">
       <div><h3>Byt lösenord</h3><p>Du loggas ut från dina andra enheter när lösenordet byts.</p></div>
       <label>Nuvarande lösenord<input name="currentPassword" type="password" autocomplete="current-password" required /></label>
       <label>Nytt lösenord<input name="newPassword" type="password" minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" required /><small>Minst ${MIN_PASSWORD_LENGTH} tecken.</small></label>
       <label>Bekräfta nytt lösenord<input name="confirm" type="password" minlength="${MIN_PASSWORD_LENGTH}" autocomplete="new-password" required /></label>
       <div class="settings-actions"><span id="passwordChangeMessage" class="inline-message" aria-live="polite"></span><button class="btn primary" type="submit">Spara nytt lösenord</button></div>
-    </form>
+    </form>`}
     <form id="preferencesForm" class="card settings-card">
       <div><h3>Mina inställningar</h3><p>Gäller bara dig och sparas på ditt konto, så de följer med när du loggar in på en annan enhet. Ändringar sparas direkt.</p></div>
       ${window.staffTheme?.supported
@@ -2428,7 +2428,9 @@ function renderHelpPage() {
       ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
       ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
       ["Ledig eller borta?", "Öppna Min profil och ändra din status till Ledig. Skiftledaren ser ändringen direkt."],
-      ["Lösenord", "Byt lösenord under Min profil. Har du glömt det, be din skiftledare om ett tillfälligt."],
+      currentUser.viaMicrosoft
+        ? ["Inloggning", "Du loggar in med ditt Microsoft-konto och behöver inget eget lösenord i Staff Planner."]
+        : ["Lösenord", "Byt lösenord under Min profil. Har du glömt det, be din skiftledare om ett tillfälligt."],
       ["Pushnotiser", "Slå på pushnotiser under Min profil så får du en notis i telefonen när ditt schema ändras. På iPhone lägger du först till Staff Planner på hemskärmen via Safari: Dela → Lägg till på hemskärmen."]
     ]
     : [
@@ -9975,19 +9977,24 @@ const MICROSOFT_LOGIN_ERRORS = {
   not_allowed: "Det här Microsoft-kontot får inte logga in i Staff Planner. Använd ditt jobbkonto.",
   expired: "Inloggningen tog för lång tid eller avbröts. Försök igen.",
   cancelled: "Inloggningen med Microsoft avbröts.",
-  failed: "Inloggningen med Microsoft misslyckades. Försök igen eller logga in med användarnamn och lösenord."
+  failed: "Inloggningen med Microsoft misslyckades. Försök igen."
 };
 
 const MICROSOFT_LOGO = '<svg class="microsoft-logo" viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>';
 
 // Staff without a Microsoft account sign in with a password. A device remembers how its last
 // user signed in, so they get the password form there instead of Microsoft. /?losenord shows it once.
+// Nothing else on the login page leads to the password form: everyone else uses Microsoft.
 const PASSWORD_LOGIN_KEY = "staff_password_login";
 
 function rememberLoginMethod(me) {
+  setPasswordLoginPreferred(!me.user.viaMicrosoft);
+}
+
+function setPasswordLoginPreferred(preferred) {
   try {
-    if (me.user.viaMicrosoft) localStorage.removeItem(PASSWORD_LOGIN_KEY);
-    else localStorage.setItem(PASSWORD_LOGIN_KEY, "1");
+    if (preferred) localStorage.setItem(PASSWORD_LOGIN_KEY, "1");
+    else localStorage.removeItem(PASSWORD_LOGIN_KEY);
   } catch {
     // Private mode: the login page goes to Microsoft as usual.
   }
@@ -10019,11 +10026,9 @@ function takeMicrosoftLoginError() {
 
 // The password form under the Microsoft button, for staff without a Microsoft account.
 function showPasswordLogin() {
-  const form = document.getElementById("authForm");
-  const fields = form?.querySelector(".auth-password");
+  const fields = document.getElementById("authForm")?.querySelector(".auth-password");
   if (!fields?.hidden) return;
   fields.hidden = false;
-  form.querySelector("[data-auth-password]")?.remove();
   fields.querySelector("input")?.focus();
 }
 
@@ -10032,8 +10037,8 @@ function checkNewPassword(password, confirmation) {
   if (password !== confirmation) throw new ApiError(400, "Lösenorden matchar inte.");
 }
 
-// microsoft: the login leads with "Logga in med Microsoft" and keeps the password form
-// behind a link, for staff who have no Microsoft account.
+// microsoft: the login leads with "Logga in med Microsoft" and keeps the password form hidden
+// until showPasswordLogin, for staff who have no Microsoft account.
 function renderAuthForm(mode, onSubmit, { microsoft = false } = {}) {
   const config = AUTH_FORMS[mode];
   const current = document.getElementById("authForm");
@@ -10046,7 +10051,6 @@ function renderAuthForm(mode, onSubmit, { microsoft = false } = {}) {
     <div class="actions"><button class="btn${microsoft ? "" : " primary"}" type="submit">${escapeHtml(config.button)}</button>${mode === "changePassword" ? '<button class="btn" type="button" data-auth-logout>Logga ut</button>' : ""}</div>`;
   form.innerHTML = microsoft
     ? `<a class="btn primary microsoft-login" href="${escapeHtml(microsoftLoginUrl())}" data-microsoft-login>${MICROSOFT_LOGO}<span>Logga in med Microsoft</span></a>
-      <button class="auth-switch" type="button" data-auth-password>Logga in med användarnamn och lösenord</button>
       <div class="auth-password" hidden><p class="auth-divider"><span>eller med användarnamn</span></p>${passwordForm}</div>`
     : passwordForm;
   current.replaceWith(form);
@@ -10065,7 +10069,6 @@ function renderAuthForm(mode, onSubmit, { microsoft = false } = {}) {
     }
   });
   form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut("", { forgetDevice: true }));
-  form.querySelector("[data-auth-password]")?.addEventListener("click", showPasswordLogin);
   form.querySelector("[data-microsoft-login]")?.addEventListener("click", () => sessionStorage.setItem(MICROSOFT_SIGN_IN_KEY, "1"));
   (form.querySelector("[data-microsoft-login]") || form.querySelector("input"))?.focus();
 }
@@ -10091,7 +10094,13 @@ function showAuthScreen(mode, { microsoftLoginError = "", showPassword = false }
   clearAuthMessage();
   if (mode === "login") {
     renderAuthForm("login", async values => {
-      await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
+      try {
+        await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
+      } catch (error) {
+        // Linked to Microsoft: the password no longer works, so this device goes to Microsoft next time.
+        if (error instanceof ApiError && error.data?.code === "microsoft_required") setPasswordLoginPreferred(false);
+        throw error;
+      }
     }, { microsoft: microsoftLoginAvailable });
     if (showPassword) showPasswordLogin();
   } else if (mode === "setup") {
@@ -10111,8 +10120,6 @@ function showAuthScreen(mode, { microsoftLoginError = "", showPassword = false }
   sessionStorage.removeItem(AUTH_NOTICE_KEY);
   if (microsoftLoginError) {
     showAuthMessage(microsoftLoginError);
-    // Something went wrong with Microsoft, so the password form is the way in.
-    showPasswordLogin();
   } else if (notice) {
     showAuthMessage(notice, false);
   }

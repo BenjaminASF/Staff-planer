@@ -1,4 +1,6 @@
 const crypto = require("node:crypto");
+const fs = require("node:fs");
+const path = require("node:path");
 const { describe, test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { startTestServer, SETUP_CODE } = require("./helpers");
@@ -140,12 +142,42 @@ describe("sign-in with Microsoft", () => {
     assert.ok(person.account.lastLoginAt);
   });
 
-  test("the temporary password still has to be replaced when signing in with it", async () => {
+  test("a user linked to Microsoft can no longer sign in with the password", async () => {
     const client = server.client();
-    const me = await client.login("olle", PASSWORD);
+    const refused = await client.post("/api/login", { username: "olle", password: PASSWORD });
+    assert.equal(refused.status, 403);
+    assert.equal(refused.data.code, "microsoft_required");
+    assert.equal(client.cookie, "");
+    assert.equal((await client.get("/api/me")).status, 401);
+
+    const wrong = await client.post("/api/login", { username: "olle", password: "fel-losenord" });
+    assert.equal(wrong.status, 401, "a wrong password does not tell whether the user is linked");
+    assert.equal(wrong.data.code, undefined);
+  });
+
+  test("users not linked to Microsoft still sign in with the password and replace the temporary one", async () => {
+    await admin.post("/api/people", {
+      name: "Per Papper", shiftId: dayShift.id, account: { username: "per", password: PASSWORD, role: "operator" }
+    });
+    const client = server.client();
+    const me = await client.login("per", PASSWORD);
     assert.equal(me.user.mustChangePassword, true);
     assert.equal(me.user.viaMicrosoft, false);
     assert.equal((await client.get("/api/people")).data.code, "password_change_required");
+  });
+
+  test("signing in with Microsoft signs the user out of password sessions", async () => {
+    await admin.post("/api/people", {
+      name: "Lisa Länk", shiftId: dayShift.id, email: "lisa@firma.se", account: { username: "lisa", password: PASSWORD, role: "operator" }
+    });
+    const viaPassword = server.client();
+    await viaPassword.login("lisa", PASSWORD);
+    assert.equal((await viaPassword.get("/api/me")).status, 200);
+
+    const viaMicrosoft = (await signInWithMicrosoft({ oid: "oid-lisa", preferred_username: "lisa@firma.se" })).client;
+    assert.equal((await viaMicrosoft.get("/api/me")).status, 200);
+    assert.equal((await viaPassword.get("/api/me")).status, 401);
+    assert.equal((await server.client().post("/api/login", { username: "lisa", password: PASSWORD })).status, 403);
   });
 
   test("a linked account keeps working after the e-mail address changes", async () => {
@@ -261,10 +293,8 @@ describe("sign-in with Microsoft", () => {
     assert.equal(result.data.microsoftLogoutUrl, undefined);
   });
 
-  test("unlinking a Microsoft account signs out its Microsoft sessions only", async () => {
+  test("unlinking a Microsoft account signs out its Microsoft sessions and lets the password work again", async () => {
     const viaMicrosoft = (await signInWithMicrosoft({ oid: "oid-olle", preferred_username: "olle@firma.se" })).client;
-    const viaPassword = server.client();
-    await viaPassword.login("olle", PASSWORD);
     const stina = (await admin.get("/api/people")).data.people.find(person => person.account?.username === "stina@firma.se");
     assert.equal(stina.account.microsoftLinked, true);
     assert.equal((await viaMicrosoft.patch(`/api/people/${stina.id}/account`, { microsoftLinked: false })).status, 403, "only those who may reset the password");
@@ -274,10 +304,45 @@ describe("sign-in with Microsoft", () => {
     assert.equal(unlinked.status, 200);
     assert.equal(unlinked.data.person.account.microsoftLinked, false);
     assert.equal((await viaMicrosoft.get("/api/me")).status, 401);
-    assert.equal((await viaPassword.get("/api/me")).status, 200);
+    const viaPassword = server.client();
+    await viaPassword.login("olle", PASSWORD);
 
-    // The next sign-in links by e-mail address again.
+    // The next sign-in links by e-mail address again, and the password stops working.
     const relinked = await signInWithMicrosoft({ oid: "oid-olle-ny", preferred_username: "olle.olsson@firma.se" });
     assert.equal((await relinked.client.get("/api/me")).data.user.username, "olle");
+    assert.equal((await viaPassword.get("/api/me")).status, 401);
+  });
+});
+
+describe("password sign-in with Microsoft sign-in off", () => {
+  let server, admin;
+
+  before(async () => {
+    server = await startTestServer();
+    admin = server.client();
+    await admin.post("/api/setup", { setupCode: SETUP_CODE, name: "Ada Admin", username: "ada", password: PASSWORD });
+    await server.pool.query("UPDATE users SET entra_oid = 'oid-ada' WHERE username = 'ada'");
+  });
+
+  after(async () => {
+    await server?.close();
+  });
+
+  test("a user linked earlier signs in with the password while Microsoft sign-in is off", async () => {
+    assert.equal((await server.client().get("/api/setup")).data.microsoftLogin, false);
+    const me = await server.client().login("ada", PASSWORD);
+    assert.equal(me.user.username, "ada");
+  });
+
+  test("the migration signs linked users out of their password sessions only", async () => {
+    const viaPassword = server.client();
+    await viaPassword.login("ada", PASSWORD);
+    await server.pool.query("UPDATE sessions SET via_microsoft = true WHERE token_hash IN (SELECT token_hash FROM sessions LIMIT 1)");
+    const microsoftSessions = Number((await server.pool.query("SELECT count(*) FROM sessions WHERE via_microsoft")).rows[0].count);
+    await server.pool.query(fs.readFileSync(path.join(__dirname, "..", "migrations", "020_microsoft_only_for_linked.sql"), "utf8"));
+    const { rows } = await server.pool.query("SELECT via_microsoft FROM sessions");
+    assert.equal(microsoftSessions, 1);
+    assert.equal(rows.length, 1);
+    assert.ok(rows.every(row => row.via_microsoft), "only the Microsoft session is left");
   });
 });
