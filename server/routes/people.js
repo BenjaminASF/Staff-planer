@@ -197,6 +197,15 @@ function peopleRoutes({ pool }) {
           await client.query("DELETE FROM push_outbox WHERE sent_at IS NULL AND user_id = (SELECT id FROM users WHERE person_id = $1)", [person.id]);
         }
       }
+      // Unlinks the Microsoft account, for example one linked through a wrong e-mail address.
+      // The next sign-in with Microsoft links by e-mail address again.
+      if (body.microsoftLinked === false && person.account.microsoftLinked) {
+        if (!canResetPassword(req.user, person, person.account)) {
+          throw new HttpError(403, "Du kan bara koppla bort Microsoft för personal under din egen nivå i ditt eget skift.");
+        }
+        await client.query("UPDATE users SET entra_oid = NULL, updated_at = now() WHERE person_id = $1", [person.id]);
+        await client.query("DELETE FROM sessions WHERE via_microsoft AND user_id = (SELECT id FROM users WHERE person_id = $1)", [person.id]);
+      }
       if ("password" in body) {
         if (!canResetPassword(req.user, person, person.account)) {
           throw new HttpError(403, "Du kan bara återställa lösenord för personal under din egen nivå i ditt eget skift.");

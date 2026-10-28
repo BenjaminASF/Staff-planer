@@ -2,6 +2,7 @@ const { createPool, runMigrations } = require("./db");
 const { createApp } = require("./app");
 const { purgeExpiredProductionRecords } = require("./store");
 const { cleanupPush } = require("./push");
+const { createEntraClient } = require("./entra");
 
 const AUDIT_RETENTION_DAYS = 30;
 const NOTIFICATION_RETENTION_DAYS = 30;
@@ -24,12 +25,16 @@ async function main() {
   if (!process.env.SETUP_CODE) {
     console.warn("SETUP_CODE är inte satt. Det första admin-kontot kan inte skapas förrän variabeln finns.");
   }
+  const entra = createEntraClient();
+  if (!entra.configured && (process.env.ENTRA_TENANT_ID || process.env.ENTRA_CLIENT_ID || process.env.ENTRA_CLIENT_SECRET)) {
+    console.warn("Inloggning med Microsoft är avstängd: ENTRA_TENANT_ID (organisationens tenant-id, inte common), ENTRA_CLIENT_ID och ENTRA_CLIENT_SECRET behövs (se README).");
+  }
   if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
     console.warn("VAPID_PUBLIC_KEY och VAPID_PRIVATE_KEY är inte satta. Pushnotiser är avstängda tills de finns (se README).");
   }
 
   const port = Number(process.env.PORT) || 3000;
-  const app = createApp({ pool });
+  const app = createApp({ pool, entra });
   const server = app.listen(port, () => console.log(`Staff Planner listening on port ${port}`));
 
   const shutdown = () => {

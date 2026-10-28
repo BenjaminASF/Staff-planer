@@ -4312,6 +4312,11 @@ function pushBlockedMark(person) {
     : "";
 }
 
+// Someone who signs in with Microsoft never needs the temporary password, so is not waiting for it.
+function waitsForPassword(account) {
+  return Boolean(account?.mustChangePassword && !account.microsoftLinked);
+}
+
 function describeAccount(person) {
   if (!person.account) return "Ingen inloggning";
   return `${ROLE_LABELS[person.account.role] || "Operatör"} · ${person.account.username}`;
@@ -6805,7 +6810,7 @@ async function renderUsersPage() {
   const people = isAdmin() ? everyone : everyone.filter(person => getOwnShiftId() && person.shiftId === getOwnShiftId());
   const withAccount = people.filter(person => person.account);
   const countRole = role => withAccount.filter(person => person.account.role === role).length;
-  const waiting = withAccount.filter(person => person.account.mustChangePassword).length;
+  const waiting = withAccount.filter(person => waitsForPassword(person.account)).length;
   root.querySelector("#usersStats").innerHTML = `
     ${isAdmin() ? `<article><span>Admin</span><strong>${countRole(ROLES.ADMIN)}</strong><small>full behörighet</small></article>` : ""}
     <article><span>Skiftledare</span><strong>${countRole(ROLES.LEADER)}</strong><small>ändrar sitt skift</small></article>
@@ -6841,7 +6846,7 @@ async function renderUsersPage() {
       <div class="person-meta">
         <h3>${escapeHtml(person.name)}${person.id === currentPerson?.id ? ' <small class="user-you">(du)</small>' : ""}</h3>
         <p>${details}</p>
-        <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${pushBlockedMark(person)}${account?.mustChangePassword ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
+        <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${pushBlockedMark(person)}${account?.microsoftLinked ? ' <span class="person-role-badge user-microsoft" title="Loggar in med Microsoft">Microsoft</span>' : ""}${waitsForPassword(account) ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
       </div>
       <div class="person-actions">${canEditPerson(person) ? `<button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>` : ""}${isAdmin() && person.id !== currentPerson?.id ? `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>` : ""}</div>
     </div>`;
@@ -6929,9 +6934,10 @@ function loginInstructions(username, password) {
 function renderAccountSection(person) {
   if (person.account) {
     const lastLogin = person.account.lastLoginAt ? new Date(person.account.lastLoginAt).toLocaleString("sv-SE") : "aldrig";
-    return `<p><strong>${escapeHtml(person.account.username)}</strong> · ${escapeHtml(ROLE_LABELS[person.account.role] || "")} · senast inloggad ${escapeHtml(lastLogin)}${person.account.mustChangePassword ? " · väntar på nytt lösenord" : ""}</p>
+    return `<p><strong>${escapeHtml(person.account.username)}</strong> · ${escapeHtml(ROLE_LABELS[person.account.role] || "")} · senast inloggad ${escapeHtml(lastLogin)}${waitsForPassword(person.account) ? " · väntar på nytt lösenord" : ""}</p>
       ${isAdmin() ? `<div class="person-account-row"><label>Användarnamn<input name="username" value="${escapeHtml(person.account.username)}" autocomplete="off" maxlength="60" /></label><button class="btn" type="button" data-account-action="username">Spara användarnamn</button></div>` : ""}
       ${canChangeRoleOf(person) ? `<div class="person-account-row"><label>Roll<select name="role">${roleOptionsHtml(person.account.role)}</select></label><button class="btn" type="button" data-account-action="role">Spara roll</button></div>` : ""}
+      ${person.account.microsoftLinked ? `<div class="person-account-row"><span class="person-account-push">Microsoft: <strong>Kopplad</strong></span>${canResetPasswordFor(person) && person.id !== currentPerson?.id ? '<button class="btn" type="button" data-account-action="unlink-microsoft">Koppla bort</button>' : ""}</div>` : ""}
       ${canResetPasswordFor(person) && person.id !== currentPerson?.id ? `<div class="person-account-row"><label>Tillfälligt lösenord<input name="resetPassword" autocomplete="off" minlength="${MIN_PASSWORD_LENGTH}" /></label><button class="btn" type="button" data-account-action="suggest">Föreslå</button><button class="btn" type="button" data-account-action="reset">Återställ lösenord</button></div>` : ""}
       ${isAdmin()
         ? `<div class="person-account-row"><span class="person-account-push">Pushnotiser: <strong>${person.account.pushBlocked ? "Av 🔕" : "På"}</strong></span><button class="btn" type="button" data-account-action="push" data-push-blocked="${person.account.pushBlocked}">${person.account.pushBlocked ? "Slå på" : "Stäng av"}</button></div>`
@@ -7042,6 +7048,10 @@ async function editPerson(id) {
         const pushBlocked = button.dataset.pushBlocked !== "true";
         result = await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { pushBlocked });
         showStatus(pushBlocked ? `Pushnotiser är avstängda för ${person.name}.` : `Pushnotiser är påslagna för ${person.name}.`);
+      } else if (action === "unlink-microsoft") {
+        if (!confirm(`Koppla bort Microsoft-kontot från ${person.name}? Nästa inloggning med Microsoft kopplar kontot igen via e-postadressen.`)) return;
+        result = await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { microsoftLinked: false });
+        showStatus(`Microsoft-kontot är bortkopplat från ${person.name}.`);
       } else if (action === "remove") {
         if (!confirm(`Ta bort inloggningen för ${person.name}? Personen finns kvar i personallistan.`)) return;
         result = await apiRequest("DELETE", `/people/${encodeURIComponent(person.id)}/account`);
@@ -9456,6 +9466,8 @@ async function deleteChatMessage(id) {
 // Signing in.
 
 const AUTH_NOTICE_KEY = "staff_auth_notice";
+// Set while the browser is away signing in with Microsoft, so coming back counts as just signed in.
+const MICROSOFT_SIGN_IN_KEY = "staff_microsoft_sign_in";
 
 function setSession(me) {
   currentUser = me.user;
@@ -9948,21 +9960,62 @@ const AUTH_FORMS = {
   }
 };
 
+// Sign-in with Microsoft (see server/entra.js) is on when the server has an Entra app registration.
+let microsoftLoginAvailable = false;
+
+// Why the server sent the browser back from Microsoft without signing in (?login_error=).
+const MICROSOFT_LOGIN_ERRORS = {
+  not_linked: "Ditt Microsoft-konto är inte kopplat till någon användare i Staff Planner. Be admin eller din skiftledare att lägga in din e-postadress på ditt konto.",
+  ambiguous: "Flera användare i Staff Planner har din e-postadress. Be admin att rätta e-postadresserna.",
+  linked_elsewhere: "Användaren med din e-postadress är redan kopplad till ett annat Microsoft-konto. Be admin att koppla bort det under Användare → Hantera.",
+  not_allowed: "Det här Microsoft-kontot får inte logga in i Staff Planner. Använd ditt jobbkonto.",
+  expired: "Inloggningen tog för lång tid eller avbröts. Försök igen.",
+  cancelled: "Inloggningen med Microsoft avbröts.",
+  failed: "Inloggningen med Microsoft misslyckades. Försök igen eller logga in med användarnamn och lösenord."
+};
+
+const MICROSOFT_LOGO = '<svg class="microsoft-logo" viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>';
+
+function takeMicrosoftLoginError() {
+  const code = new URLSearchParams(location.search).get("login_error");
+  if (code === null) return "";
+  takeLinkParam("login_error");
+  return MICROSOFT_LOGIN_ERRORS[code] || MICROSOFT_LOGIN_ERRORS.failed;
+}
+
+// The password form under the Microsoft button, for staff without a Microsoft account.
+function showPasswordLogin() {
+  const form = document.getElementById("authForm");
+  const fields = form?.querySelector(".auth-password");
+  if (!fields?.hidden) return;
+  fields.hidden = false;
+  form.querySelector("[data-auth-password]")?.remove();
+  fields.querySelector("input")?.focus();
+}
+
 function checkNewPassword(password, confirmation) {
   if (password.length < MIN_PASSWORD_LENGTH) throw new ApiError(400, `Lösenordet måste vara minst ${MIN_PASSWORD_LENGTH} tecken.`);
   if (password !== confirmation) throw new ApiError(400, "Lösenorden matchar inte.");
 }
 
-function renderAuthForm(mode, onSubmit) {
+// microsoft: the login leads with "Logga in med Microsoft" and keeps the password form
+// behind a link, for staff who have no Microsoft account.
+function renderAuthForm(mode, onSubmit, { microsoft = false } = {}) {
   const config = AUTH_FORMS[mode];
   const current = document.getElementById("authForm");
   if (!current) return;
   document.getElementById("authTitle").textContent = config.title;
-  document.getElementById("authSubtitle").textContent = config.subtitle;
+  document.getElementById("authSubtitle").textContent = microsoft ? "Logga in med ditt Microsoft-konto." : config.subtitle;
   // A fresh element drops the listeners from the previous mode.
   const form = current.cloneNode(false);
-  form.innerHTML = `${config.fields.map(field => `<input name="${field.name}" type="${field.type}" placeholder="${escapeHtml(field.label)}" aria-label="${escapeHtml(field.label)}" autocomplete="${field.autocomplete}" required />`).join("")}
-    <div class="actions"><button class="btn primary" type="submit">${escapeHtml(config.button)}</button>${mode === "changePassword" ? '<button class="btn" type="button" data-auth-logout>Logga ut</button>' : ""}</div>`;
+  const passwordForm = `${config.fields.map(field => `<input name="${field.name}" type="${field.type}" placeholder="${escapeHtml(field.label)}" aria-label="${escapeHtml(field.label)}" autocomplete="${field.autocomplete}" required />`).join("")}
+    <div class="actions"><button class="btn${microsoft ? "" : " primary"}" type="submit">${escapeHtml(config.button)}</button>${mode === "changePassword" ? '<button class="btn" type="button" data-auth-logout>Logga ut</button>' : ""}</div>`;
+  const returnTo = `${location.pathname}${location.search}`;
+  form.innerHTML = microsoft
+    ? `<a class="btn primary microsoft-login" href="/api/auth/microsoft?returnTo=${encodeURIComponent(returnTo)}" data-microsoft-login>${MICROSOFT_LOGO}<span>Logga in med Microsoft</span></a>
+      <button class="auth-switch" type="button" data-auth-password>Logga in med användarnamn och lösenord</button>
+      <div class="auth-password" hidden><p class="auth-divider"><span>eller med användarnamn</span></p>${passwordForm}</div>`
+    : passwordForm;
   current.replaceWith(form);
   form.addEventListener("submit", async event => {
     event.preventDefault();
@@ -9979,7 +10032,9 @@ function renderAuthForm(mode, onSubmit) {
     }
   });
   form.querySelector("[data-auth-logout]")?.addEventListener("click", () => signOut("", { forgetDevice: true }));
-  form.querySelector("input")?.focus();
+  form.querySelector("[data-auth-password]")?.addEventListener("click", showPasswordLogin);
+  form.querySelector("[data-microsoft-login]")?.addEventListener("click", () => sessionStorage.setItem(MICROSOFT_SIGN_IN_KEY, "1"));
+  (form.querySelector("[data-microsoft-login]") || form.querySelector("input"))?.focus();
 }
 
 // justSignedIn: the user just submitted the login (or setup / new password) form,
@@ -9993,7 +10048,7 @@ async function continueAfterSignIn(me, justSignedIn = false) {
   await openAppUI(justSignedIn);
 }
 
-function showAuthScreen(mode) {
+function showAuthScreen(mode, microsoftLoginError = "") {
   setAuthenticatedView(false);
   document.getElementById("appShell")?.classList.add("hidden");
   document.getElementById("authScreen")?.classList.remove("hidden");
@@ -10002,7 +10057,7 @@ function showAuthScreen(mode) {
   if (mode === "login") {
     renderAuthForm("login", async values => {
       await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
-    });
+    }, { microsoft: microsoftLoginAvailable });
   } else if (mode === "setup") {
     renderAuthForm("setup", async values => {
       checkNewPassword(values.password, values.confirm);
@@ -10018,7 +10073,13 @@ function showAuthScreen(mode) {
   }
   const notice = sessionStorage.getItem(AUTH_NOTICE_KEY);
   sessionStorage.removeItem(AUTH_NOTICE_KEY);
-  if (notice) showAuthMessage(notice, false);
+  if (microsoftLoginError) {
+    showAuthMessage(microsoftLoginError);
+    // Something went wrong with Microsoft, so the password form is the way in.
+    showPasswordLogin();
+  } else if (notice) {
+    showAuthMessage(notice, false);
+  }
 }
 
 async function setupAuthUI() {
@@ -10026,6 +10087,9 @@ async function setupAuthUI() {
     finishInitialViewSetup();
     return;
   }
+  const backFromMicrosoft = sessionStorage.getItem(MICROSOFT_SIGN_IN_KEY) === "1";
+  sessionStorage.removeItem(MICROSOFT_SIGN_IN_KEY);
+  const microsoftLoginError = takeMicrosoftLoginError();
   let me = null;
   try {
     me = await apiRequest("GET", "/me");
@@ -10033,12 +10097,13 @@ async function setupAuthUI() {
     if (error.status !== 401) throw error;
   }
   if (me) {
-    await continueAfterSignIn(me);
+    await continueAfterSignIn(me, backFromMicrosoft && !microsoftLoginError);
     return;
   }
   sessionStorage.removeItem(SIGNED_IN_HINT_KEY);
   const setup = await apiRequest("GET", "/setup");
-  showAuthScreen(setup.needsSetup ? "setup" : "login");
+  microsoftLoginAvailable = Boolean(setup.microsoftLogin);
+  showAuthScreen(setup.needsSetup ? "setup" : "login", microsoftLoginError);
 }
 
 // Avoid flashing the login screen between pages while the session is checked.
