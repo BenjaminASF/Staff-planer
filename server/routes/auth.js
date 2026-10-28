@@ -19,7 +19,9 @@ async function buildMePayload(db, user) {
     db.query("SELECT id, name, color, sort_order FROM shifts ORDER BY sort_order, name")
   ]);
   return {
-    user: { id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword },
+    user: {
+      id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword, viaMicrosoft: Boolean(user.viaMicrosoft)
+    },
     person,
     shifts: shifts.rows.map(serializeShift),
     dismissedMessages: buildDismissedMessages(user),
@@ -157,6 +159,7 @@ function authRoutes({ pool, setupCode, loginLimiter, entra }) {
   // to the callback, and the callback signs in and returns to the page it started on.
   // Problems go back to the login page as ?login_error=<code>, which the page explains.
   const microsoftCallbackUrl = req => `${req.protocol}://${req.get("host")}${MICROSOFT_PATH}/callback`;
+  const microsoftSignedOutUrl = req => `${req.protocol}://${req.get("host")}${MICROSOFT_PATH}/signed-out`;
   const microsoftFailed = (res, code) => res.redirect(302, `/?login_error=${code}`);
 
   router.get("/auth/microsoft", async (req, res) => {
@@ -195,13 +198,31 @@ function authRoutes({ pool, setupCode, loginLimiter, entra }) {
     if (problem) return microsoftFailed(res, problem);
     await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [user.id]);
     await pool.query("DELETE FROM sessions WHERE expires_at < now()");
-    await createSession(pool, req, res, user.id, { viaMicrosoft: true });
+    const loginHint = typeof claims.login_hint === "string" && claims.login_hint.length <= 2000 ? claims.login_hint : null;
+    await createSession(pool, req, res, user.id, { viaMicrosoft: true, microsoftLoginHint: loginHint });
     res.redirect(302, safeReturnPath(flow.returnTo));
   });
 
+  // Microsoft sends the browser here after signing out there (see /logout).
+  router.get("/auth/microsoft/signed-out", (req, res) => res.redirect(302, "/"));
+
+  // Signing out of a session started with Microsoft also signs out of Microsoft, so the next
+  // person on a shared computer cannot pick the same account without its password. The page
+  // goes on to microsoftLogoutUrl.
   router.post("/logout", async (req, res) => {
+    const { rows } = req.sessionTokenHash
+      ? await pool.query("SELECT via_microsoft, microsoft_login_hint FROM sessions WHERE token_hash = $1", [req.sessionTokenHash])
+      : { rows: [] };
     await destroySession(pool, req, res);
-    res.json({ ok: true });
+    let microsoftLogoutUrl = "";
+    if (rows[0]?.via_microsoft && entra.configured) {
+      try {
+        microsoftLogoutUrl = await entra.logoutUrl({ postLogoutRedirectUri: microsoftSignedOutUrl(req), loginHint: rows[0].microsoft_login_hint });
+      } catch (error) {
+        console.error("Microsoft sign-out address could not be built:", error);
+      }
+    }
+    res.json({ ok: true, ...(microsoftLogoutUrl ? { microsoftLogoutUrl } : {}) });
   });
 
   router.get("/me", allowWithoutPasswordChange, requireUser, async (req, res) => {

@@ -45,6 +45,7 @@ function createFakeMicrosoft() {
           issuer: ISSUER,
           authorization_endpoint: `${AUTHORITY}/oauth2/v2.0/authorize`,
           token_endpoint: `${AUTHORITY}/oauth2/v2.0/token`,
+          end_session_endpoint: `${AUTHORITY}/oauth2/v2.0/logout`,
           jwks_uri: `${AUTHORITY}/discovery/v2.0/keys`
         });
       }
@@ -132,6 +133,7 @@ describe("sign-in with Microsoft", () => {
     assert.equal(me.status, 200);
     assert.equal(me.data.user.username, "olle");
     assert.equal(me.data.user.mustChangePassword, false, "nobody signed in with Microsoft is asked to replace the temporary password");
+    assert.equal(me.data.user.viaMicrosoft, true);
     assert.equal((await result.client.get("/api/people")).status, 200);
     const person = (await admin.get("/api/people")).data.people.find(item => item.id === olle.id);
     assert.equal(person.account.microsoftLinked, true);
@@ -142,6 +144,7 @@ describe("sign-in with Microsoft", () => {
     const client = server.client();
     const me = await client.login("olle", PASSWORD);
     assert.equal(me.user.mustChangePassword, true);
+    assert.equal(me.user.viaMicrosoft, false);
     assert.equal((await client.get("/api/people")).data.code, "password_change_required");
   });
 
@@ -229,6 +232,33 @@ describe("sign-in with Microsoft", () => {
       const result = await signInWithMicrosoft({ oid: "oid-olle", preferred_username: "olle@firma.se" }, { returnTo });
       assert.equal(result.location, "/", returnTo);
     }
+  });
+
+  test("signing out of a Microsoft session signs out of Microsoft too, without picking an account", async () => {
+    const { client } = await signInWithMicrosoft({ oid: "oid-olle", preferred_username: "olle@firma.se", login_hint: "hint-olle" });
+    const result = await client.post("/api/logout");
+    assert.equal(result.status, 200);
+    const logout = new URL(result.data.microsoftLogoutUrl);
+    assert.equal(`${logout.origin}${logout.pathname}`, `${AUTHORITY}/oauth2/v2.0/logout`);
+    assert.equal(logout.searchParams.get("post_logout_redirect_uri"), `${server.baseUrl}/api/auth/microsoft/signed-out`);
+    assert.equal(logout.searchParams.get("logout_hint"), "hint-olle");
+    assert.equal((await client.get("/api/me")).status, 401);
+
+    const withoutHint = (await signInWithMicrosoft({ oid: "oid-olle", preferred_username: "olle@firma.se" })).client;
+    const asksForAccount = new URL((await withoutHint.post("/api/logout")).data.microsoftLogoutUrl);
+    assert.equal(asksForAccount.searchParams.has("logout_hint"), false);
+
+    const back = await fetch(`${server.baseUrl}/api/auth/microsoft/signed-out`, { redirect: "manual" });
+    assert.equal(back.status, 302);
+    assert.equal(back.headers.get("location"), "/");
+  });
+
+  test("signing out of a password session leaves Microsoft alone", async () => {
+    const client = server.client();
+    await client.login("ada", PASSWORD);
+    const result = await client.post("/api/logout");
+    assert.equal(result.status, 200);
+    assert.equal(result.data.microsoftLogoutUrl, undefined);
   });
 
   test("unlinking a Microsoft account signs out its Microsoft sessions only", async () => {
