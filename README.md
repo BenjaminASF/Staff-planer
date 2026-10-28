@@ -118,7 +118,11 @@ Admin och skiftledare skapar inloggningar under **Lägg till** eller via **Redig
 
 ### Inloggning med Microsoft
 
-Med en appregistrering i Microsoft Entra ID loggar personalen in med sitt Microsoft-jobbkonto. Inloggningssidan visar då **Logga in med Microsoft** överst, och ett klick leder direkt till Microsofts inloggning. Användarnamn och lösenord finns kvar under **Logga in med användarnamn och lösenord**, för den som inte har ett Microsoft-konto eller om Microsoft inte svarar.
+Med en appregistrering i Microsoft Entra ID loggar personalen in med sitt Microsoft-jobbkonto. Den som öppnar appen utan att vara inloggad skickas direkt till Microsofts inloggning, utan något klick, och kommer sedan tillbaka till sidan den öppnade. Är man redan inloggad hos Microsoft i webbläsaren kommer man in direkt, utan att Microsoft frågar något.
+
+Inloggningssidan visas i stället när den har något att säga: efter **Logga ut**, när inloggningen med Microsoft inte gick (sidan förklarar varför) och när någon ska logga in med lösenord. Där finns **Logga in med Microsoft** och, under **Logga in med användarnamn och lösenord**, det vanliga formuläret.
+
+Personal utan Microsoft-konto öppnar `https://<appens adress>/?losenord` första gången och loggar in med användarnamn och lösenord. Enheten kommer sedan ihåg det, så nästa gång visas lösenordsformuläret direkt i stället för Microsoft. Loggar någon in med Microsoft på samma enhet går den tillbaka till Microsoft igen.
 
 Ingen får ett konto bara genom att ha ett Microsoft-konto. Admin eller skiftledaren skapar inloggningen som vanligt. Vid den första inloggningen med Microsoft kopplas Microsoft-kontot till den användare vars **e-postadress** (på personen) eller **användarnamn** är Microsoft-kontots adress. Därefter känns personen igen på Microsoft-kontots id, även om adressen ändras. Har ingen eller flera användare adressen nekas inloggningen, och sidan berättar vad som saknas. En användare som redan är kopplad till ett Microsoft-konto kan inte tas över av ett annat konto med samma adress.
 
@@ -126,15 +130,16 @@ Den som loggar in med Microsoft behöver aldrig byta det tillfälliga lösenorde
 
 I användarlistan visas **Microsoft** vid de användare som är kopplade. Under **Hantera** kan den som får återställa personens lösenord koppla bort Microsoft-kontot, till exempel om en felaktig e-postadress kopplade fel person. Personens Microsoft-inloggningar loggas då ut, och nästa inloggning med Microsoft kopplar via e-postadressen igen.
 
-**Logga ut** loggar bara ut från Staff Planner. På en delad dator är man fortfarande inloggad hos Microsoft i webbläsaren tills man loggar ut därifrån.
+**Logga ut** loggar även ut från Microsoft i webbläsaren när man loggade in med Microsoft, så att nästa person på en delad dator inte kan välja samma konto utan lösenord. Det gäller också den automatiska utloggningen efter inaktivitet. Webbläsaren går via Microsoft och tillbaka till inloggningssidan, som visar **Du är utloggad.** Telefonens appar för Outlook och Teams påverkas inte. Den som loggade in med lösenord loggas bara ut från Staff Planner.
 
 Så här slår du på det:
 
-1. Öppna **Microsoft Entra admin center → App registrations → New registration**. Välj **Accounts in this organizational directory only** och lägg till plattformen **Web** med redirect-URI `https://<appens adress>/api/auth/microsoft/callback`. Nås appen på flera adresser, till exempel Railway-adressen och en egen domän, behöver varje adress en egen redirect-URI.
+1. Öppna **Microsoft Entra admin center → App registrations → New registration**. Välj **Accounts in this organizational directory only** och lägg till plattformen **Web** med redirect-URI `https://<appens adress>/api/auth/microsoft/callback`. Lägg sedan till en andra redirect-URI under **Authentication**: `https://<appens adress>/api/auth/microsoft/signed-out`, dit Microsoft skickar tillbaka webbläsaren efter utloggningen. Nås appen på flera adresser, till exempel Railway-adressen och en egen domän, behöver varje adress båda.
 2. Under **API permissions**: lägg till **Microsoft Graph → Delegated permissions →** `openid`, `profile` och `email`, och klicka **Grant admin consent**, så behöver ingen godkänna appen själv.
-3. Skapa en klienthemlighet under **Certificates & secrets → New client secret**.
-4. Lägg till variablerna i Railway: `ENTRA_TENANT_ID` (**Directory (tenant) ID**), `ENTRA_CLIENT_ID` (**Application (client) ID**), `ENTRA_CLIENT_SECRET` (hemlighetens **Value**) och gärna `ENTRA_ALLOWED_DOMAIN` (till exempel `er-doman.se`), så att bara konton med en adress på den domänen släpps in.
-5. Fyll i personalens e-postadress, samma som deras Microsoft-adress, under **Redigera** på personalsidan.
+3. Under **Token configuration → Add optional claim → ID**: välj `login_hint`. Då loggar **Logga ut** ut från Microsoft direkt, i stället för att Microsoft frågar vilket konto som ska loggas ut.
+4. Skapa en klienthemlighet under **Certificates & secrets → New client secret**.
+5. Lägg till variablerna i Railway: `ENTRA_TENANT_ID` (**Directory (tenant) ID**), `ENTRA_CLIENT_ID` (**Application (client) ID**), `ENTRA_CLIENT_SECRET` (hemlighetens **Value**) och gärna `ENTRA_ALLOWED_DOMAIN` (till exempel `er-doman.se`), så att bara konton med en adress på den domänen släpps in.
+6. Fyll i personalens e-postadress, samma som deras Microsoft-adress, under **Redigera** på personalsidan.
 
 Utan variablerna är inloggning med Microsoft avstängd, och allt annat fungerar som vanligt. Klienthemligheten har ett utgångsdatum i Entra: lägg in en ny i Railway innan den går ut.
 

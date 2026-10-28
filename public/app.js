@@ -9486,16 +9486,20 @@ async function signOut(notice = "", { forgetDevice = false } = {}) {
   if (forgetDevice) await disablePushOnThisDevice().catch(error => console.warn("Push could not be turned off:", error));
   currentUser = null;
   userPreferences = {};
+  let microsoftLogoutUrl = "";
   try {
-    await apiRequest("POST", "/logout");
+    microsoftLogoutUrl = (await apiRequest("POST", "/logout"))?.microsoftLogoutUrl || "";
   } catch (error) {
     console.warn("Logout request failed:", error);
   }
   sessionStorage.removeItem(SIGNED_IN_HINT_KEY);
   sessionStorage.removeItem(ACTIVE_SHIFT_KEY);
   sessionStorage.removeItem(ADMIN_LANDED_KEY);
-  if (notice) sessionStorage.setItem(AUTH_NOTICE_KEY, notice);
-  location.reload();
+  // With a notice the login page stays put instead of going straight on to Microsoft.
+  sessionStorage.setItem(AUTH_NOTICE_KEY, notice || "Du är utloggad.");
+  // Signed in with Microsoft: sign out there too. Microsoft then sends the browser back here.
+  if (microsoftLogoutUrl) location.replace(microsoftLogoutUrl);
+  else location.reload();
 }
 
 // Reloads shared data, for example after someone else changed it.
@@ -9976,6 +9980,36 @@ const MICROSOFT_LOGIN_ERRORS = {
 
 const MICROSOFT_LOGO = '<svg class="microsoft-logo" viewBox="0 0 21 21" aria-hidden="true"><rect x="1" y="1" width="9" height="9" fill="#f25022"/><rect x="11" y="1" width="9" height="9" fill="#7fba00"/><rect x="1" y="11" width="9" height="9" fill="#00a4ef"/><rect x="11" y="11" width="9" height="9" fill="#ffb900"/></svg>';
 
+// Staff without a Microsoft account sign in with a password. A device remembers how its last
+// user signed in, so they get the password form there instead of Microsoft. /?losenord shows it once.
+const PASSWORD_LOGIN_KEY = "staff_password_login";
+
+function rememberLoginMethod(me) {
+  try {
+    if (me.user.viaMicrosoft) localStorage.removeItem(PASSWORD_LOGIN_KEY);
+    else localStorage.setItem(PASSWORD_LOGIN_KEY, "1");
+  } catch {
+    // Private mode: the login page goes to Microsoft as usual.
+  }
+}
+
+function prefersPasswordLogin() {
+  try {
+    return localStorage.getItem(PASSWORD_LOGIN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function microsoftLoginUrl() {
+  return `/api/auth/microsoft?returnTo=${encodeURIComponent(`${location.pathname}${location.search}`)}`;
+}
+
+function goToMicrosoftLogin() {
+  sessionStorage.setItem(MICROSOFT_SIGN_IN_KEY, "1");
+  location.replace(microsoftLoginUrl());
+}
+
 function takeMicrosoftLoginError() {
   const code = new URLSearchParams(location.search).get("login_error");
   if (code === null) return "";
@@ -10010,9 +10044,8 @@ function renderAuthForm(mode, onSubmit, { microsoft = false } = {}) {
   const form = current.cloneNode(false);
   const passwordForm = `${config.fields.map(field => `<input name="${field.name}" type="${field.type}" placeholder="${escapeHtml(field.label)}" aria-label="${escapeHtml(field.label)}" autocomplete="${field.autocomplete}" required />`).join("")}
     <div class="actions"><button class="btn${microsoft ? "" : " primary"}" type="submit">${escapeHtml(config.button)}</button>${mode === "changePassword" ? '<button class="btn" type="button" data-auth-logout>Logga ut</button>' : ""}</div>`;
-  const returnTo = `${location.pathname}${location.search}`;
   form.innerHTML = microsoft
-    ? `<a class="btn primary microsoft-login" href="/api/auth/microsoft?returnTo=${encodeURIComponent(returnTo)}" data-microsoft-login>${MICROSOFT_LOGO}<span>Logga in med Microsoft</span></a>
+    ? `<a class="btn primary microsoft-login" href="${escapeHtml(microsoftLoginUrl())}" data-microsoft-login>${MICROSOFT_LOGO}<span>Logga in med Microsoft</span></a>
       <button class="auth-switch" type="button" data-auth-password>Logga in med användarnamn och lösenord</button>
       <div class="auth-password" hidden><p class="auth-divider"><span>eller med användarnamn</span></p>${passwordForm}</div>`
     : passwordForm;
@@ -10041,6 +10074,7 @@ function renderAuthForm(mode, onSubmit, { microsoft = false } = {}) {
 // rather than coming back with a session that was already open.
 async function continueAfterSignIn(me, justSignedIn = false) {
   setSession(me);
+  rememberLoginMethod(me);
   if (me.user.mustChangePassword) {
     showAuthScreen("changePassword");
     return;
@@ -10048,7 +10082,8 @@ async function continueAfterSignIn(me, justSignedIn = false) {
   await openAppUI(justSignedIn);
 }
 
-function showAuthScreen(mode, microsoftLoginError = "") {
+// showPassword opens the password form under the Microsoft button straight away.
+function showAuthScreen(mode, { microsoftLoginError = "", showPassword = false } = {}) {
   setAuthenticatedView(false);
   document.getElementById("appShell")?.classList.add("hidden");
   document.getElementById("authScreen")?.classList.remove("hidden");
@@ -10058,6 +10093,7 @@ function showAuthScreen(mode, microsoftLoginError = "") {
     renderAuthForm("login", async values => {
       await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
     }, { microsoft: microsoftLoginAvailable });
+    if (showPassword) showPasswordLogin();
   } else if (mode === "setup") {
     renderAuthForm("setup", async values => {
       checkNewPassword(values.password, values.confirm);
@@ -10103,7 +10139,16 @@ async function setupAuthUI() {
   sessionStorage.removeItem(SIGNED_IN_HINT_KEY);
   const setup = await apiRequest("GET", "/setup");
   microsoftLoginAvailable = Boolean(setup.microsoftLogin);
-  showAuthScreen(setup.needsSetup ? "setup" : "login", microsoftLoginError);
+  const showPassword = takeLinkParam("losenord") || prefersPasswordLogin();
+  // Straight on to Microsoft without a click, unless the login page has something to show:
+  // a problem, a sign-out notice, a sign-in that came back without a session (so it never
+  // loops) or the password form.
+  const stayOnLoginPage = setup.needsSetup || microsoftLoginError || backFromMicrosoft || showPassword || sessionStorage.getItem(AUTH_NOTICE_KEY);
+  if (microsoftLoginAvailable && !stayOnLoginPage) {
+    goToMicrosoftLogin();
+    return;
+  }
+  showAuthScreen(setup.needsSetup ? "setup" : "login", { microsoftLoginError, showPassword });
 }
 
 // Avoid flashing the login screen between pages while the session is checked.

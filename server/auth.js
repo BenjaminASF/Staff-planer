@@ -95,14 +95,15 @@ function setSessionCookie(req, res, token, maxAgeSeconds) {
 }
 
 // dismissedMessages carries "hidden this time" choices over when a session is replaced
-// without a new login (password change). viaMicrosoft marks a sign-in with Microsoft.
-async function createSession(db, req, res, userId, { dismissedMessages = [], viaMicrosoft = false } = {}) {
+// without a new login (password change). viaMicrosoft marks a sign-in with Microsoft, and
+// microsoftLoginHint lets signing out sign out of Microsoft without picking an account.
+async function createSession(db, req, res, userId, { dismissedMessages = [], viaMicrosoft = false, microsoftLoginHint = null } = {}) {
   const token = crypto.randomBytes(32).toString("base64url");
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
   await db.query(
-    `INSERT INTO sessions (token_hash, user_id, expires_at, dismissed_messages, via_microsoft)
-     VALUES ($1, $2, now() + make_interval(secs => $3), $4, $5)`,
-    [hashToken(token), userId, maxAge, dismissedMessages, viaMicrosoft]
+    `INSERT INTO sessions (token_hash, user_id, expires_at, dismissed_messages, via_microsoft, microsoft_login_hint)
+     VALUES ($1, $2, now() + make_interval(secs => $3), $4, $5, $6)`,
+    [hashToken(token), userId, maxAge, dismissedMessages, viaMicrosoft, microsoftLoginHint]
   );
   setSessionCookie(req, res, token, maxAge);
 }
@@ -140,6 +141,7 @@ function loadUser(pool) {
       // Someone signed in with Microsoft never needs the temporary password, so it is only
       // replaced at a password sign-in.
       mustChangePassword: row.must_change_password && !row.via_microsoft,
+      viaMicrosoft: row.via_microsoft,
       personId: row.person_id,
       shiftId: row.shift_id,
       name: row.name,

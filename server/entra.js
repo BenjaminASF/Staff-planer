@@ -102,6 +102,7 @@ function createEntraClient({
     allowedDomain: domain,
 
     // Where to send the browser, and the secrets the callback needs to finish the sign-in.
+    // No prompt: someone already signed in to Microsoft in the browser gets straight in.
     async start(redirectUri) {
       const { authorization_endpoint: endpoint } = await getMetadata();
       const flow = { state: randomToken(), nonce: randomToken(), verifier: randomToken() };
@@ -115,8 +116,7 @@ function createEntraClient({
         state: flow.state,
         nonce: flow.nonce,
         code_challenge: crypto.createHash("sha256").update(flow.verifier).digest("base64url"),
-        code_challenge_method: "S256",
-        prompt: "select_account"
+        code_challenge_method: "S256"
       }).toString();
       return { url: url.toString(), flow };
     },
@@ -138,6 +138,19 @@ function createEntraClient({
         })
       });
       return verifyIdToken(tokens?.id_token, flow.nonce);
+    },
+
+    // Where to send the browser to sign out of Microsoft as well. Microsoft then returns it to
+    // postLogoutRedirectUri. Without the login_hint Microsoft asks which account to sign out.
+    async logoutUrl({ postLogoutRedirectUri, loginHint }) {
+      const { end_session_endpoint: endpoint } = await getMetadata();
+      if (!endpoint) return "";
+      const url = new URL(endpoint);
+      url.search = new URLSearchParams({
+        post_logout_redirect_uri: postLogoutRedirectUri,
+        ...(loginHint ? { logout_hint: loginHint } : {})
+      }).toString();
+      return url.toString();
     },
 
     // The account's e-mail addresses, only those in ENTRA_ALLOWED_DOMAIN when it is set.
