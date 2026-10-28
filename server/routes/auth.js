@@ -136,7 +136,7 @@ function authRoutes({ pool, setupCode, loginLimiter, entra }) {
     const ip = req.ip || "";
     loginLimiter.check(ip, username);
     const { rows } = await pool.query(
-      "SELECT id, username, password_hash, role, must_change_password, person_id, dismissed_messages, preferences FROM users WHERE username = $1",
+      "SELECT id, username, password_hash, role, must_change_password, person_id, dismissed_messages, preferences, entra_oid FROM users WHERE username = $1",
       [username]
     );
     const row = rows[0];
@@ -146,6 +146,12 @@ function authRoutes({ pool, setupCode, loginLimiter, entra }) {
       throw new HttpError(401, "Fel användarnamn eller lösenord.");
     }
     loginLimiter.reset(ip, username);
+    // Someone linked to a Microsoft account signs in with Microsoft only, so an account closed
+    // there is closed here too. Only told after the right password, so it reveals nothing.
+    // With Microsoft sign-in off (no Entra variables) the password works again.
+    if (row.entra_oid && entra.configured) {
+      throw new HttpError(403, "Ditt konto är kopplat till Microsoft. Logga in med Microsoft.", { code: "microsoft_required" });
+    }
     await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [row.id]);
     await pool.query("DELETE FROM sessions WHERE expires_at < now()");
     await createSession(pool, req, res, row.id);
@@ -197,7 +203,8 @@ function authRoutes({ pool, setupCode, loginLimiter, entra }) {
     const { user, problem } = await findMicrosoftUser(pool, entra, claims);
     if (problem) return microsoftFailed(res, problem);
     await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [user.id]);
-    await pool.query("DELETE FROM sessions WHERE expires_at < now()");
+    // From now on the password no longer signs this user in (see /login), so its sessions go too.
+    await pool.query("DELETE FROM sessions WHERE expires_at < now() OR (user_id = $1 AND NOT via_microsoft)", [user.id]);
     const loginHint = typeof claims.login_hint === "string" && claims.login_hint.length <= 2000 ? claims.login_hint : null;
     await createSession(pool, req, res, user.id, { viaMicrosoft: true, microsoftLoginHint: loginHint });
     res.redirect(302, safeReturnPath(flow.returnTo));

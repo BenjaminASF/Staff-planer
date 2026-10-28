@@ -7508,11 +7508,9 @@ span.sn-prio { cursor: default; }
 .nav-link[href="anteckningar.html"] { --g-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15.5 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8.5z'/%3E%3Cpath d='M15 3v6h6'/%3E%3C/svg%3E"); }
 .sn-new.hidden, .sn-tool-right.hidden { display: none; }
 
-/* Sign-in with Microsoft: the button leads, the password form waits behind a link. */
+/* Sign-in with Microsoft: the button leads, the password form is shown only with /?losenord. */
 .auth-card .microsoft-login { display: flex; align-items: center; justify-content: center; gap: 10px; }
 .microsoft-logo { flex: none; width: 18px; height: 18px; }
-.auth-switch { display: block; width: 100%; margin: 12px 0 0; padding: 6px; border: 0; background: none; color: var(--ds-subtle); font: inherit; font-size: 13px; cursor: pointer; }
-.auth-switch:hover { color: var(--ds-text); text-decoration: underline; text-underline-offset: 2px; }
 .auth-password[hidden] { display: none; }
 .auth-card .auth-divider { display: flex; align-items: center; gap: 10px; margin: 18px 0 12px; color: var(--ds-subtle); font-size: 12px; }
 .auth-card .auth-divider::before, .auth-card .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--ds-border); }
