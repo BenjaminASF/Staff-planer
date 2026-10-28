@@ -77,10 +77,11 @@ function parseCookies(header) {
   return cookies;
 }
 
-function setSessionCookie(req, res, token, maxAgeSeconds) {
+// SameSite=Lax still sends the cookie when Microsoft sends the browser back after sign-in.
+function setCookie(req, res, name, value, { path = "/", maxAgeSeconds }) {
   const parts = [
-    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
-    "Path=/",
+    `${name}=${encodeURIComponent(value)}`,
+    `Path=${path}`,
     "HttpOnly",
     "SameSite=Lax",
     `Max-Age=${maxAgeSeconds}`
@@ -89,14 +90,19 @@ function setSessionCookie(req, res, token, maxAgeSeconds) {
   res.append("Set-Cookie", parts.join("; "));
 }
 
+function setSessionCookie(req, res, token, maxAgeSeconds) {
+  setCookie(req, res, SESSION_COOKIE, token, { maxAgeSeconds });
+}
+
 // dismissedMessages carries "hidden this time" choices over when a session is replaced
-// without a new login (password change).
-async function createSession(db, req, res, userId, dismissedMessages = []) {
+// without a new login (password change). viaMicrosoft marks a sign-in with Microsoft.
+async function createSession(db, req, res, userId, { dismissedMessages = [], viaMicrosoft = false } = {}) {
   const token = crypto.randomBytes(32).toString("base64url");
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
   await db.query(
-    "INSERT INTO sessions (token_hash, user_id, expires_at, dismissed_messages) VALUES ($1, $2, now() + make_interval(secs => $3), $4)",
-    [hashToken(token), userId, maxAge, dismissedMessages]
+    `INSERT INTO sessions (token_hash, user_id, expires_at, dismissed_messages, via_microsoft)
+     VALUES ($1, $2, now() + make_interval(secs => $3), $4, $5)`,
+    [hashToken(token), userId, maxAge, dismissedMessages, viaMicrosoft]
   );
   setSessionCookie(req, res, token, maxAge);
 }
@@ -116,7 +122,7 @@ function loadUser(pool) {
     const tokenHash = hashToken(token);
     const { rows } = await pool.query(
       `SELECT u.id, u.username, u.role, u.must_change_password, u.person_id, p.shift_id, p.name,
-              u.dismissed_messages, s.dismissed_messages AS session_dismissed_messages, u.preferences,
+              u.dismissed_messages, s.dismissed_messages AS session_dismissed_messages, u.preferences, s.via_microsoft,
               s.last_seen_at < now() - interval '1 hour' AS needs_refresh
          FROM sessions s
          JOIN users u ON u.id = s.user_id
@@ -131,7 +137,9 @@ function loadUser(pool) {
       id: row.id,
       username: row.username,
       role: row.role,
-      mustChangePassword: row.must_change_password,
+      // Someone signed in with Microsoft never needs the temporary password, so it is only
+      // replaced at a password sign-in.
+      mustChangePassword: row.must_change_password && !row.via_microsoft,
       personId: row.person_id,
       shiftId: row.shift_id,
       name: row.name,
@@ -205,6 +213,8 @@ module.exports = {
   HttpError,
   hashPassword,
   verifyPassword,
+  parseCookies,
+  setCookie,
   getDummyHash,
   normalizeUsername,
   validateUsername,

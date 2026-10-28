@@ -116,6 +116,28 @@ Railway kontrollerar `/api/health` vid varje driftsättning (se [`railway.json`]
 
 Admin och skiftledare skapar inloggningar under **Lägg till** eller via **Redigera** på personalsidan. Personen får ett användarnamn och ett tillfälligt lösenord och väljer ett eget lösenord vid första inloggningen. Glömda lösenord återställs på samma sätt.
 
+### Inloggning med Microsoft
+
+Med en appregistrering i Microsoft Entra ID loggar personalen in med sitt Microsoft-jobbkonto. Inloggningssidan visar då **Logga in med Microsoft** överst, och ett klick leder direkt till Microsofts inloggning. Användarnamn och lösenord finns kvar under **Logga in med användarnamn och lösenord**, för den som inte har ett Microsoft-konto eller om Microsoft inte svarar.
+
+Ingen får ett konto bara genom att ha ett Microsoft-konto. Admin eller skiftledaren skapar inloggningen som vanligt. Vid den första inloggningen med Microsoft kopplas Microsoft-kontot till den användare vars **e-postadress** (på personen) eller **användarnamn** är Microsoft-kontots adress. Därefter känns personen igen på Microsoft-kontots id, även om adressen ändras. Har ingen eller flera användare adressen nekas inloggningen, och sidan berättar vad som saknas. En användare som redan är kopplad till ett Microsoft-konto kan inte tas över av ett annat konto med samma adress.
+
+Den som loggar in med Microsoft behöver aldrig byta det tillfälliga lösenordet. Loggar personen in med lösenordet måste det fortfarande bytas som vanligt.
+
+I användarlistan visas **Microsoft** vid de användare som är kopplade. Under **Hantera** kan den som får återställa personens lösenord koppla bort Microsoft-kontot, till exempel om en felaktig e-postadress kopplade fel person. Personens Microsoft-inloggningar loggas då ut, och nästa inloggning med Microsoft kopplar via e-postadressen igen.
+
+**Logga ut** loggar bara ut från Staff Planner. På en delad dator är man fortfarande inloggad hos Microsoft i webbläsaren tills man loggar ut därifrån.
+
+Så här slår du på det:
+
+1. Öppna **Microsoft Entra admin center → App registrations → New registration**. Välj **Accounts in this organizational directory only** och lägg till plattformen **Web** med redirect-URI `https://<appens adress>/api/auth/microsoft/callback`. Nås appen på flera adresser, till exempel Railway-adressen och en egen domän, behöver varje adress en egen redirect-URI.
+2. Under **API permissions**: lägg till **Microsoft Graph → Delegated permissions →** `openid`, `profile` och `email`, och klicka **Grant admin consent**, så behöver ingen godkänna appen själv.
+3. Skapa en klienthemlighet under **Certificates & secrets → New client secret**.
+4. Lägg till variablerna i Railway: `ENTRA_TENANT_ID` (**Directory (tenant) ID**), `ENTRA_CLIENT_ID` (**Application (client) ID**), `ENTRA_CLIENT_SECRET` (hemlighetens **Value**) och gärna `ENTRA_ALLOWED_DOMAIN` (till exempel `er-doman.se`), så att bara konton med en adress på den domänen släpps in.
+5. Fyll i personalens e-postadress, samma som deras Microsoft-adress, under **Redigera** på personalsidan.
+
+Utan variablerna är inloggning med Microsoft avstängd, och allt annat fungerar som vanligt. Klienthemligheten har ett utgångsdatum i Entra: lägg in en ny i Railway innan den går ut.
+
 ### Flytta data från den gamla versionen
 
 Den tidigare versionen sparade allt krypterat i en enda webbläsare. Så här flyttar du in den datan:
@@ -213,6 +235,8 @@ TEST_DATABASE_URL=postgres://postgres@localhost:5432/staffplanner_test npm test
 | `MAIL_FROM` | Avsändare för mejlen, till exempel `Staff Planner <schema@er-doman.se>`. Domänen måste vara verifierad i Resend. |
 | `APP_URL` | Appens adress, som länkas i mejlen. Utan den används adressen som skiftledaren delade schemat från. |
 | `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | Nycklar för pushnotiser, skapas med `npx web-push generate-vapid-keys`. Utan dem är pushnotiser avstängda. |
+| `ENTRA_TENANT_ID`, `ENTRA_CLIENT_ID`, `ENTRA_CLIENT_SECRET` | Appregistreringen i Microsoft Entra ID, för inloggning med Microsoft. Utan dem är den avstängd. `ENTRA_TENANT_ID` är organisationens tenant-id, aldrig `common`. |
+| `ENTRA_ALLOWED_DOMAIN` | Bara Microsoft-konton med en adress på den här domänen får logga in, till exempel `er-doman.se`. |
 | `VAPID_SUBJECT` | Kontaktadress för pushtjänsterna, till exempel `mailto:it@er-doman.se`. Utan den används `APP_URL` om den börjar med `https://`. |
 
 ## Struktur
@@ -222,6 +246,7 @@ TEST_DATABASE_URL=postgres://postgres@localhost:5432/staffplanner_test npm test
   - `permissions.js` samlar alla rollregler.
   - `realtime.js` skickar ändringar till öppna sidor i realtid.
   - `push.js` köar och skickar pushnotiser.
+  - `entra.js` sköter inloggningen med Microsoft.
   - `routes/` innehåller API:t.
   - `migrations/` innehåller databasschemat.
   - `test/` innehåller testerna.

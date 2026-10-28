@@ -29,14 +29,14 @@ function serializePerson(row) {
     account: row.username
       ? {
         username: row.username, role: row.role, lastLoginAt: row.last_login_at || null, mustChangePassword: Boolean(row.must_change_password),
-        pushBlocked: Boolean(row.push_blocked)
+        pushBlocked: Boolean(row.push_blocked), microsoftLinked: Boolean(row.entra_oid)
       }
       : null
   };
 }
 
 const PERSON_SELECT = `
-  SELECT p.*, u.username, u.role, u.last_login_at, u.must_change_password, u.push_blocked
+  SELECT p.*, u.username, u.role, u.last_login_at, u.must_change_password, u.push_blocked, u.entra_oid
     FROM people p
     LEFT JOIN users u ON u.person_id = p.id`;
 

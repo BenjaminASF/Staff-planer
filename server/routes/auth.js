@@ -2,7 +2,7 @@ const crypto = require("node:crypto");
 const express = require("express");
 const {
   HttpError, hashPassword, verifyPassword, getDummyHash, normalizeUsername, validateUsername,
-  validatePassword, createSession, destroySession, requireUser, allowWithoutPasswordChange
+  validatePassword, createSession, destroySession, requireUser, allowWithoutPasswordChange, parseCookies, setCookie
 } = require("../auth");
 const { withTransaction } = require("../db");
 const { ROLES, editablePersonFields } = require("../permissions");
@@ -29,7 +29,60 @@ async function buildMePayload(db, user) {
 
 const MESSAGE_ID_PATTERN = /^[a-z0-9:._-]{1,80}$/i;
 
-function authRoutes({ pool, setupCode, loginLimiter }) {
+// Sign-in with Microsoft keeps its state, nonce and PKCE verifier in this cookie between
+// leaving for Microsoft and coming back, so the callback only accepts the browser that started.
+const MICROSOFT_PATH = "/api/auth/microsoft";
+const MICROSOFT_FLOW_COOKIE = "sp_microsoft";
+const MICROSOFT_FLOW_SECONDS = 10 * 60;
+
+function sameText(given, expected) {
+  const a = Buffer.from(String(given ?? ""));
+  const b = Buffer.from(String(expected ?? ""));
+  return a.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function readMicrosoftFlow(req) {
+  try {
+    const flow = JSON.parse(Buffer.from(parseCookies(req.headers.cookie)[MICROSOFT_FLOW_COOKIE] || "", "base64url").toString("utf8"));
+    return flow?.state && flow.nonce && flow.verifier ? flow : null;
+  } catch {
+    return null;
+  }
+}
+
+// Only a page on this site, so signing in can never send anyone elsewhere.
+function safeReturnPath(value) {
+  const path = String(value || "");
+  return /^\/(?![/\\])[^\s\\]{0,500}$/.test(path) ? path : "/";
+}
+
+// The user a Microsoft account signs in as: the one it is linked to, otherwise the only user
+// whose e-mail address (on the person) or username is the account's address. That user is
+// linked at once, so later sign-ins no longer depend on the address. Nobody gets an account
+// just by having a Microsoft account: admin or the shift's managers add them first.
+async function findMicrosoftUser(pool, entra, claims) {
+  const emails = entra.emailsOf(claims);
+  if (entra.allowedDomain && !emails.length) return { problem: "not_allowed" };
+  const linked = await pool.query("SELECT id FROM users WHERE entra_oid = $1", [claims.oid]);
+  if (linked.rows[0]) return { user: linked.rows[0] };
+  if (!emails.length) return { problem: "not_linked" };
+  const { rows } = await pool.query(
+    `SELECT u.id, u.entra_oid
+       FROM users u
+       JOIN people p ON p.id = u.person_id
+      WHERE p.email = ANY($1::text[]) OR u.username = ANY($1::text[])`,
+    [emails]
+  );
+  if (rows.length > 1) return { problem: "ambiguous" };
+  if (!rows.length) return { problem: "not_linked" };
+  const { rows: updated } = await pool.query(
+    "UPDATE users SET entra_oid = $2, updated_at = now() WHERE id = $1 AND (entra_oid IS NULL OR entra_oid = $2) RETURNING id",
+    [rows[0].id, claims.oid]
+  );
+  return updated[0] ? { user: updated[0] } : { problem: "linked_elsewhere" };
+}
+
+function authRoutes({ pool, setupCode, loginLimiter, entra }) {
   const router = express.Router();
 
   router.get("/health", async (req, res) => {
@@ -39,7 +92,7 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
 
   router.get("/setup", async (req, res) => {
     const { rows } = await pool.query("SELECT EXISTS (SELECT 1 FROM users) AS has_users");
-    res.json({ needsSetup: !rows[0].has_users, setupCodeConfigured: Boolean(setupCode) });
+    res.json({ needsSetup: !rows[0].has_users, setupCodeConfigured: Boolean(setupCode), microsoftLogin: entra.configured });
   });
 
   // Creates the first admin account. Only possible while there are no users,
@@ -100,6 +153,52 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
     }));
   });
 
+  // Sign-in with Microsoft. The login page sends the browser here, Microsoft sends it back
+  // to the callback, and the callback signs in and returns to the page it started on.
+  // Problems go back to the login page as ?login_error=<code>, which the page explains.
+  const microsoftCallbackUrl = req => `${req.protocol}://${req.get("host")}${MICROSOFT_PATH}/callback`;
+  const microsoftFailed = (res, code) => res.redirect(302, `/?login_error=${code}`);
+
+  router.get("/auth/microsoft", async (req, res) => {
+    if (!entra.configured) throw new HttpError(404, "Inloggning med Microsoft är inte påslagen.");
+    let started;
+    try {
+      started = await entra.start(microsoftCallbackUrl(req));
+    } catch (error) {
+      console.error("Microsoft sign-in could not start:", error);
+      return microsoftFailed(res, "failed");
+    }
+    const flow = { ...started.flow, returnTo: safeReturnPath(req.query.returnTo) };
+    setCookie(req, res, MICROSOFT_FLOW_COOKIE, Buffer.from(JSON.stringify(flow)).toString("base64url"), {
+      path: MICROSOFT_PATH, maxAgeSeconds: MICROSOFT_FLOW_SECONDS
+    });
+    res.redirect(302, started.url);
+  });
+
+  router.get("/auth/microsoft/callback", async (req, res) => {
+    if (!entra.configured) throw new HttpError(404, "Inloggning med Microsoft är inte påslagen.");
+    const flow = readMicrosoftFlow(req);
+    setCookie(req, res, MICROSOFT_FLOW_COOKIE, "", { path: MICROSOFT_PATH, maxAgeSeconds: 0 });
+    if (req.query.error) {
+      console.warn(`Microsoft sign-in was not completed: ${req.query.error} ${req.query.error_description || ""}`);
+      return microsoftFailed(res, req.query.error === "access_denied" ? "cancelled" : "failed");
+    }
+    if (!flow || !sameText(req.query.state, flow.state)) return microsoftFailed(res, "expired");
+    let claims;
+    try {
+      claims = await entra.finish({ code: req.query.code, redirectUri: microsoftCallbackUrl(req), flow });
+    } catch (error) {
+      console.error("Microsoft sign-in failed:", error);
+      return microsoftFailed(res, "failed");
+    }
+    const { user, problem } = await findMicrosoftUser(pool, entra, claims);
+    if (problem) return microsoftFailed(res, problem);
+    await pool.query("UPDATE users SET last_login_at = now() WHERE id = $1", [user.id]);
+    await pool.query("DELETE FROM sessions WHERE expires_at < now()");
+    await createSession(pool, req, res, user.id, { viaMicrosoft: true });
+    res.redirect(302, safeReturnPath(flow.returnTo));
+  });
+
   router.post("/logout", async (req, res) => {
     await destroySession(pool, req, res);
     res.json({ ok: true });
@@ -149,7 +248,7 @@ function authRoutes({ pool, setupCode, loginLimiter }) {
       // Sign out other devices; this one gets a fresh session below.
       await client.query("DELETE FROM sessions WHERE user_id = $1", [req.user.id]);
     });
-    await createSession(pool, req, res, req.user.id, req.user.sessionDismissedMessages);
+    await createSession(pool, req, res, req.user.id, { dismissedMessages: req.user.sessionDismissedMessages });
     res.json(await buildMePayload(pool, { ...req.user, mustChangePassword: false }));
   });
 

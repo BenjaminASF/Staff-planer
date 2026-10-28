@@ -13,12 +13,13 @@ const { pushRoutes } = require("./routes/push");
 const { createMailer } = require("./mailer");
 const { createRealtimeHub } = require("./realtime");
 const { createPushSender, createPushService } = require("./push");
+const { createEntraClient } = require("./entra");
 
 const PUBLIC_DIR = path.join(__dirname, "..", "public");
 
 function createApp({
   pool, setupCode = process.env.SETUP_CODE || "", trustProxy = true, mailer = createMailer(), appUrl = process.env.APP_URL || "",
-  pushSender = createPushSender(), pushAutoStart = true
+  pushSender = createPushSender(), pushAutoStart = true, entra = createEntraClient()
 } = {}) {
   const app = express();
   const realtime = createRealtimeHub(pool);
@@ -44,7 +45,7 @@ function createApp({
   api.use(requireAppHeader);
   api.use(loadUser(pool));
   api.get("/events", requireUser, realtime.handler);
-  api.use(authRoutes({ pool, setupCode, loginLimiter: createLoginLimiter() }));
+  api.use(authRoutes({ pool, setupCode, loginLimiter: createLoginLimiter(), entra }));
   api.use("/people", peopleRoutes({ pool }));
   api.use("/shifts", shiftRoutes({ pool }));
   api.use("/admin", adminRoutes({ pool }));
