@@ -11,8 +11,8 @@ const {
   addAuditEvent
 } = require("../store");
 const { cleanText } = require("../validation");
-const { notifyScheduleShared, notifyAdminChange } = require("../notifications");
-const { placementWeek, queueScheduleChange, queueScheduleShared } = require("../push");
+const { notifyScheduleShared, notifyAdminChange, notifyScheduleChange } = require("../notifications");
+const { placementWeek, queueScheduleShared } = require("../push");
 
 // Personal scopes are not looked up: only their owner, who is signed in, gets
 // past the permission check, and others must not learn which user ids exist.
@@ -109,7 +109,10 @@ function documentRoutes({ pool, mailer, appUrl }) {
       });
       await queueScheduleShared(pool, { scope, week: sharedWeek, actorId: req.user.id });
     }
-    if (placementWeek(key)) await queueScheduleChange(pool, { scope, key, before: previous, after: value, actorId: req.user.id });
+    if (placementWeek(key)) {
+      await notifyScheduleChange(pool, { user: req.user, scope, key, before: previous, after: value })
+        .catch(error => console.error("Schedule change notification failed:", error));
+    }
     res.json(saved);
   });
 

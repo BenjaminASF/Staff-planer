@@ -1,6 +1,6 @@
 const { ROLES, isAdmin } = require("./permissions");
-const { newId, isoWeekNumber } = require("./store");
-const { queuePush } = require("./push");
+const { newId, isoWeekNumber, currentWeekKey } = require("./store");
+const { queuePush, placementWeek, scheduleChangeRecipients, queueScheduleChange, queuePlacementChange } = require("./push");
 
 // E-mails the operators in a shift that the week's schedule is ready.
 // Operators without a login or e-mail address are skipped.
@@ -59,16 +59,60 @@ async function addNotifications(db, userIds, { kind, actorName = "", title = "",
   return recipients.length;
 }
 
-// When an admin changes something, the shift leaders and right hands it concerns
-// get a short note: everyone for shared settings, only that shift's for a shift.
+// When an admin changes something, the shift leaders it concerns get a short note:
+// every shift leader for shared settings, only that shift's for a shift. Right hands
+// and operators hear only about their own schedule (see notifyScheduleChange).
 async function notifyAdminChange(db, { user, scope, type = "", title = "", detail = "" }) {
   if (!isAdmin(user) || !title || NOT_A_CHANGE.has(`${type}:${title}`)) return 0;
   const { rows } = await db.query(
     `SELECT u.id FROM users u JOIN people p ON p.id = u.person_id
-      WHERE u.role = ANY($1::text[]) AND u.id <> $2 AND ($3 = 'global' OR p.shift_id = $3)`,
-    [[ROLES.LEADER, ROLES.RIGHT_HAND], user.id, scope]
+      WHERE u.role = $1 AND u.id <> $2 AND ($3 = 'global' OR p.shift_id = $3)`,
+    [ROLES.LEADER, user.id, scope]
   );
   return addNotifications(db, rows.map(row => row.id), { kind: "adminChange", actorName: user.name, title, detail });
+}
+
+// A note about the user's own schedule. While the note about the same thing (refKey) is
+// unread, it is updated instead, so several changes in a row make one note and one alert.
+async function addPersonalNotices(db, userIds, { kind, refKey, actorName = "", title = "", detail = "" }) {
+  const recipients = [...new Set(userIds)].filter(Boolean);
+  for (const userId of recipients) {
+    await db.query(
+      `INSERT INTO notifications (id, user_id, kind, actor_name, title, detail, ref_key) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id, ref_key) WHERE read_at IS NULL
+       DO UPDATE SET actor_name = EXCLUDED.actor_name, title = EXCLUDED.title, detail = EXCLUDED.detail, created_at = now()`,
+      [newId(), userId, kind, String(actorName).slice(0, 120), String(title).slice(0, 300), String(detail).slice(0, 500), refKey]
+    );
+  }
+  return recipients.length;
+}
+
+// A week's schedule, training, extra places or breaks were saved. Everyone whose own
+// placement changed is told in the app and by push, apart from the person who made the change.
+async function notifyScheduleChange(db, { user, scope, key, before, after }) {
+  const week = placementWeek(key);
+  if (!week || week < currentWeekKey()) return 0;
+  const userIds = await scheduleChangeRecipients(db, { scope, key, week, before, after, actorId: user.id });
+  if (!userIds.length) return 0;
+  await addPersonalNotices(db, userIds, {
+    kind: "scheduleChange", refKey: `schedule:${scope}:${week}`, actorName: user.name,
+    title: `Ditt schema för vecka ${isoWeekNumber(week)} har ändrats`
+  });
+  await queueScheduleChange(db, { scope, week, userIds, actorId: user.id });
+  return userIds.length;
+}
+
+// Someone was moved to another shift: they are told in the app and by push.
+async function notifyPlacementChange(db, { user, personId }) {
+  const { rows } = await db.query(
+    "SELECT u.id, s.name AS shift_name FROM users u JOIN people p ON p.id = u.person_id LEFT JOIN shifts s ON s.id = p.shift_id WHERE u.person_id = $1 AND u.id <> $2",
+    [personId, user.id]
+  );
+  await addPersonalNotices(db, rows.map(row => row.id), {
+    kind: "placementChange", refKey: "placement", actorName: user.name,
+    title: "Din placering har ändrats", detail: rows[0]?.shift_name ? `Nytt skift: ${rows[0].shift_name}` : "Inget skift"
+  });
+  return queuePlacementChange(db, { personId, actorId: user.id });
 }
 
 const serializeNotification = row => ({
@@ -83,6 +127,7 @@ const serializeNotification = row => ({
 });
 
 module.exports = {
-  notifyScheduleShared, isoWeekNumber, addNotifications, notifyAdminChange, serializeNotification,
+  notifyScheduleShared, isoWeekNumber, addNotifications, notifyAdminChange, notifyScheduleChange, notifyPlacementChange,
+  serializeNotification,
   NOTIFICATION_PAGE_SIZE
 };

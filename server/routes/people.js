@@ -10,8 +10,7 @@ const {
   clearPersonFromShiftSchedules, addAuditEvent
 } = require("../store");
 const { availabilityLabel, cleanPersonFields, cleanText, cleanEmail } = require("../validation");
-const { notifyAdminChange } = require("../notifications");
-const { queuePlacementChange } = require("../push");
+const { notifyAdminChange, notifyPlacementChange } = require("../notifications");
 
 async function requirePerson(db, id) {
   const person = await getPersonById(db, id);
@@ -112,7 +111,7 @@ function peopleRoutes({ pool }) {
         await clearPersonFromShiftSchedules(client, person.id, person.shiftId, req.user.id);
       }
       if ("shift_id" in changes && changes.shift_id !== person.shiftId && person.account) {
-        await queuePlacementChange(client, { personId: person.id, actorId: req.user.id });
+        await notifyPlacementChange(client, { user: req.user, personId: person.id });
       }
       if (changes.availability && changes.availability !== person.availability && person.shiftId) {
         const event = {
