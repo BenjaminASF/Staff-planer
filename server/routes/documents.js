@@ -3,9 +3,10 @@ const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
 const {
   isAdmin, isAdminOrLeader, documentCategory, canReadDocument, canWriteDocument, canReadAuditScope, personalScopeOwner,
-  sharedFlagKey, weekRequiringShare, mayChangeProductionTargets, evaluatesEveryone
+  sharedFlagKey, weekRequiringShare, mayChangeProductionTargets, evaluatesEveryone, recordsOnlyWaste
 } = require("../permissions");
 const { isPersonScoped, evaluatedPersonIds, onlyFor, mergeFor } = require("../evaluations");
+const { wasteEditableDates, mergeWasteChanges, stampCommentAuthors, recordsFor } = require("../production");
 const {
   readDocuments, writeDocument, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot,
   addAuditEvent
@@ -21,6 +22,8 @@ async function assertScopeExists(db, scope) {
   const { rows } = await db.query("SELECT 1 FROM shifts WHERE id = $1", [scope]);
   if (!rows.length) throw new HttpError(404, "Skiftet finns inte.");
 }
+
+const isProductionRecords = (scope, key) => scope !== "global" && key === "productionRecords";
 
 // Returns the week of a "scheduleShared:<week>" key, otherwise null.
 function sharedWeekKey(key) {
@@ -59,6 +62,10 @@ function documentRoutes({ pool, mailer, appUrl }) {
       const personIds = await evaluatedPersonIds(pool, req.user);
       evaluations.forEach(key => { documents[key].value = onlyFor(key, documents[key].value, personIds); });
     }
+    // Who wrote each production comment is only for admins and shift leaders.
+    if (documents.productionRecords && isProductionRecords(scope, "productionRecords")) {
+      documents.productionRecords.value = await recordsFor(pool, req.user, documents.productionRecords.value);
+    }
     res.json({ documents, forbidden, unshared });
   });
 
@@ -84,6 +91,12 @@ function documentRoutes({ pool, mailer, appUrl }) {
       value = mergeFor(key, stored[key]?.value, value, personIds);
       if (!value) throw new HttpError(403, "Du kan bara testa och bedöma operatörerna i ditt eget skift.");
     }
+    if (isProductionRecords(scope, key)) {
+      const stored = (await readDocuments(pool, scope, [key]))[key]?.value;
+      // Senior operators change only waste, plus/minus and comments, today and yesterday.
+      if (recordsOnlyWaste(req.user, scope, key)) value = mergeWasteChanges(stored, value, wasteEditableDates());
+      value = stampCommentAuthors(stored, value, req.user.id);
+    }
     const sharedWeek = sharedWeekKey(key);
     // The version before this save: whether the week was shared, or whose placements change.
     const previous = sharedWeek || placementWeek(key) ? (await readDocuments(pool, scope, [key]))[key]?.value : undefined;
@@ -100,6 +113,7 @@ function documentRoutes({ pool, mailer, appUrl }) {
       if (current && documentCategory(scope, key) === "evaluation" && !evaluatesEveryone(req.user)) {
         current.value = onlyFor(key, current.value, await evaluatedPersonIds(pool, req.user));
       }
+      if (current && isProductionRecords(scope, key)) current.value = await recordsFor(pool, req.user, current.value);
       throw new HttpError(409, "Någon annan har ändrat samma sak samtidigt. Sidan uppdateras med den senaste versionen.", { current });
     }
     // Sharing a week tells the shift's operators by e-mail and push. Saving it again while shared does not.

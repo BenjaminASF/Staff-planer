@@ -40,8 +40,10 @@ describe("role hierarchy", () => {
     assert.ok(roleLevel("admin") > roleLevel("shift_leader"));
     assert.ok(roleLevel("shift_leader") > roleLevel("right_hand"));
     assert.ok(roleLevel("right_hand") > roleLevel("operator"));
-    assert.deepEqual(assignableRoles({ role: "shift_leader" }).sort(), ["operator", "right_hand"]);
-    assert.deepEqual(assignableRoles({ role: "right_hand" }), ["operator"]);
+    assert.equal(roleLevel("senior_operator"), roleLevel("operator"), "a senior operator ranks as an operator");
+    assert.deepEqual(assignableRoles({ role: "shift_leader" }).sort(), ["operator", "right_hand", "senior_operator"]);
+    assert.deepEqual(assignableRoles({ role: "right_hand" }), ["operator"], "right hands do not make senior operators");
+    assert.deepEqual(assignableRoles({ role: "senior_operator" }), []);
     assert.deepEqual(assignableRoles({ role: "operator" }), []);
   });
 

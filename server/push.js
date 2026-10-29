@@ -1,5 +1,5 @@
 const webPush = require("web-push");
-const { ROLES, canReadDocument, canUseChat, sharedFlagKey, weekRequiringShare } = require("./permissions");
+const { OPERATOR_ROLES, canReadDocument, canUseChat, sharedFlagKey, weekRequiringShare } = require("./permissions");
 const { newId, readDocuments, currentWeekKey, isoWeekNumber, NOTE_VISIBLE_SQL, isPlainObject } = require("./store");
 
 // Push notifications (Web Push) to phones and computers, also when Staff Planner is
@@ -214,7 +214,7 @@ async function queueScheduleChange(db, { scope, week, userIds, actorId }) {
 // A week was shared with the shift's operators.
 async function queueScheduleShared(db, { scope, week, actorId }) {
   return withoutFailing(db, "share", async () => {
-    const users = await loadUsers(db, "p.shift_id = $1 AND u.role = $2", [scope, ROLES.OPERATOR]);
+    const users = await loadUsers(db, "p.shift_id = $1 AND u.role = ANY($2::text[])", [scope, OPERATOR_ROLES]);
     return queuePush(db, users.map(user => user.id), { kind: "share", key: `share:${scope}:${week}`, ref: { scope, week }, exceptUserId: actorId });
   });
 }

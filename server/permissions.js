@@ -20,6 +20,10 @@
 //                there, records production and uses the chat. May not change the
 //                daily production target, shared machines or settings, and does
 //                not look at other shifts' schedules.
+// Senior operatör – an operator in every way, who also opens the production page of
+//                their own shift. There they record only machine waste, the plus/minus
+//                box and comments, on days a manager has started, today and yesterday.
+//                Admins hand the role out to anyone, shift leaders in their own shift.
 // Operatör     – sees their own shift's schedule and break plan once an admin or
 //                shift leader has shared that week, edits their own phone,
 //                status and password. Their name and e-mail address are changed
@@ -31,11 +35,16 @@
 // admins included. Only the author changes a note's text, color and recipients; its
 // priority mark is set by the author and, on a group note they can see, by an admin.
 //
+// Produktion: whoever writes a machine's comment is saved with it. Only admins and shift
+// leaders see who that was (see production.js).
+//
 // Pushnotiser: every user turns push notifications on or off on their own devices.
 // Only admins turn them off (and on again) for someone else; while off, that user
 // gets none, whatever they chose themselves.
 
-const ROLES = Object.freeze({ ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" });
+const ROLES = Object.freeze({
+  ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", SENIOR_OPERATOR: "senior_operator", OPERATOR: "operator"
+});
 const ROLE_VALUES = Object.values(ROLES);
 
 // Higher numbers rank higher. A role added later only needs a level here.
@@ -43,8 +52,12 @@ const ROLE_LEVELS = Object.freeze({
   [ROLES.ADMIN]: 3,
   [ROLES.LEADER]: 2,
   [ROLES.RIGHT_HAND]: 1,
+  // A senior operator ranks as an operator: they staff the machines and are managed like one.
+  [ROLES.SENIOR_OPERATOR]: 0,
   [ROLES.OPERATOR]: 0
 });
+// The roles that see their schedule once it is shared and are told when it is.
+const OPERATOR_ROLES = Object.freeze([ROLES.OPERATOR, ROLES.SENIOR_OPERATOR]);
 const roleLevel = role => ROLE_LEVELS[role] ?? -1;
 // Staff without a login rank as operators.
 const personLevel = person => person?.account ? roleLevel(person.account.role) : ROLE_LEVELS[ROLES.OPERATOR];
@@ -100,6 +113,7 @@ const WEEKLY_SCHEDULE_PREFIXES = ["schedule", "trainingLeaders", "trainingLocati
 const isAdmin = user => user?.role === ROLES.ADMIN;
 const isLeader = user => user?.role === ROLES.LEADER;
 const isRightHand = user => user?.role === ROLES.RIGHT_HAND;
+const isSeniorOperator = user => user?.role === ROLES.SENIOR_OPERATOR;
 const isAdminOrLeader = user => isAdmin(user) || isLeader(user);
 // Everyone who plans a shift: admins, shift leaders and their right hands.
 const isShiftManager = user => isAdminOrLeader(user) || isRightHand(user);
@@ -109,6 +123,10 @@ const leadsShift = (user, shiftId) => (isLeader(user) || isRightHand(user)) && B
 const canEditShift = (user, shiftId) => isAdmin(user) || leadsShift(user, shiftId);
 // Shift leaders and right hands manage the people in their own shift who rank below them.
 const managesPerson = (user, person) => leadsShift(user, person?.shiftId) && personLevel(person) < roleLevel(user.role);
+// Senior operators read and write their own shift's production records (only some fields, see production.js).
+const isProductionRecords = (scope, key) => scope !== "global" && key === "productionRecords";
+const recordsWasteFor = (user, scope, key) =>
+  isSeniorOperator(user) && isProductionRecords(scope, key) && Boolean(user.shiftId) && user.shiftId === scope;
 
 function documentCategory(scope, key) {
   if (typeof key !== "string" || typeof scope !== "string") return null;
@@ -130,7 +148,7 @@ function canReadDocument(user, scope, key) {
     // Shift leaders may look at every shift's schedule; everyone else only their own.
     case "shiftPlan":
     case "shiftShare": return isAdminOrLeader(user) || (Boolean(user?.shiftId) && user.shiftId === scope);
-    case "shiftWork": return canEditShift(user, scope);
+    case "shiftWork": return canEditShift(user, scope) || recordsWasteFor(user, scope, key);
     default: return false;
   }
 }
@@ -144,8 +162,8 @@ function canWriteDocument(user, scope, key) {
     case "competence":
     case "evaluation": return isAdminOrLeader(user);
     case "sensitive": return isAdmin(user);
+    case "shiftWork": return canEditShift(user, scope) || recordsWasteFor(user, scope, key);
     case "shiftPlan":
-    case "shiftWork":
     case "shiftShare": return canEditShift(user, scope);
     default: return false;
   }
@@ -164,6 +182,17 @@ function weekRequiringShare(user, scope, key) {
 const DEFAULT_DAILY_TARGET = 160;
 
 function canChangeProductionTarget(user) {
+  return isAdminOrLeader(user);
+}
+
+// Whether the user may save the production records of the shift only as a senior operator:
+// some fields, on some days.
+function recordsOnlyWaste(user, scope, key) {
+  return recordsWasteFor(user, scope, key) && !canEditShift(user, scope);
+}
+
+// Only admins and shift leaders see who wrote a comment on the production page.
+function canSeeCommentAuthors(user) {
   return isAdminOrLeader(user);
 }
 
@@ -238,9 +267,11 @@ function canDeletePerson(user) {
 }
 
 // The roles a user may hand out: admins any, everyone else only those below their own.
+// Senior operators open the production page, so only admins and shift leaders make them.
 function assignableRoles(user) {
   if (isAdmin(user)) return [...ROLE_VALUES];
-  return ROLE_VALUES.includes(user?.role) ? rolesBelow(user.role) : [];
+  if (!ROLE_VALUES.includes(user?.role)) return [];
+  return rolesBelow(user.role).filter(role => role !== ROLES.SENIOR_OPERATOR || isLeader(user));
 }
 
 function canCreateAccount(user, person, role) {
@@ -253,12 +284,14 @@ function canResetPassword(user, person, account) {
   return Boolean(account) && managesPerson(user, { ...person, account });
 }
 
-// Shift leaders turn operators in their shift into right hands and back.
-// Nobody changes the role of someone at their own level or above.
+// Shift leaders turn operators in their shift into right hands or senior operators and back.
+// Nobody changes the role of someone at their own level or above, nor takes away a role
+// they may not hand out.
 function canChangeRole(user, person, role) {
   if (isAdmin(user)) return true;
   if (!person?.account || person.id === user?.personId) return false;
-  return managesPerson(user, person) && assignableRoles(user).includes(role);
+  const roles = assignableRoles(user);
+  return managesPerson(user, person) && roles.includes(role) && roles.includes(person.account.role);
 }
 
 function canChangeUsername(user) {
@@ -313,6 +346,7 @@ module.exports = {
   canDeleteChatMessage,
   ROLES,
   ROLE_VALUES,
+  OPERATOR_ROLES,
   AVAILABILITY_VALUES,
   normalizeAvailability,
   GLOBAL_DOCUMENTS,
@@ -325,11 +359,14 @@ module.exports = {
   isAdmin,
   isLeader,
   isRightHand,
+  isSeniorOperator,
   isAdminOrLeader,
   isShiftManager,
   roleNeedsShift,
   canEditShift,
   canChangeProductionTarget,
+  recordsOnlyWaste,
+  canSeeCommentAuthors,
   EVALUATED_BY_LEADERS,
   evaluatesEveryone,
   canEvaluatePerson,

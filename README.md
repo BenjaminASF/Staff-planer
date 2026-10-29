@@ -6,30 +6,32 @@ Appen består av en Node.js-server och en Postgres-databas, och båda körs på 
 
 ## Roller
 
-Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** och **Operatör**. Admin kan allt. Under admin hanterar man bara personal i sitt eget skift som ligger på en lägre nivå än en själv, och kan bara ge roller som ligger under ens egen. Ingen kan alltså ändra uppgifter, inloggning eller roll för någon på samma eller högre nivå. Personal utan inloggning räknas som operatörer. Nivåerna finns i `ROLE_LEVELS` i [`server/permissions.js`](server/permissions.js), så en ny roll behöver bara läggas till där.
+Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** och **Operatör**. **Senior operatör** ligger på samma nivå som Operatör. Admin kan allt. Under admin hanterar man bara personal i sitt eget skift som ligger på en lägre nivå än en själv, och kan bara ge roller som ligger under ens egen. Ingen kan alltså ändra uppgifter, inloggning eller roll för någon på samma eller högre nivå. Personal utan inloggning räknas som operatörer. Nivåerna finns i `ROLE_LEVELS` i [`server/permissions.js`](server/permissions.js), så en ny roll behöver bara läggas till där.
 
-| | Admin | Skiftledare | Höger hand | Operatör |
-|---|:---:|:---:|:---:|:---:|
-| Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ | ✓ (när veckan är delad) |
-| Ändra sin egen profil (namn, telefon, e-post, status, lösenord) | ✓ | ✓ | ✓ | ✓ |
-| Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | |
-| Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | |
-| Ändra skiftets dagliga produktionsmål | ✓ | ✓ | | |
-| Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | Eget skift | |
-| Lägga till personal och skapa konton | Alla roller och skift | Höger hand och operatörer, eget skift | Operatörer, eget skift | |
-| Återställa lösenord | Alla | Höger hand och operatörer i eget skift | Operatörer i eget skift | |
-| Göra någon till Höger hand eller ta bort rollen | ✓ | Eget skift | | |
-| Ändra maskiner, avdelningar och inställningar (gäller alla skift) | ✓ | ✓ | | |
-| Testresultat, kompetens och bedömningar | Alla | Operatörer i eget skift | | |
-| Hantera alla profiler: namn, telefon, status, skift, användarnamn, roll och lösenord | ✓ | | | |
-| Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | Eget skift | |
-| Ta bort användare från sidan Användare | ✓ | | | |
-| Chatt med text och bilder | ✓ | ✓ | ✓ | |
-| Egna anteckningar på anslagstavlan (**Anteckningar → Mina anteckningar**) | ✓ | ✓ | ✓ | ✓ |
-| Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Alla skift | Eget skift | Eget skift | Läser det som delas med dem |
-| Ta bort personal och användare, ändra roller | ✓ | | | |
-| Skapa och ta bort skift, backup och import | ✓ | | | |
-| Exportera backup av sitt eget skift (**Översikt → Backup av skiftet**) | | ✓ | | |
+| | Admin | Skiftledare | Höger hand | Senior operatör | Operatör |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Se sitt skifts schema och rastplan | ✓ | ✓ | ✓ | ✓ (när veckan är delad) | ✓ (när veckan är delad) |
+| Ändra sin egen profil (namn, telefon, e-post, status, lösenord) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | | |
+| Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | | |
+| Registrera maskinsvinn, plus-/minuslåda och kommentarer på sidan Produktion | Alla skift | Eget skift | Eget skift | Eget skift, idag och igår, på dagar som redan påbörjats | |
+| Se vem som skrev en kommentar på sidan Produktion | ✓ | ✓ | | | |
+| Ändra skiftets dagliga produktionsmål | ✓ | ✓ | | | |
+| Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | Eget skift | | |
+| Lägga till personal och skapa konton | Alla roller och skift | Höger hand, senior operatörer och operatörer, eget skift | Operatörer, eget skift | | |
+| Återställa lösenord | Alla | Höger hand, senior operatörer och operatörer i eget skift | Operatörer och senior operatörer i eget skift | | |
+| Göra någon till Höger hand eller Senior operatör, eller ta bort rollen | ✓ | Eget skift | | | |
+| Ändra maskiner, avdelningar och inställningar (gäller alla skift) | ✓ | ✓ | | | |
+| Testresultat, kompetens och bedömningar | Alla | Operatörer i eget skift | | | |
+| Hantera alla profiler: namn, telefon, status, skift, användarnamn, roll och lösenord | ✓ | | | | |
+| Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | Eget skift | | |
+| Ta bort användare från sidan Användare | ✓ | | | | |
+| Chatt med text och bilder | ✓ | ✓ | ✓ | | |
+| Egna anteckningar på anslagstavlan (**Anteckningar → Mina anteckningar**) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Alla skift | Eget skift | Eget skift | Läser det som delas med dem | Läser det som delas med dem |
+| Ta bort personal och användare, ändra roller | ✓ | | | | |
+| Skapa och ta bort skift, backup och import | ✓ | | | | |
+| Exportera backup av sitt eget skift (**Översikt → Backup av skiftet**) | | ✓ | | | |
 
 ### Produktionsöversikt för admin
 
@@ -87,6 +89,10 @@ Utan `RESEND_API_KEY` och `MAIL_FROM` skickas inga mejl, och allt annat fungerar
 Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas för hela månaden, och den 10:e i nästa månad tas förra månadens dagar bort automatiskt. Fabriksrekordet och det dagliga målet finns kvar. Varje skift har sitt eget dagliga mål. När admin eller skiftledaren ändrar målet gäller det nya målet bara det skift som är valt, från det valda datumet och framåt; tidigare dagar och de andra skiftens mål ändras inte. Högst upp på sidan visas hur mycket skiftet har producerat totalt under månaden, och siffran uppdateras direkt när dagens resultat skrivs in.
 
 Skiftledare kan aldrig ändra uppgifter (namn, företag, telefon, status eller inloggning) för admin eller en annan skiftledare, inte ens i samma skift. Höger hand kan bara ändra uppgifter för operatörer och personal utan inloggning.
+
+**Senior operatör** är en operatör som också registrerar svinn och kommentarer på sidan **Produktion**. I övrigt har rollen exakt samma gränssnitt och behörigheter som en vanlig operatör. Den räknas som operatör vid bemanning och schemaläggning, ser schemat när veckan är delad och får samma mejl och notiser som operatörer. På sidan Produktion ser en senior operatör sitt eget skifts produktion men kan bara ändra **Maskinsvinn (KG)**, **Plus-/minuslåda (KG)** och **Kommentar**. Det går bara för idag och föregående kalenderdag (även över ett månadsskifte), och bara på dagar som admin, skiftledaren eller höger hand redan har påbörjat. Äldre dagar, resultat, operatörer, mål, fabriksrekord och historik är skrivskyddade. Servern slår ihop det en senior operatör sparar med det som redan är sparat, så inget annat kan ändras, och dagarna räknas i arbetsplatsens tidszon. Admin ger rollen till vem som helst och skiftledaren till personal i sitt eget skift. Höger hand kan varken ge eller ta bort rollen.
+
+Servern sparar vem som skrev varje kommentar på sidan Produktion, oavsett roll. Bara **admin och skiftledare** ser vem det var ("Skrivet av …" under kommentaren). Höger hand, senior operatörer och operatörer ser kommentaren men inte vem som skrev den. Servern tar bort uppgiften innan produktionen skickas till dem, och realtidsuppdateringarna om produktionen säger inte vem som sparade. Kommentarer från före ändringen har ingen sparad författare.
 
 **Höger hand** är skiftledarens assistent och tar över ansvaret när skiftledaren inte är på plats. Höger hand arbetar bara i sitt eget skift: ändrar schemat, lägger till operatörer, läser och skriver i chatten och registrerar dagens produktion, men kan inte ändra det dagliga målet eller maskiner och inställningar som gäller alla skift. Höger hand kan ändra operatörernas uppgifter i skiftet, men inte skiftledarens eller adminens.
 
