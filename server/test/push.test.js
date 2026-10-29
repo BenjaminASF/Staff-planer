@@ -181,11 +181,11 @@ describe("pushnotiser", () => {
     assert.equal(sent.length, 0);
   });
 
-  test("admin changes reach shift leaders and right hands as one push", async () => {
+  test("admin changes reach the shift's leader as one push", async () => {
     await admin.post("/api/audit", { scope: dayShift.id, type: "settings", title: "Ny maskin" });
     await admin.post("/api/audit", { scope: dayShift.id, type: "settings", title: "Ny station" });
     await flush();
-    assert.deepEqual(sent.map(item => item.endpoint).sort(), [endpointFor("hand"), endpointFor("leader")].sort());
+    assert.deepEqual(sent.map(item => item.endpoint), [endpointFor("leader")], "right hands and operators get nothing");
     assert.equal(sent[0].payload.body, "Det finns nya uppdateringar som berör dig.");
   });
 
@@ -249,7 +249,7 @@ describe("pushnotiser", () => {
       assert.equal((await leader.post("/api/notes", { kind: "group", text: "Lapp", people: [operatorUser.id] })).status, 201, "inside a transaction too");
       await save(leader, dayShift.id, `schedule:${weekAfter(week, 1)}`, { "Linje 3": { fri: rightHandPerson.id } });
       assert.equal((await admin.patch(`/api/people/${operatorPerson.id}`, { shiftId: eveningShift.id })).status, 200);
-      assert.deepEqual((await operator.get("/api/notifications")).data.notifications.map(note => note.kind).slice(0, 1), ["noteShared"]);
+      assert.deepEqual((await operator.get("/api/notifications")).data.notifications.map(note => note.kind).slice(0, 2), ["placementChange", "noteShared"]);
     } finally {
       console.error = quiet;
       await server.pool.query("ALTER TABLE push_outbox_away RENAME TO push_outbox");

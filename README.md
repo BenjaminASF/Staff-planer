@@ -166,7 +166,7 @@ När man stänger ett informationsmeddelande (sidtipsen och utbildningspåminnel
 
 ### Ljudnotiser
 
-Appen spelar ett kort ljud när någon annan skickar ett meddelande i chatten eller ändrar schemat eller rastplanen för ens eget skift (eller skiftet man tittar på), utan att man behöver ladda om sidan. Operatörer hör bara ändringar i veckor som har delats med dem, och ett ljud när en vecka delas. Egna ändringar ger inget ljud, och en sparning som ändrar flera saker samtidigt ger bara ett ljud, även med flera flikar öppna.
+Appen spelar ett kort ljud när någon annan skickar ett meddelande i chatten, utan att man behöver ladda om sidan. **Admin och skiftledare** hör också när någon annan ändrar schemat eller rastplanen för ens eget skift (eller skiftet man tittar på). **Höger hand och operatörer** hör bara när deras eget schema ändras (tillsammans med notisen om det, se nedan) och när en vecka delas. Egna ändringar ger inget ljud, och en sparning som ändrar flera saker samtidigt ger bara ett ljud, även med flera flikar öppna.
 
 Ljudnotiserna är på från början och stängs av eller slås på under **Min profil → Ljudnotiser**, där det också finns en knapp för att testa ljudet. Valet gäller den enhet man använder. Webbläsare spelar bara upp ljud efter att man har klickat någonstans på sidan.
 
@@ -174,7 +174,8 @@ Ljudnotiserna är på från början och stängs av eller slås på under **Min p
 
 Klockan uppe till höger visar korta notiser, med en röd siffra för olästa:
 
-- **Skiftledare och höger hand** får en notis när en admin ändrar något i deras skift (till exempel schemat, personal eller någons status) eller i gemensamma inställningar och maskiner. Notisen säger vem som ändrade och vad.
+- **Skiftledare** får en notis när en admin ändrar något i deras skift (till exempel schemat, personal eller någons status) eller i gemensamma inställningar och maskiner. Notisen säger vem som ändrade och vad.
+- **Den vars eget schema ändras** får en notis, oavsett vem som gjorde ändringen: när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), och när man flyttas till ett annat skift. Andra får ingen notis om det. Flera ändringar i samma vecka blir en enda notis så länge den inte är läst. Höger hand och operatörer får inga notiser om andra ändringar.
 - **Alla som får en anteckning delad** får en notis med lappens text och vem som delade den. Ett klick på notisen öppnar lappen under **Anteckningar**.
 
 Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan räknas notiserna som lästa, och **Rensa alla** tar bort dem. Notiser äldre än 30 dagar tas bort automatiskt.
@@ -186,7 +187,7 @@ Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De
 - **Schema och placering:** när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
 - **Chatt** (admin, skiftledare och höger hand): privata meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
 - **Anteckningar:** när en lapp delas med en.
-- **Viktiga uppdateringar:** samma som notiserna i appen om admins ändringar, högst en var femte minut.
+- **Viktiga uppdateringar** (skiftledare): samma som notiserna i appen om admins ändringar, högst en var femte minut.
 
 Notisen visar bara en kort text som "Ditt schema för vecka 45 har ändrats", aldrig namn eller meddelandetext, och ett tryck på den öppnar rätt sida. Precis innan varje notis skickas kontrollerar servern att personen fortfarande får se det notisen gäller. Chattmeddelanden och notiser som redan har lästs i appen ger ingen pushnotis. Notiser som inte hunnit skickas inom en timme slängs, så ingen får gamla händelser i efterhand.
 

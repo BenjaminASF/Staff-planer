@@ -192,21 +192,23 @@ async function seesWeek(db, user, scope, week, sharedCache = {}) {
   return sharedCache.value;
 }
 
-// A week's schedule, training, extra places or breaks were saved. Everyone whose own
-// placement changed is told, apart from the person who made the change.
-async function queueScheduleChange(db, { scope, key, before, after, actorId }) {
-  const week = placementWeek(key);
-  if (!week || week < currentWeekKey()) return 0;
-  return withoutFailing(db, "schedule", async () => {
-    const schedule = key.startsWith("schedule:") ? after : (await readDocuments(db, scope, [`schedule:${week}`]))[`schedule:${week}`]?.value;
-    const personIds = [...changedPeople(key, before, after, schedule)];
-    if (!personIds.length) return 0;
-    const users = await loadUsers(db, "u.person_id = ANY($1::text[]) AND u.id <> $2 AND NOT u.push_blocked", [personIds, actorId]);
-    const shared = {};
-    const recipients = [];
-    for (const user of users) if (await seesWeek(db, user, scope, week, shared)) recipients.push(user.id);
-    return queuePush(db, recipients, { kind: "schedule", key: `schedule:${scope}:${week}`, ref: { scope, week }, exceptUserId: actorId });
-  });
+// A week's schedule, training, extra places or breaks were saved. Returns the users whose
+// own placement changed and who see the week, apart from the person who made the change.
+async function scheduleChangeRecipients(db, { scope, key, week, before, after, actorId }) {
+  const schedule = key.startsWith("schedule:") ? after : (await readDocuments(db, scope, [`schedule:${week}`]))[`schedule:${week}`]?.value;
+  const personIds = [...changedPeople(key, before, after, schedule)];
+  if (!personIds.length) return [];
+  const users = await loadUsers(db, "u.person_id = ANY($1::text[]) AND u.id <> $2", [personIds, actorId]);
+  const shared = {};
+  const recipients = [];
+  for (const user of users) if (await seesWeek(db, user, scope, week, shared)) recipients.push(user.id);
+  return recipients;
+}
+
+// Tells the users from scheduleChangeRecipients that their schedule for the week changed.
+async function queueScheduleChange(db, { scope, week, userIds, actorId }) {
+  return withoutFailing(db, "schedule", () =>
+    queuePush(db, userIds, { kind: "schedule", key: `schedule:${scope}:${week}`, ref: { scope, week }, exceptUserId: actorId }));
 }
 
 // A week was shared with the shift's operators.
@@ -403,6 +405,6 @@ async function cleanupPush(db) {
 }
 
 module.exports = {
-  KINDS, createPushSender, createPushService, queuePush, queueScheduleChange, queueScheduleShared, queueChatMessage, queuePlacementChange, changedPeople,
+  KINDS, createPushSender, createPushService, queuePush, scheduleChangeRecipients, queueScheduleChange, queueScheduleShared, queueChatMessage, queuePlacementChange, changedPeople,
   placementWeek, isAllowedEndpoint, saveSubscription, cleanupPush, MAX_DEVICES_PER_USER
 };

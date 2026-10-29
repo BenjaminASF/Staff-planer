@@ -2224,7 +2224,7 @@ async function renderProfilePage() {
         : "<p>Mörkt läge stöds inte i den här webbläsaren. Uppdatera webbläsaren för att använda det.</p>"}
       ${canManageStaff() ? `<label>Automatisk utloggning<select name="autoLockMinutes">${[[5, "Efter 5 minuter"], [15, "Efter 15 minuter"], [30, "Efter 30 minuter"], [60, "Efter 1 timme"], [0, "Aldrig"]].map(([value, label]) => `<option value="${value}"${Number(getPreference("autoLockMinutes", appSettings.autoLockMinutes)) === value ? " selected" : ""}>${label}</option>`).join("")}</select><small>Du loggas ut när du inte har använt Staff Planner så här länge.</small></label>` : ""}
       <label class="settings-switch"><input name="showTips" type="checkbox"${getPreference("showTips", appSettings.showTips) ? " checked" : ""} /><span>Visa tips och hjälptexter</span></label>
-      <label class="settings-switch"><input name="soundNotifications" type="checkbox"${soundNotificationsEnabled() ? " checked" : ""} /><span>Spela ljud när någon annan ${canManageStaff() ? "skickar ett meddelande i chatten eller " : ""}ändrar schemat eller rastplanen för ditt skift</span></label>
+      <label class="settings-switch"><input name="soundNotifications" type="checkbox"${soundNotificationsEnabled() ? " checked" : ""} /><span>${isAdmin() || isShiftLeader() ? "Spela ljud när någon annan skickar ett meddelande i chatten eller ändrar schemat eller rastplanen för ditt skift" : `Spela ljud när ${isRightHand() ? "någon annan skickar ett meddelande i chatten, " : ""}ditt eget schema ändras eller veckans schema delas`}</span></label>
       <small>Webbläsaren spelar bara ljud efter att du har klickat någonstans på sidan.</small>
       <div class="settings-actions"><span id="preferencesMessage" class="inline-message" aria-live="polite"></span><button id="testSoundBtn" class="btn" type="button">Testa ljudet</button></div>
     </form>
@@ -9120,8 +9120,11 @@ const NOTIFICATION_HEADINGS = {
   noteShared: "har delat en anteckning med dig",
   noteAdded: "lade till dig på en anteckning"
 };
+// Notes about the user's own schedule; the title says what changed.
+const PERSONAL_NOTIFICATION_KINDS = new Set(["scheduleChange", "placementChange"]);
 
 function notificationText(note) {
+  if (PERSONAL_NOTIFICATION_KINDS.has(note.kind)) return `${note.title}${note.detail ? ` (${note.detail})` : ""}`;
   return NOTIFICATION_HEADINGS[note.kind]
     ? `${note.actorName || "Någon"} ${NOTIFICATION_HEADINGS[note.kind]}: ${note.title}`
     : `${note.actorName || "Admin"} (admin) ändrade: ${note.title}`;
@@ -9143,7 +9146,9 @@ function renderNotifications() {
     const shared = Boolean(NOTIFICATION_HEADINGS[note.kind]);
     const heading = shared
       ? `<strong>${escapeHtml(note.actorName || "Någon")}</strong> ${NOTIFICATION_HEADINGS[note.kind]}`
-      : `<strong>${escapeHtml(note.actorName || "Admin")}</strong> (admin) ändrade`;
+      : PERSONAL_NOTIFICATION_KINDS.has(note.kind)
+        ? `<strong>${escapeHtml(note.actorName || "Någon")}</strong> ändrade ditt schema`
+        : `<strong>${escapeHtml(note.actorName || "Admin")}</strong> (admin) ändrade`;
     const body = `<span class="notification-heading">${heading}</span>
       <span class="notification-title">${escapeHtml(note.title)}</span>
       ${note.detail ? `<span class="notification-detail">${escapeHtml(note.detail)}</span>` : ""}
@@ -9723,10 +9728,13 @@ function playChatMessageSound(message) {
 }
 
 // Someone else changed the schedule or break plan of the user's own shift or the shift shown.
+// Right hands and operators hear only that a week was shared; a change to their own
+// schedule reaches them as a notification instead (see loadNotifications).
 async function noticeScheduleChange(change) {
   if (!SCHEDULE_SOUND_KEY.test(change.key) || !change.by || change.by === currentUser?.id) return;
   if (change.scope !== getOwnShiftId() && change.scope !== getShiftScope()) return;
   if (!soundNotificationsEnabled()) return;
+  if (!isAdmin() && !isShiftLeader() && !change.key.startsWith("scheduleShared:")) return;
   if (change.key.startsWith("scheduleShared:")) {
     // Sharing a week is news; taking the share back is not.
     try {
