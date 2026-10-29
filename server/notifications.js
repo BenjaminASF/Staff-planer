@@ -1,4 +1,4 @@
-const { ROLES, isAdmin } = require("./permissions");
+const { ROLES, OPERATOR_ROLES, isAdmin } = require("./permissions");
 const { newId, isoWeekNumber, currentWeekKey } = require("./store");
 const { queuePush, placementWeek, scheduleChangeRecipients, queueScheduleChange, queuePlacementChange } = require("./push");
 
@@ -12,8 +12,8 @@ async function notifyScheduleShared({ pool, mailer, shiftId, weekKey, appUrl }) 
        FROM people p
        JOIN users u ON u.person_id = p.id
        LEFT JOIN shifts s ON s.id = p.shift_id
-      WHERE p.shift_id = $1 AND u.role = $2 AND p.email <> ''`,
-    [shiftId, ROLES.OPERATOR]
+      WHERE p.shift_id = $1 AND u.role = ANY($2::text[]) AND p.email <> ''`,
+    [shiftId, OPERATOR_ROLES]
   );
   const week = isoWeekNumber(weekKey);
   const results = await Promise.allSettled(rows.map(row => mailer.send({

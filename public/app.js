@@ -125,28 +125,29 @@ const DEFAULT_APP_SETTINGS = {
 };
 let appSettings = { ...DEFAULT_APP_SETTINGS };
 
-const ROLES = { ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", OPERATOR: "operator" };
-const ROLE_LABELS = { admin: "Admin", shift_leader: "Skiftledare", right_hand: "Höger hand", operator: "Operatör" };
-// The role hierarchy, as on the server: higher numbers rank higher.
-const ROLE_LEVELS = { admin: 3, shift_leader: 2, right_hand: 1, operator: 0 };
+const ROLES = { ADMIN: "admin", LEADER: "shift_leader", RIGHT_HAND: "right_hand", SENIOR_OPERATOR: "senior_operator", OPERATOR: "operator" };
+const ROLE_LABELS = { admin: "Admin", shift_leader: "Skiftledare", right_hand: "Höger hand", senior_operator: "Senior operatör", operator: "Operatör" };
+// The role hierarchy, as on the server: higher numbers rank higher. A senior operator ranks as an operator.
+const ROLE_LEVELS = { admin: 3, shift_leader: 2, right_hand: 1, senior_operator: 0, operator: 0 };
 // Pages each role may open. The server enforces the same rules (server/permissions.js);
 // this only decides what is shown.
 const PAGE_ACCESS = {
   "dashboard.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
-  "index.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
-  "produktion.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
-  "rast.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
+  "index.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR],
+  // Senior operators record waste and comments there; see renderProduction.
+  "produktion.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR],
+  "rast.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR],
   "personal.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "anvandare.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "testresultat.html": [ROLES.ADMIN, ROLES.LEADER],
   "maskiner.html": [ROLES.ADMIN, ROLES.LEADER],
   "maskinhantering.html": [ROLES.ADMIN, ROLES.LEADER],
   "bedomning.html": [ROLES.ADMIN, ROLES.LEADER],
-  "anteckningar.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
+  "anteckningar.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR],
   "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
-  "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR],
-  "hjalp.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.OPERATOR]
+  "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR],
+  "hjalp.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR]
 };
 // Shift leaders may look at other shifts here, read-only. Everywhere else they work in their own shift.
 const SHIFT_BROWSING_PAGES = ["index.html", "rast.html"];
@@ -368,15 +369,19 @@ const hasRole = (...roles) => Boolean(currentUser) && roles.includes(currentUser
 const isAdmin = () => hasRole(ROLES.ADMIN);
 const isShiftLeader = () => hasRole(ROLES.LEADER);
 const isRightHand = () => hasRole(ROLES.RIGHT_HAND);
-const isOperator = () => hasRole(ROLES.OPERATOR);
+// Senior operators see everything as operators do, apart from the production page.
+const isOperator = () => hasRole(ROLES.OPERATOR, ROLES.SENIOR_OPERATOR);
+const isSeniorOperator = () => hasRole(ROLES.SENIOR_OPERATOR);
 // Everyone who plans a shift. A right hand plans only their own shift.
 const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND);
 // Machines, departments and settings are shared by all shifts.
 const canChangeSharedSettings = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
 const canChangeProductionTarget = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+// Only admins and shift leaders see who wrote a comment on the production page (the server hides it from others).
+const canSeeCommentAuthors = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
 // Admins test and assess everyone; shift leaders the operators in their own shift.
 const canEvaluate = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
-const EVALUATED_BY_LEADERS = [ROLES.OPERATOR, ROLES.RIGHT_HAND];
+const EVALUATED_BY_LEADERS = [ROLES.OPERATOR, ROLES.SENIOR_OPERATOR, ROLES.RIGHT_HAND];
 
 function getCurrentPage() {
   return location.pathname.split("/").pop() || "index.html";
@@ -455,6 +460,16 @@ function canEditShift(shiftId) {
   return Boolean(shiftId) && (isAdmin() || ((isShiftLeader() || isRightHand()) && shiftId === getOwnShiftId()));
 }
 
+// Senior operators record waste, the plus/minus box and comments in their own shift's production.
+function recordsWasteIn(shiftId) {
+  return isSeniorOperator() && Boolean(shiftId) && shiftId === getOwnShiftId();
+}
+
+// The days a senior operator may change: today and yesterday. The server checks the same.
+function wasteEditableDates(today = new Date()) {
+  return [0, 1].map(daysBack => formatDateKey(new Date(today.getFullYear(), today.getMonth(), today.getDate() - daysBack)));
+}
+
 function canEditActiveShift() {
   return canEditShift(getShiftScope());
 }
@@ -477,14 +492,17 @@ function canEditPerson(person) {
 }
 
 // Admins hand out any role; everyone else only the roles below their own.
+// Only admins and shift leaders make senior operators.
 function assignableRoles() {
-  if (isAdmin()) return [ROLES.OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER, ROLES.ADMIN];
-  return [ROLES.OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER].filter(role => roleLevel(role) < roleLevel(currentUser?.role));
+  if (isAdmin()) return [ROLES.OPERATOR, ROLES.SENIOR_OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER, ROLES.ADMIN];
+  return [ROLES.OPERATOR, ROLES.SENIOR_OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER]
+    .filter(role => roleLevel(role) < roleLevel(currentUser?.role) && (role !== ROLES.SENIOR_OPERATOR || isShiftLeader()));
 }
 
+// Nobody takes away a role they may not hand out.
 function canChangeRoleOf(person) {
   if (!person?.account || person.id === currentPerson?.id) return false;
-  return isAdmin() || (canEditPerson(person) && assignableRoles().length > 1);
+  return isAdmin() || (canEditPerson(person) && assignableRoles().length > 1 && assignableRoles().includes(person.account.role));
 }
 
 // Server API.
@@ -1849,7 +1867,7 @@ function getProductionRetentionStart(today = new Date()) {
 }
 
 async function getProductionRecords(scope = getShiftScope()) {
-  if (!canEditShift(scope)) return {};
+  if (!canEditShift(scope) && !recordsWasteIn(scope)) return {};
   const records = await getDocument(scope, "productionRecords", {});
   if (!isPlainObject(records)) return {};
   const start = getProductionRetentionStart();
@@ -5150,6 +5168,14 @@ window.addEventListener("beforeunload", event => {
 // so other days and changes saved meanwhile are kept.
 async function saveProductionDay(scope, dayRecord, targetChange = null) {
   const [records, settings] = await Promise.all([getProductionRecords(scope), getProductionSettings()]);
+  // A senior operator changes no results, so neither targets nor the factory record.
+  if (isSeniorOperator()) {
+    if (dayRecord) {
+      records[dayRecord.date] = dayRecord;
+      await saveProductionRecords(records, scope);
+    }
+    return { records, settings, brokeRecord: false, previousRecord: settings.factoryRecord };
+  }
   let next = targetChange ? setProductionTargetFrom(settings, scope, targetChange.date, targetChange.target) : { ...settings };
   if (!dayRecord) {
     if (JSON.stringify(next) !== JSON.stringify(settings)) await saveProductionSettings(next);
@@ -5173,7 +5199,7 @@ function renderProductionHistory(root, records, settings, scope) {
   const section = root.querySelector(".production-history");
   if (!section) return;
   const days = Object.values(records).filter(item => item?.date).sort((a, b) => b.date.localeCompare(a.date));
-  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "history-met" : "history-missed"}">${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button>${isAdminViewing() ? "" : `<button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button>`}</div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
+  section.innerHTML = `<div class="production-history-heading"><div><h3>Historik</h3><p>Klicka på en dag för att visa eller ta bort resultatet. Förra månadens dagar tas bort automatiskt den 10:e.</p></div><span>${days.length} dagar</span></div><div class="production-history-list">${days.map(item => `<div class="production-history-item"><button type="button" data-production-menu="${item.date}" class="production-history-trigger ${item.date === selectedProductionDate ? "active" : ""}"><span>${new Date(item.date + "T12:00:00").toLocaleDateString("sv-SE")}</span><strong>${item.total || 0} box</strong><small class="${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "history-met" : "history-missed"}">${Number(item.total) >= getProductionTarget(settings, scope, item.date, item) ? "Mål uppnått" : "Under mål"}</small></button><div class="production-history-menu" data-production-actions="${item.date}" hidden><button type="button" data-production-view="${item.date}">Visa</button>${isAdminViewing() || isSeniorOperator() ? "" : `<button type="button" class="danger" data-production-delete="${item.date}">Ta bort</button>`}</div></div>`).join("") || '<div class="empty-state">Ingen produktion sparad ännu.</div>'}</div>`;
   section.querySelectorAll("[data-production-menu]").forEach(button => button.addEventListener("click", event => {
     event.stopPropagation();
     const menu = section.querySelector(`[data-production-actions="${button.dataset.productionMenu}"]`);
@@ -5261,14 +5287,25 @@ async function renderProduction() {
   const otherMonthTotal = otherMonthDays.reduce((sum, item) => sum + (Number(item.total) || 0), 0);
   const monthName = new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { month: "long", year: "numeric" });
   const monthDaysText = days => `${days} ${days === 1 ? "dag" : "dagar"} med resultat`;
-  const readOnly = isAdminViewing();
+  // Senior operators change only waste, plus/minus and comments, on days already started, today and yesterday.
+  const wasteOnly = isSeniorOperator();
+  const wasteLocked = !wasteOnly ? ""
+    : !stored ? "Dagen är inte påbörjad än. Skiftledaren eller höger hand registrerar dagen först."
+      : !wasteEditableDates().includes(selectedProductionDate) ? "Du kan bara ändra svinn och kommentarer för idag och igår." : "";
+  const readOnly = isAdminViewing() || Boolean(wasteLocked);
+  const managerTools = !isAdminViewing() && !wasteOnly;
+  const roleNote = !wasteOnly ? ""
+    : `<p class="production-role-note">${escapeHtml(wasteLocked || "Du kan registrera maskinsvinn, plus-/minuslåda och kommentarer för idag och igår.")}</p>`;
+  const commentAuthor = item => canSeeCommentAuthors() && item.commentByName
+    ? `<small class="production-comment-author">Skrivet av ${escapeHtml(item.commentByName)}${item.commentAt ? ` · ${escapeHtml(new Date(item.commentAt).toLocaleString("sv-SE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }))}` : ""}</small>`
+    : "";
   const savedText = stored?.updatedAt ? `Sparat ${new Date(stored.updatedAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" })}` : "Sparas automatiskt";
   const personOptions = (selectedId, savedName = "") => `<option value="">Välj person</option>${selectedId && !people.some(person => person.id === selectedId) ? `<option value="${selectedId}" selected>${escapeHtml(savedName || "Tidigare personal")}</option>` : ""}${people.filter(person => isOperatorStaff(person) || person.id === selectedId).map(person => `<option value="${person.id}"${person.id === selectedId ? " selected" : ""}>${escapeHtml(person.name)}</option>`).join("")}`;
   root.innerHTML = `
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
-    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div>${readOnly ? "" : '<button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button>'}<span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
-    <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small>${readOnly ? "" : '<button id="editFactoryRecordBtn" type="button">Ändra manuellt</button>'}</article></div>
-    <section class="production-entry card"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p><div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Maskinsvinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label>Plus-/minuslåda (KG)<input data-machine="${escapeHtml(machine)}" data-field="plusMinus" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.plusMinus ?? "")}" placeholder="0" /></label><label>Totalt svinn (KG)<output class="production-waste production-waste-total" data-machine="${escapeHtml(machine)}" data-field="wasteTotal">${formatWaste(getMachineWaste(item))}</output></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" /></label></article>`; }).join("")}</div></section>
+    <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div>${managerTools ? '<button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button>' : ""}<span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
+    <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small>${managerTools ? '<button id="editFactoryRecordBtn" type="button">Ändra manuellt</button>' : ""}</article></div>
+    <section class="production-entry card${wasteOnly ? " waste-only" : ""}"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p>${roleNote}<div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Maskinsvinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label>Plus-/minuslåda (KG)<input data-machine="${escapeHtml(machine)}" data-field="plusMinus" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.plusMinus ?? "")}" placeholder="0" /></label><label>Totalt svinn (KG)<output class="production-waste production-waste-total" data-machine="${escapeHtml(machine)}" data-field="wasteTotal">${formatWaste(getMachineWaste(item))}</output></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" />${commentAuthor(item)}</label></article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
   `;
   placeBesideTitle(root.querySelector(".production-month"));
@@ -5293,6 +5330,12 @@ async function renderProduction() {
     root.querySelectorAll(".production-entry input, .production-entry select, #productionTarget").forEach(input => { input.disabled = true; });
     bindProductionDateChange(root);
     return;
+  }
+  if (wasteOnly) {
+    // Machines the day was started without are left to the shift's managers too.
+    root.querySelectorAll(".production-entry input, .production-entry select").forEach(input => {
+      if (!["waste", "plusMinus", "comment"].includes(input.dataset.field) || !stored.machines?.[input.dataset.machine]) input.disabled = true;
+    });
   }
   const saveStatus = root.querySelector("#productionSaveStatus");
   const setSaveStatus = (text, state = "") => {
@@ -5350,7 +5393,7 @@ async function renderProduction() {
       try {
         const result = await saveProductionDay(scope, dayRecord, targetChange);
         if (targetChange) await addAuditEvent("production", "Dagligt mål ändrat", `Skift ${getShiftName(scope)}: ${targetChange.target} box från ${date}`);
-        if (dayRecord && !productionAuditedDates.has(`${scope}|${date}`)) {
+        if (dayRecord && !wasteOnly && !productionAuditedDates.has(`${scope}|${date}`)) {
           productionAuditedDates.add(`${scope}|${date}`);
           await addAuditEvent("production", `Produktion ${date}`, `${dayRecord.total} box`);
         }
@@ -5401,14 +5444,18 @@ async function renderProduction() {
   root.querySelector(".production-entry").addEventListener("change", () => queueSave("day"));
   root.querySelector("#productionTarget").addEventListener("input", () => queueSave("target"));
   bindProductionDateChange(root);
-  root.querySelector("#syncScheduleBtn").addEventListener("click", async () => {
+  // A changed comment gets a new author when it is saved.
+  root.querySelectorAll('[data-field="comment"]').forEach(input => input.addEventListener("input", () => {
+    input.parentElement.querySelector(".production-comment-author")?.remove();
+  }));
+  root.querySelector("#syncScheduleBtn")?.addEventListener("click", async () => {
     const [currentSchedule, currentLocations] = await Promise.all([
       getScheduleForDate(selectedProductionDate), getTrainingLocationsForDate(selectedProductionDate)
     ]);
     machines.forEach(machine => { field(machine, "personId").value = scheduledOperator(currentSchedule, currentLocations, machine); });
     queueSave("day");
   });
-  root.querySelector("#editFactoryRecordBtn").addEventListener("click", async () => {
+  root.querySelector("#editFactoryRecordBtn")?.addEventListener("click", async () => {
     const enteredValue = prompt("Ange fabriksrekord (box):", String(settings.factoryRecord));
     if (enteredValue === null) return;
     const newRecord = Number(enteredValue);
@@ -6794,6 +6841,7 @@ async function renderUsersPage() {
             ${isAdmin() ? `<option value="${ROLES.ADMIN}">Admin</option>` : ""}
             <option value="${ROLES.LEADER}">Skiftledare</option>
             <option value="${ROLES.RIGHT_HAND}">Höger hand</option>
+            <option value="${ROLES.SENIOR_OPERATOR}">Senior operatörer</option>
             <option value="${ROLES.OPERATOR}">Operatörer</option>
             <option value="none">Utan inloggning</option>
             <option value="">Alla personer</option>
@@ -6817,13 +6865,14 @@ async function renderUsersPage() {
     ${isAdmin() ? `<article><span>Admin</span><strong>${countRole(ROLES.ADMIN)}</strong><small>full behörighet</small></article>` : ""}
     <article><span>Skiftledare</span><strong>${countRole(ROLES.LEADER)}</strong><small>ändrar sitt skift</small></article>
     <article><span>Höger hand</span><strong>${countRole(ROLES.RIGHT_HAND)}</strong><small>skiftledarens stöd</small></article>
+    <article><span>Senior operatörer</span><strong>${countRole(ROLES.SENIOR_OPERATOR)}</strong><small>registrerar svinn</small></article>
     <article><span>Operatörer</span><strong>${countRole(ROLES.OPERATOR)}</strong><small>ser schemat</small></article>
     <article class="${waiting ? "stat-yellow" : ""}"><span>Väntar på nytt lösenord</span><strong>${waiting}</strong><small>har inte loggat in än</small></article>
     <article><span>Utan inloggning</span><strong>${people.length - withAccount.length}</strong><small>personal</small></article>`;
 
   const query = usersPageFilters.query.trim().toLocaleLowerCase();
   const { role, shift } = usersPageFilters;
-  const roleOrder = { [ROLES.ADMIN]: 0, [ROLES.LEADER]: 1, [ROLES.RIGHT_HAND]: 2, [ROLES.OPERATOR]: 3 };
+  const roleOrder = { [ROLES.ADMIN]: 0, [ROLES.LEADER]: 1, [ROLES.RIGHT_HAND]: 2, [ROLES.SENIOR_OPERATOR]: 3, [ROLES.OPERATOR]: 4 };
   const visible = people
     .filter(person => {
       if (role === "accounts" && !person.account) return false;
@@ -6833,7 +6882,7 @@ async function renderUsersPage() {
       return !query || `${person.name} ${person.account?.username || ""} ${person.company || ""}`.toLocaleLowerCase().includes(query);
     })
     .sort((first, second) =>
-      (roleOrder[first.account?.role] ?? 4) - (roleOrder[second.account?.role] ?? 4) || first.name.localeCompare(second.name, "sv"));
+      (roleOrder[first.account?.role] ?? 5) - (roleOrder[second.account?.role] ?? 5) || first.name.localeCompare(second.name, "sv"));
 
   const list = root.querySelector("#usersList");
   list.innerHTML = visible.map(person => {

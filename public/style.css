@@ -5320,6 +5320,7 @@ button {
 .person-meta .person-role-badge.role-admin { background: #efe9ff; background: light-dark(#efe9ff, #271f3d); color: #5b3fb0; color: light-dark(#5b3fb0, #c3b4ff); }
 .person-meta .person-role-badge.role-shift_leader { background: #e3edff; background: light-dark(#e3edff, #152748); color: #1d4ed8; color: light-dark(#1d4ed8, #9cbcff); }
 .person-meta .person-role-badge.role-right_hand { background: #e0f4f7; background: light-dark(#e0f4f7, #11282d); color: #0e7490; color: light-dark(#0e7490, #7fd0de); }
+.person-meta .person-role-badge.role-senior_operator { background: #fdf3dc; background: light-dark(#fdf3dc, #2d2412); color: #92600a; color: light-dark(#92600a, #e9c27a); }
 .person-meta .person-role-badge.role-operator { background: #e6f7ee; background: light-dark(#e6f7ee, #12231b); color: #1d7a4b; color: light-dark(#1d7a4b, #75b896); }
 
 .person-modal { width: min(580px, 100%); max-height: 90vh; overflow: auto; }
@@ -5419,6 +5420,9 @@ button {
   margin: 0;
 }
 
+.production-entry.waste-only .production-machine-row :is(input, select):disabled { background: #f1f4f8; background: light-dark(#f1f4f8, #161b23); color: #7a8699; color: light-dark(#7a8699, #7d8798); cursor: not-allowed; }
+.production-role-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: #eef2f7; background: light-dark(#eef2f7, #1c222d); color: #52627a; color: light-dark(#52627a, #abb4c4); font-size: 13px; font-weight: 600; }
+.production-comment-author { display: block; margin-top: 4px; color: #64748b; color: light-dark(#64748b, #94a3b8); font-size: 12px; font-weight: 500; }
 .production-save-status {
   align-self: center;
   margin-left: auto;

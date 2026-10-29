@@ -2,6 +2,7 @@ const {
   canReadDocument, canUseChat, weekRequiringShare, sharedFlagKey
 } = require("./permissions");
 const { readDocuments } = require("./store");
+const { changeFor } = require("./production");
 
 const CHANNEL = "app_changes";
 const HEARTBEAT_MS = 25 * 1000;
@@ -50,7 +51,7 @@ function createRealtimeHub(pool) {
           });
         if (!shared || !subscribers.has(subscriber)) continue;
       }
-      send(subscriber, "change", change);
+      send(subscriber, "change", changeFor(subscriber.user, change));
     }
   }
 
