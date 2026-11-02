@@ -8214,10 +8214,53 @@ function setupChat() {
     const reply = event.target.closest("[data-reply-to]");
     if (reply) { setChatRecipient(reply.dataset.replyTo); elements.input.focus(); return; }
     const remove = event.target.closest("[data-delete-message]");
-    if (remove) void deleteChatMessage(remove.dataset.deleteMessage);
+    if (remove) { void deleteChatMessage(remove.dataset.deleteMessage); return; }
+    const image = event.target.closest(".chat-image");
+    // Ctrl/Cmd-click still opens the image in a new tab.
+    if (image && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
+      event.preventDefault();
+      openChatImageViewer(image.getAttribute("href"), image.querySelector("img")?.alt || "Bild");
+    }
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) void pollChat(); });
   void pollChat();
+}
+
+// Chat images open in a viewer on top of the page. It closes with the X button, a
+// click outside the image or Escape; the chat underneath is never touched, so the
+// conversation stays exactly where it was.
+const CHAT_VIEWER_CLOSE_ICON = '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+let closeChatImageViewer = null;
+
+function openChatImageViewer(src, alt) {
+  if (!src) return;
+  closeChatImageViewer?.();
+  const viewer = document.createElement("div");
+  viewer.className = "chat-image-viewer";
+  viewer.setAttribute("aria-label", alt);
+  viewer.innerHTML = `<button type="button" class="chat-image-viewer-close" aria-label="Stäng bilden">${CHAT_VIEWER_CLOSE_ICON}</button><img src="${escapeHtml(src)}" alt="${escapeHtml(alt)}" />`;
+  document.body.appendChild(viewer);
+  const releaseFocus = manageDialogFocus(viewer, null);
+  // Escape is handled here, before other Escape handlers, so only the image closes
+  // and the chat panel stays open.
+  const onKey = event => {
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    close();
+  };
+  function close() {
+    if (closeChatImageViewer !== close) return;
+    closeChatImageViewer = null;
+    window.removeEventListener("keydown", onKey, true);
+    viewer.remove();
+    releaseFocus();
+  }
+  closeChatImageViewer = close;
+  window.addEventListener("keydown", onKey, true);
+  viewer.addEventListener("click", event => {
+    if (event.target.closest(".chat-image-viewer-close") || event.target === viewer) close();
+  });
 }
 
 // Anteckningar: a board of sticky notes. "Mina anteckningar" are private; on
