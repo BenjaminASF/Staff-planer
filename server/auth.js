@@ -1,6 +1,8 @@
 const crypto = require("node:crypto");
 const { promisify } = require("node:util");
 
+const { temporaryMayCall } = require("./permissions");
+
 const scrypt = promisify(crypto.scrypt);
 
 const SESSION_COOKIE = "sp_session";
@@ -8,6 +10,10 @@ const SESSION_DAYS = 30;
 const SCRYPT = { N: 16384, r: 8, p: 1, keylen: 64 };
 const MIN_PASSWORD_LENGTH = 8;
 const USERNAME_PATTERN = /^[a-z0-9._@-]{3,60}$/;
+
+// SQL condition: the login on users u may be used now. Temporary accounts stop at their end
+// date or when an admin disables them; regular accounts have neither.
+const ACCOUNT_ACTIVE_SQL = "(u.disabled_at IS NULL AND (u.expires_at IS NULL OR u.expires_at > now()))";
 
 class HttpError extends Error {
   constructor(status, message, extra = {}) {
@@ -100,9 +106,10 @@ function setSessionCookie(req, res, token, maxAgeSeconds) {
 async function createSession(db, req, res, userId, { dismissedMessages = [], viaMicrosoft = false, microsoftLoginHint = null } = {}) {
   const token = crypto.randomBytes(32).toString("base64url");
   const maxAge = SESSION_DAYS * 24 * 60 * 60;
+  // A session never outlives a temporary account (LEAST ignores the NULL of regular accounts).
   await db.query(
     `INSERT INTO sessions (token_hash, user_id, expires_at, dismissed_messages, via_microsoft, microsoft_login_hint)
-     VALUES ($1, $2, now() + make_interval(secs => $3), $4, $5, $6)`,
+     VALUES ($1, $2, LEAST(now() + make_interval(secs => $3), (SELECT expires_at FROM users WHERE id = $2)), $4, $5, $6)`,
     [hashToken(token), userId, maxAge, dismissedMessages, viaMicrosoft, microsoftLoginHint]
   );
   setSessionCookie(req, res, token, maxAge);
@@ -124,11 +131,12 @@ function loadUser(pool) {
     const { rows } = await pool.query(
       `SELECT u.id, u.username, u.role, u.must_change_password, u.person_id, p.shift_id, p.name,
               u.dismissed_messages, s.dismissed_messages AS session_dismissed_messages, u.preferences, s.via_microsoft,
+              u.temporary, u.expires_at AS account_expires_at, u.features,
               s.last_seen_at < now() - interval '1 hour' AS needs_refresh
          FROM sessions s
          JOIN users u ON u.id = s.user_id
          JOIN people p ON p.id = u.person_id
-        WHERE s.token_hash = $1 AND s.expires_at > now()`,
+        WHERE s.token_hash = $1 AND s.expires_at > now() AND ${ACCOUNT_ACTIVE_SQL}`,
       [tokenHash]
     );
     const row = rows[0];
@@ -147,14 +155,19 @@ function loadUser(pool) {
       name: row.name,
       dismissedMessages: row.dismissed_messages,
       sessionDismissedMessages: row.session_dismissed_messages,
-      preferences: row.preferences
+      preferences: row.preferences,
+      temporary: row.temporary,
+      accountExpiresAt: row.account_expires_at,
+      features: row.features || []
     };
     if (row.needs_refresh) {
       // Sliding expiry: an active session stays valid.
       const maxAge = SESSION_DAYS * 24 * 60 * 60;
       await pool.query(
-        "UPDATE sessions SET last_seen_at = now(), expires_at = now() + make_interval(secs => $2) WHERE token_hash = $1",
-        [tokenHash, maxAge]
+        `UPDATE sessions SET last_seen_at = now(),
+                expires_at = LEAST(now() + make_interval(secs => $2), (SELECT expires_at FROM users WHERE id = $3))
+          WHERE token_hash = $1`,
+        [tokenHash, maxAge, row.id]
       );
       setSessionCookie(req, res, token, maxAge);
     }
@@ -166,6 +179,14 @@ function requireUser(req, res, next) {
   if (!req.user) throw new HttpError(401, "Du är inte inloggad.");
   if (req.user.mustChangePassword && !req.allowWithoutPasswordChange) {
     throw new HttpError(403, "Du måste byta lösenord innan du fortsätter.", { code: "password_change_required" });
+  }
+  next();
+}
+
+// Temporary accounts reach only the routes listed in permissions.js, whatever their role.
+function restrictTemporaryAccounts(req, res, next) {
+  if (req.user?.temporary && !temporaryMayCall(req.user, req.method, req.path)) {
+    throw new HttpError(403, "Ditt tillfälliga konto har inte behörighet till det här.");
   }
   next();
 }
@@ -212,6 +233,8 @@ function createLoginLimiter({ maxFailures = 10, windowMs = 15 * 60 * 1000 } = {}
 }
 
 module.exports = {
+  ACCOUNT_ACTIVE_SQL,
+  restrictTemporaryAccounts,
   HttpError,
   hashPassword,
   verifyPassword,

@@ -29,16 +29,23 @@ function serializePerson(row) {
     account: row.username
       ? {
         username: row.username, role: row.role, lastLoginAt: row.last_login_at || null, mustChangePassword: Boolean(row.must_change_password),
-        pushBlocked: Boolean(row.push_blocked), microsoftLinked: Boolean(row.entra_oid)
+        pushBlocked: Boolean(row.push_blocked), microsoftLinked: Boolean(row.entra_oid),
+        ...(row.temporary ? {
+          temporary: true, expiresAt: row.expires_at, disabled: Boolean(row.disabled_at), features: row.features || [],
+          createdByName: row.created_by_name || ""
+        } : {})
       }
       : null
   };
 }
 
 const PERSON_SELECT = `
-  SELECT p.*, u.username, u.role, u.last_login_at, u.must_change_password, u.push_blocked, u.entra_oid
+  SELECT p.*, u.username, u.role, u.last_login_at, u.must_change_password, u.push_blocked, u.entra_oid,
+         u.temporary, u.expires_at, u.disabled_at, u.features, cp.name AS created_by_name
     FROM people p
-    LEFT JOIN users u ON u.person_id = p.id`;
+    LEFT JOIN users u ON u.person_id = p.id
+    LEFT JOIN users cu ON cu.id = u.created_by
+    LEFT JOIN people cp ON cp.id = cu.person_id`;
 
 async function getPersonById(db, id) {
   const { rows } = await db.query(`${PERSON_SELECT} WHERE p.id = $1`, [id]);

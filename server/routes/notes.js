@@ -1,3 +1,4 @@
+const { ACCOUNT_ACTIVE_SQL } = require("../auth");
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
@@ -178,6 +179,7 @@ function noteRoutes({ pool }) {
         `SELECT u.id, COALESCE(p.name, u.username) AS name, u.role, p.shift_id
            FROM users u LEFT JOIN people p ON p.id = u.person_id
           WHERE u.id <> $1 AND ($2::text[] IS NULL OR p.shift_id = ANY($2))
+            AND ${ACCOUNT_ACTIVE_SQL} AND (NOT u.temporary OR 'notes' = ANY(u.features))
           ORDER BY lower(COALESCE(p.name, u.username))`,
         [req.user.id, allowed]
       )

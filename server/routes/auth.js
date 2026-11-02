@@ -20,7 +20,8 @@ async function buildMePayload(db, user) {
   ]);
   return {
     user: {
-      id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword, viaMicrosoft: Boolean(user.viaMicrosoft)
+      id: user.id, username: user.username, role: user.role, mustChangePassword: user.mustChangePassword, viaMicrosoft: Boolean(user.viaMicrosoft),
+      temporary: Boolean(user.temporary), expiresAt: user.accountExpiresAt || null, features: user.temporary ? user.features || [] : []
     },
     person,
     shifts: shifts.rows.map(serializeShift),
@@ -65,14 +66,14 @@ function safeReturnPath(value) {
 async function findMicrosoftUser(pool, entra, claims) {
   const emails = entra.emailsOf(claims);
   if (entra.allowedDomain && !emails.length) return { problem: "not_allowed" };
-  const linked = await pool.query("SELECT id FROM users WHERE entra_oid = $1", [claims.oid]);
+  const linked = await pool.query("SELECT id FROM users WHERE entra_oid = $1 AND NOT temporary", [claims.oid]);
   if (linked.rows[0]) return { user: linked.rows[0] };
   if (!emails.length) return { problem: "not_linked" };
   const { rows } = await pool.query(
     `SELECT u.id, u.entra_oid
        FROM users u
        JOIN people p ON p.id = u.person_id
-      WHERE p.email = ANY($1::text[]) OR u.username = ANY($1::text[])`,
+      WHERE (p.email = ANY($1::text[]) OR u.username = ANY($1::text[])) AND NOT u.temporary`,
     [emails]
   );
   if (rows.length > 1) return { problem: "ambiguous" };
@@ -130,13 +131,18 @@ function authRoutes({ pool, setupCode, loginLimiter, entra }) {
     res.status(201).json(await buildMePayload(pool, user));
   });
 
-  router.post("/login", async (req, res) => {
+  // Both password sign-ins: the regular one (/login) and the one for temporary accounts
+  // (/login/temporary). Each takes only its own kind of account. Whether the account is of the
+  // other kind, disabled or expired is only told after the right password, so it reveals nothing.
+  async function passwordLogin(req, res, { temporary }) {
     const username = normalizeUsername(req.body?.username);
     const password = String(req.body?.password || "");
     const ip = req.ip || "";
     loginLimiter.check(ip, username);
     const { rows } = await pool.query(
-      "SELECT id, username, password_hash, role, must_change_password, person_id, dismissed_messages, preferences, entra_oid FROM users WHERE username = $1",
+      `SELECT id, username, password_hash, role, must_change_password, person_id, dismissed_messages, preferences, entra_oid,
+              temporary, features, expires_at, disabled_at IS NOT NULL AS disabled, expires_at <= now() AS expired
+         FROM users WHERE username = $1`,
       [username]
     );
     const row = rows[0];
@@ -146,9 +152,16 @@ function authRoutes({ pool, setupCode, loginLimiter, entra }) {
       throw new HttpError(401, "Fel användarnamn eller lösenord.");
     }
     loginLimiter.reset(ip, username);
+    if (row.temporary && !temporary) {
+      throw new HttpError(403, "Det här är ett tillfälligt konto. Välj Tillfälligt konto och logga in där.", { code: "temporary_required" });
+    }
+    if (!row.temporary && temporary) {
+      throw new HttpError(403, "Det här är inget tillfälligt konto. Välj Vanlig inloggning.", { code: "regular_required" });
+    }
+    if (row.disabled) throw new HttpError(403, "Ditt tillfälliga konto är inaktiverat. Kontakta admin.", { code: "account_disabled" });
+    if (row.expired) throw new HttpError(403, "Ditt tillfälliga konto har gått ut. Kontakta admin om du behöver förlänga det.", { code: "account_expired" });
     // Someone linked to a Microsoft account signs in with Microsoft only, so an account closed
-    // there is closed here too. Only told after the right password, so it reveals nothing.
-    // With Microsoft sign-in off (no Entra variables) the password works again.
+    // there is closed here too. With Microsoft sign-in off (no Entra variables) the password works again.
     if (row.entra_oid && entra.configured) {
       throw new HttpError(403, "Ditt konto är kopplat till Microsoft. Logga in med Microsoft.", { code: "microsoft_required" });
     }
@@ -157,9 +170,13 @@ function authRoutes({ pool, setupCode, loginLimiter, entra }) {
     await createSession(pool, req, res, row.id);
     res.json(await buildMePayload(pool, {
       id: row.id, username: row.username, role: row.role, mustChangePassword: row.must_change_password, personId: row.person_id,
-      dismissedMessages: row.dismissed_messages, preferences: row.preferences
+      dismissedMessages: row.dismissed_messages, preferences: row.preferences,
+      temporary: row.temporary, accountExpiresAt: row.expires_at, features: row.features
     }));
-  });
+  }
+
+  router.post("/login", (req, res) => passwordLogin(req, res, { temporary: false }));
+  router.post("/login/temporary", (req, res) => passwordLogin(req, res, { temporary: true }));
 
   // Sign-in with Microsoft. The login page sends the browser here, Microsoft sends it back
   // to the callback, and the callback signs in and returns to the page it started on.

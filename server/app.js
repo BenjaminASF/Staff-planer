@@ -1,6 +1,6 @@
 const path = require("node:path");
 const express = require("express");
-const { HttpError, loadUser, requireAppHeader, requireUser, createLoginLimiter } = require("./auth");
+const { HttpError, loadUser, requireAppHeader, requireUser, createLoginLimiter, restrictTemporaryAccounts } = require("./auth");
 const { authRoutes } = require("./routes/auth");
 const { peopleRoutes } = require("./routes/people");
 const { shiftRoutes } = require("./routes/shifts");
@@ -44,9 +44,10 @@ function createApp({
   api.use(express.json({ limit: "5mb" }));
   api.use(requireAppHeader);
   api.use(loadUser(pool));
+  api.use(restrictTemporaryAccounts);
   api.get("/events", requireUser, realtime.handler);
   api.use(authRoutes({ pool, setupCode, loginLimiter: createLoginLimiter(), entra }));
-  api.use("/people", peopleRoutes({ pool }));
+  api.use("/people", peopleRoutes({ pool, realtime }));
   api.use("/shifts", shiftRoutes({ pool }));
   api.use("/admin", adminRoutes({ pool }));
   api.use("/backup", shiftBackupRoutes({ pool }));
