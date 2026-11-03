@@ -343,9 +343,11 @@ function canChangeUsername(user) {
   return isAdmin(user);
 }
 
-// The chat is shared by everyone who plans the shifts.
+// The chat is shared by everyone who plans the shifts, and by senior operators.
+const CHAT_ROLES = Object.freeze([ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR]);
+
 function canUseChat(user) {
-  return isShiftManager(user) && hasFeature(user, FEATURES.CHAT);
+  return CHAT_ROLES.includes(user?.role) && hasFeature(user, FEATURES.CHAT);
 }
 
 // Authors remove their own chat messages; admins can remove any.
@@ -422,6 +424,7 @@ module.exports = {
   hasFeature,
   canManageTemporaryAccounts,
   temporaryMayCall,
+  CHAT_ROLES,
   canUseChat,
   canDeleteChatMessage,
   ROLES,

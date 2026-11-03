@@ -167,7 +167,7 @@ const TEMPORARY_FEATURES = [
   ["breaks", "Rast", "Rastplaneringen"],
   ["production", "Produktion", "Produktionssidan"],
   ["notes", "Anteckningar", "Egna anteckningar och delade lappar"],
-  ["chat", "Chatt", "Chatten för skiftledning"]
+  ["chat", "Chatt", "Chatten med skiftledning och senior operatörer"]
 ];
 // Shift leaders may look at other shifts here, read-only. Everywhere else they work in their own shift.
 const SHIFT_BROWSING_PAGES = ["index.html", "rast.html"];
@@ -397,6 +397,8 @@ const isOperator = () => hasRole(ROLES.OPERATOR, ROLES.SENIOR_OPERATOR);
 const isSeniorOperator = () => hasRole(ROLES.SENIOR_OPERATOR);
 // Everyone who plans a shift. A right hand plans only their own shift.
 const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND);
+// The chat: everyone who plans a shift, and senior operators. The server checks the same.
+const canUseChat = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR) && hasFeature("chat");
 // Machines, departments and settings are shared by all shifts.
 const canChangeSharedSettings = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
 const canChangeProductionTarget = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
@@ -2283,12 +2285,12 @@ async function renderProfilePage() {
         : "<p>Mörkt läge stöds inte i den här webbläsaren. Uppdatera webbläsaren för att använda det.</p>"}
       ${canManageStaff() ? `<label>Automatisk utloggning<select name="autoLockMinutes">${[[5, "Efter 5 minuter"], [15, "Efter 15 minuter"], [30, "Efter 30 minuter"], [60, "Efter 1 timme"], [0, "Aldrig"]].map(([value, label]) => `<option value="${value}"${Number(getPreference("autoLockMinutes", appSettings.autoLockMinutes)) === value ? " selected" : ""}>${label}</option>`).join("")}</select><small>Du loggas ut när du inte har använt Staff Planner så här länge.</small></label>` : ""}
       <label class="settings-switch"><input name="showTips" type="checkbox"${getPreference("showTips", appSettings.showTips) ? " checked" : ""} /><span>Visa tips och hjälptexter</span></label>
-      <label class="settings-switch"><input name="soundNotifications" type="checkbox"${soundNotificationsEnabled() ? " checked" : ""} /><span>${isAdmin() || isShiftLeader() ? "Spela ljud när någon annan skickar ett meddelande i chatten eller ändrar schemat eller rastplanen för ditt skift" : `Spela ljud när ${isRightHand() ? "någon annan skickar ett meddelande i chatten, " : ""}ditt eget schema ändras eller veckans schema delas`}</span></label>
+      <label class="settings-switch"><input name="soundNotifications" type="checkbox"${soundNotificationsEnabled() ? " checked" : ""} /><span>${isAdmin() || isShiftLeader() ? "Spela ljud när någon annan skickar ett meddelande i chatten eller ändrar schemat eller rastplanen för ditt skift" : `Spela ljud när ${canUseChat() ? "någon annan skickar ett meddelande i chatten, " : ""}ditt eget schema ändras eller veckans schema delas`}</span></label>
       <small>Webbläsaren spelar bara ljud efter att du har klickat någonstans på sidan.</small>
       <div class="settings-actions"><span id="preferencesMessage" class="inline-message" aria-live="polite"></span><button id="testSoundBtn" class="btn" type="button">Testa ljudet</button></div>
     </form>
     <section id="pushSettings" class="card settings-card">
-      <div><h3>Pushnotiser</h3><p>Få en kort notis i telefonen eller datorn när ditt schema eller din placering ändras, när en anteckning delas med dig${canManageStaff() ? ", när du får chattmeddelanden och vid viktiga uppdateringar" : ""}, även när Staff Planner är stängd. Notisen visar aldrig namn eller meddelandetext.</p></div>
+      <div><h3>Pushnotiser</h3><p>Få en kort notis i telefonen eller datorn när ditt schema eller din placering ändras, när en anteckning delas med dig${canUseChat() ? ", när du får chattmeddelanden" : ""}${canManageStaff() ? " och vid viktiga uppdateringar" : ""}, även när Staff Planner är stängd. Notisen visar aldrig namn eller meddelandetext.</p></div>
       <div class="push-settings-body"><p>Hämtar…</p></div>
       <p class="inline-message push-settings-message" role="status" aria-live="polite"></p>
     </section>`;
@@ -2324,7 +2326,7 @@ async function renderProfilePage() {
   });
   root.querySelector("#testSoundBtn").addEventListener("click", () => {
     playTones("schedule");
-    if (canManageStaff()) setTimeout(() => playTones("message"), 700);
+    if (canUseChat()) setTimeout(() => playTones("message"), 700);
   });
 
   const profileForm = root.querySelector("#profileForm");
@@ -7004,7 +7006,7 @@ const TEMPORARY_FEATURE_ROLES = {
   breaks: null,
   production: [ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR],
   notes: null,
-  chat: [ROLES.LEADER, ROLES.RIGHT_HAND]
+  chat: [ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR]
 };
 const featureFitsRole = (feature, role) => !TEMPORARY_FEATURE_ROLES[feature] || TEMPORARY_FEATURE_ROLES[feature].includes(role);
 const TEMPORARY_DURATIONS = [["1", "1 dag"], ["7", "7 dagar"], ["30", "30 dagar"], ["custom", "Eget slutdatum"]];
@@ -8533,7 +8535,7 @@ function getChatElements() {
 }
 
 function setupChat() {
-  if (!canManageStaff() || !hasFeature("chat") || document.getElementById("chatWidget")) return;
+  if (!canUseChat() || document.getElementById("chatWidget")) return;
   const widget = document.createElement("div");
   widget.id = "chatWidget";
   widget.className = "chat-widget";

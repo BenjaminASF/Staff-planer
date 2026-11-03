@@ -89,7 +89,6 @@ describe("senior operator", () => {
     assert.deepEqual(reads.data.forbidden, ["scheduleTemplates"]);
     assert.deepEqual(reads.data.unshared, ["schedule:2026-10-12"], "sees the schedule only once it is shared");
     assert.equal((await senior.put(`/api/documents/${dayShift.id}/schedule:2026-10-12`, { value: {}, baseVersion: 0 })).status, 403);
-    assert.equal((await senior.get("/api/chat/messages")).status, 403);
     assert.equal((await senior.patch(`/api/people/${seniorPerson.id}`, { name: "Annat Namn" })).status, 403);
     assert.equal((await senior.patch(`/api/people/${seniorPerson.id}`, { phone: "070-1" })).status, 200);
     const competence = await senior.get("/api/documents?scope=global&keys=machineSkills,productionSettings");
@@ -103,6 +102,43 @@ describe("senior operator", () => {
     assert.equal((await leader.put(`/api/documents/${dayShift.id}/scheduleShared:${week}`, { value: { shared: true }, baseVersion: 0 })).status, 200);
     const { rows } = await server.pool.query("SELECT kind FROM push_outbox WHERE user_id = $1", [seniorUser.id]);
     assert.deepEqual(rows.map(row => row.kind), ["share"]);
+  });
+
+  test("uses the chat: is written to privately and in group messages, and answers", async () => {
+    assert.equal((await operator.get("/api/chat/messages")).status, 403, "operators still have no chat");
+    const members = (await leader.get("/api/chat/members")).data.members.map(member => member.name);
+    assert.ok(members.includes("Sven Senior") && members.includes("Kim Kväll"), "senior operators can be chosen as recipients");
+    assert.ok(!members.includes("Anna Operatör"));
+    assert.ok((await senior.get("/api/chat/members")).data.members.some(member => member.name === "Lisa Ledare"));
+
+    const stream = await openStream(server, senior);
+    let toSenior;
+    try {
+      await stream.waitFor(event => event.type === "ready");
+      await settle();
+      await server.pool.query("DELETE FROM push_outbox");
+      toSenior = await leader.post("/api/chat/messages", { text: "Kan du kolla GD2?", recipientId: seniorUser.id });
+      assert.equal(toSenior.status, 201);
+      await stream.waitFor(event => event.type === "change" && event.data.type === "chat");
+      assert.equal((await leader.post("/api/chat/messages", { text: "Möte kl 14" })).status, 201);
+      const pushes = (await server.pool.query("SELECT kind FROM push_outbox WHERE user_id = $1 ORDER BY kind", [seniorUser.id])).rows;
+      assert.deepEqual(pushes.map(row => row.kind), ["chat", "chatAll"], "a push for the private message and for messages to everyone");
+    } finally {
+      stream.close();
+    }
+
+    const unread = (await senior.get("/api/chat/unread")).data;
+    assert.equal(unread.count, 2);
+    const seen = (await senior.get("/api/chat/messages")).data.messages.map(message => message.text);
+    assert.deepEqual(seen, ["Kan du kolla GD2?", "Möte kl 14"]);
+    assert.deepEqual((await otherSenior.get("/api/chat/messages")).data.messages.map(message => message.text), ["Möte kl 14"],
+      "private messages stay private");
+
+    const reply = await senior.post("/api/chat/messages", { text: "Ja, fixat", recipientId: leaderUser.id });
+    assert.equal(reply.status, 201);
+    assert.ok((await leader.get("/api/chat/messages")).data.messages.some(message => message.text === "Ja, fixat" && message.recipientId === leaderUser.id));
+    assert.equal((await senior.delete(`/api/chat/messages/${reply.data.message.id}`)).status, 200, "removes their own message");
+    assert.equal((await senior.delete(`/api/chat/messages/${toSenior.data.message.id}`)).status, 403, "but not others'");
   });
 
   test("reads the production of their own shift only, and may start today's or yesterday's day", async () => {
