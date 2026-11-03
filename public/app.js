@@ -8512,7 +8512,7 @@ const CHAT_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const CHAT_NOTIFIED_KEY = "staff_chat_notified_id";
 const CHAT_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [] };
+const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null };
 
 const chatMessageId = message => BigInt(message?.id || 0);
 
@@ -8529,7 +8529,9 @@ function getChatElements() {
     input: widget.querySelector(".chat-form textarea"),
     file: widget.querySelector(".chat-form input[type=file]"),
     attachment: widget.querySelector(".chat-attachment"),
-    recipient: widget.querySelector(".chat-recipient select"),
+    recipient: widget.querySelector(".chat-recipient"),
+    mentions: widget.querySelector(".chat-mentions"),
+    send: widget.querySelector(".chat-send"),
     status: widget.querySelector(".chat-status")
   };
 }
@@ -8542,15 +8544,16 @@ function setupChat() {
   widget.innerHTML = `
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
-      <header class="chat-header"><div><strong>Chatt</strong><small>Till alla eller privat till en person</small></div><button type="button" class="chat-close" aria-label="Stäng chatten">×</button></header>
+      <header class="chat-header"><div><strong>Chatt</strong><small>Skriv @ och ett namn för att skriva privat</small></div><button type="button" class="chat-close" aria-label="Stäng chatten">×</button></header>
       <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
       <form class="chat-form">
         <div class="chat-attachment hidden"><img alt="Vald bild" /><button type="button" class="chat-attachment-remove" aria-label="Ta bort bilden">×</button></div>
         <p class="chat-status inline-message" role="status"></p>
-        <label class="chat-recipient">Till <select aria-label="Mottagare"><option value="">Alla</option></select></label>
+        <div class="chat-recipient hidden"><span class="chat-recipient-text"></span><button type="button" class="chat-recipient-remove" aria-label="Skicka till alla i stället">×</button></div>
+        <ul class="chat-mentions hidden" role="listbox" aria-label="Välj mottagare"></ul>
         <div class="chat-input-row">
           <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
-          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande…" aria-label="Meddelande"></textarea>
+          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande… (@ för privat)" aria-label="Meddelande"></textarea>
           <button class="btn primary chat-send" type="submit">Skicka</button>
         </div>
       </form>
@@ -8568,9 +8571,19 @@ function setupChat() {
     if (event.key === "Escape") { event.preventDefault(); void setChatOpen(false); elements.toggle.focus(); }
   });
   elements.input.addEventListener("keydown", event => {
+    if (handleChatMentionKey(event)) return;
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); elements.form.requestSubmit(); }
   });
-  elements.input.addEventListener("input", () => resizeChatInput(elements.input));
+  elements.input.addEventListener("input", () => { resizeChatInput(elements.input); updateChatMentions(); });
+  elements.input.addEventListener("click", () => updateChatMentions());
+  elements.input.addEventListener("blur", () => setTimeout(() => { if (document.activeElement !== elements.input) closeChatMentions(); }, 150));
+  // mousedown keeps the focus in the text field while a name is picked.
+  elements.mentions.addEventListener("mousedown", event => event.preventDefault());
+  elements.mentions.addEventListener("click", event => {
+    const option = event.target.closest("[data-mention]");
+    if (option) pickChatMention(option.dataset.mention);
+  });
+  elements.recipient.querySelector(".chat-recipient-remove").addEventListener("click", () => { setChatRecipient(null); elements.input.focus(); });
   elements.input.addEventListener("paste", event => {
     const file = [...(event.clipboardData?.files || [])].find(item => item.type.startsWith("image/"));
     if (file) { event.preventDefault(); void attachChatImage(file); }
@@ -8582,7 +8595,6 @@ function setupChat() {
   });
   elements.widget.querySelector(".chat-attachment-remove").addEventListener("click", () => setChatImage(null));
   elements.form.addEventListener("submit", event => { event.preventDefault(); void sendChatMessage(); });
-  elements.recipient.addEventListener("change", () => updateChatRecipientHint());
   elements.list.addEventListener("click", event => {
     const older = event.target.closest(".chat-older");
     if (older) { void loadOlderChatMessages(older); return; }
@@ -9857,7 +9869,7 @@ function setChatImage(image) {
   chatState.image = image;
   attachment.classList.toggle("hidden", !image);
   attachment.querySelector("img").src = image?.dataUrl || "";
-  input.placeholder = image ? "Lägg till text (valfritt)…" : "Skriv ett meddelande…";
+  input.placeholder = image ? "Lägg till text (valfritt)…" : "Skriv ett meddelande… (@ för privat)";
   if (!image) updateChatRecipientHint();
 }
 
@@ -9880,7 +9892,7 @@ async function sendChatMessage() {
   sendButton.disabled = true;
   try {
     const image = chatState.image ? { type: chatState.image.type, data: chatState.image.dataUrl } : undefined;
-    const recipientId = getChatElements().recipient.value || undefined;
+    const recipientId = chatState.recipient?.id;
     const { message } = await apiRequest("POST", "/chat/messages", { text, image, recipientId });
     input.value = "";
     resizeChatInput(input);
@@ -9896,7 +9908,7 @@ async function sendChatMessage() {
   }
 }
 
-// The recipient list: "Alla" or one of the others who can use the chat.
+// The people who can be written to privately. Picked by typing @ and a name.
 async function loadChatMembers() {
   try {
     const { members } = await apiRequest("GET", "/chat/members");
@@ -9905,25 +9917,113 @@ async function loadChatMembers() {
     console.warn("Chat members could not be loaded:", error);
     return;
   }
-  const { recipient } = getChatElements();
-  const selected = recipient.value;
-  recipient.innerHTML = `<option value="">Alla</option>${chatState.members.map(member => `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}</option>`).join("")}`;
-  recipient.value = chatState.members.some(member => member.id === selected) ? selected : "";
-  updateChatRecipientHint();
+  // Someone who left the chat can no longer be written to.
+  if (chatState.recipient && !chatState.members.some(member => member.id === chatState.recipient.id)) setChatRecipient(null);
+  else updateChatMentions();
 }
 
+// The private recipient stays until it is removed with ×, so a conversation can go on.
 function setChatRecipient(userId) {
-  const { recipient } = getChatElements();
-  if (!chatState.members.some(member => member.id === userId)) return;
-  recipient.value = userId;
+  const member = userId ? chatState.members.find(item => item.id === userId) : null;
+  if (userId && !member) return;
+  chatState.recipient = member || null;
   updateChatRecipientHint();
 }
 
 function updateChatRecipientHint() {
-  const { recipient, input, form } = getChatElements();
-  const member = chatState.members.find(item => item.id === recipient.value);
+  const { recipient, input, form, send } = getChatElements();
+  const member = chatState.recipient;
   form.classList.toggle("is-private", Boolean(member));
-  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande…";
+  recipient.classList.toggle("hidden", !member);
+  recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Privat till <strong>${escapeHtml(member.name)}</strong> – bara ni två ser det` : "";
+  send.textContent = member ? "Skicka privat" : "Skicka";
+  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande… (@ för privat)";
+}
+
+// The @word just before the cursor, if any: "@" at the start or after a space.
+function findChatMention(input) {
+  const before = input.value.slice(0, input.selectionStart ?? input.value.length);
+  const match = before.match(/(^|\s)@([^\s@]*(?: [^\s@]+)?)$/u);
+  if (!match) return null;
+  return { start: before.length - match[2].length - 1, end: before.length, query: match[2] };
+}
+
+const normalizeChatName = text => text.toLocaleLowerCase("sv-SE").normalize("NFD").replace(/\p{M}/gu, "");
+
+function matchChatMembers(query) {
+  const wanted = normalizeChatName(query.trim());
+  if (!wanted) return chatState.members.slice(0, 8);
+  return chatState.members.filter(member => {
+    const name = normalizeChatName(member.name);
+    return name.startsWith(wanted) || name.split(/\s+/).some(word => word.startsWith(wanted));
+  }).slice(0, 8);
+}
+
+function updateChatMentions() {
+  const { input, mentions } = getChatElements();
+  const mention = findChatMention(input);
+  const found = mention ? matchChatMembers(mention.query) : [];
+  // "@Anna S" may still be a name; a second word that matches nobody is just text.
+  if (!mention || (!found.length && mention.query.includes(" "))) { closeChatMentions(); return; }
+  const previous = chatState.mention?.options[chatState.mention.active]?.id;
+  const active = Math.max(0, found.findIndex(member => member.id === previous));
+  chatState.mention = { ...mention, options: found, active };
+  mentions.innerHTML = found.length
+    ? found.map((member, index) => `<li role="option" class="chat-mention${index === active ? " is-active" : ""}" aria-selected="${index === active}" data-mention="${escapeHtml(member.id)}">${escapeHtml(member.name)}</li>`).join("")
+    : '<li class="chat-mention-empty">Ingen i chatten heter så</li>';
+  mentions.classList.remove("hidden");
+}
+
+function closeChatMentions() {
+  chatState.mention = null;
+  const { mentions } = getChatElements();
+  mentions.classList.add("hidden");
+  mentions.innerHTML = "";
+}
+
+// Arrow keys move in the list, Enter or Tab picks, Escape closes only the list.
+function handleChatMentionKey(event) {
+  const mention = chatState.mention;
+  if (!mention) return false;
+  const count = mention.options.length;
+  if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); closeChatMentions(); return true; }
+  if (!count) return false;
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    mention.active = (mention.active + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+    getChatElements().mentions.querySelectorAll(".chat-mention").forEach((item, index) => {
+      item.classList.toggle("is-active", index === mention.active);
+      item.setAttribute("aria-selected", String(index === mention.active));
+    });
+    return true;
+  }
+  if ((event.key === "Enter" && !event.shiftKey) || event.key === "Tab") {
+    event.preventDefault();
+    pickChatMention(mention.options[mention.active].id);
+    return true;
+  }
+  return false;
+}
+
+// Picking a name makes the message private. "@Ann" first in the message is removed;
+// later in a sentence the name stays as text, without the @.
+function pickChatMention(userId) {
+  const { input } = getChatElements();
+  const mention = chatState.mention || findChatMention(input);
+  const member = chatState.members.find(item => item.id === userId);
+  if (!member) return;
+  if (mention) {
+    const before = input.value.slice(0, mention.start);
+    const after = input.value.slice(mention.end).replace(/^ +/, "");
+    const inserted = before.trim() ? `${member.name} ` : "";
+    input.value = `${before}${inserted}${after}`;
+    const cursor = before.length + inserted.length;
+    input.setSelectionRange(cursor, cursor);
+  }
+  closeChatMentions();
+  setChatRecipient(member.id);
+  resizeChatInput(input);
+  input.focus();
 }
 
 async function deleteChatMessage(id) {
