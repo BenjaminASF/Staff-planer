@@ -22,7 +22,8 @@
 //                not look at other shifts' schedules.
 // Senior operatör – an operator in every way, who also opens the production page of
 //                their own shift. There they record only machine waste, the plus/minus
-//                box and comments, on days a manager has started, today and yesterday.
+//                box and comments, today and yesterday, also before anyone has
+//                registered the day's results. They never change the results.
 //                Admins hand the role out to anyone, shift leaders in their own shift.
 // Operatör     – sees their own shift's schedule and break plan once an admin or
 //                shift leader has shared that week, edits their own phone,
@@ -35,8 +36,8 @@
 // admins included. Only the author changes a note's text, color and recipients; its
 // priority mark is set by the author and, on a group note they can see, by an admin.
 //
-// Produktion: whoever writes a machine's comment is saved with it. Only admins and shift
-// leaders see who that was (see production.js).
+// Produktion: who last changed each field and wrote each comment is saved with it. Only
+// admins and shift leaders see who that was (see production.js).
 //
 // Tillfälliga konton (temporary accounts): hired staff an admin gives a login with an end
 //                date. They sign in with username and password only, and get what their role
@@ -342,9 +343,11 @@ function canChangeUsername(user) {
   return isAdmin(user);
 }
 
-// The chat is shared by everyone who plans the shifts.
+// The chat is shared by everyone who plans the shifts, and by senior operators.
+const CHAT_ROLES = Object.freeze([ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR]);
+
 function canUseChat(user) {
-  return isShiftManager(user) && hasFeature(user, FEATURES.CHAT);
+  return CHAT_ROLES.includes(user?.role) && hasFeature(user, FEATURES.CHAT);
 }
 
 // Authors remove their own chat messages; admins can remove any.
@@ -400,6 +403,7 @@ const TEMPORARY_ROUTES = [
   // Their own phone and status; editablePersonFields decides what else.
   ["PATCH", /^\/people\/[^/]+$/],
   ["PUT", /^\/documents\/[^/]+\/[^/]+$/],
+  ["PATCH", /^\/production\/[^/]+\/\d{4}-\d{2}-\d{2}$/, FEATURES.PRODUCTION],
   ["*", /^\/notifications(\/read)?$/],
   ["*", /^\/push\/subscriptions(\/check)?$/],
   ["*", /^\/notes(\/.*)?$/, FEATURES.NOTES],
@@ -420,6 +424,7 @@ module.exports = {
   hasFeature,
   canManageTemporaryAccounts,
   temporaryMayCall,
+  CHAT_ROLES,
   canUseChat,
   canDeleteChatMessage,
   ROLES,

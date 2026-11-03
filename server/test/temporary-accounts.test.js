@@ -175,6 +175,10 @@ describe("temporary accounts", () => {
     assert.equal((await client.put(`/api/documents/${dayShift.id}/schedule:${WEEK}`, { value: {}, baseVersion: 0 })).status, 200);
     assert.equal((await client.put(`/api/documents/${dayShift.id}/breakPlan:${WEEK}`, { value: {}, baseVersion: 0 })).status, 403);
     assert.equal((await client.get("/api/chat/messages")).status, 200);
+    const production = await client.patch(`/api/production/${dayShift.id}/2026-11-02`, { machines: { GD1: { result: 12 } } });
+    assert.equal(production.status, 200, "production was ticked");
+    const { client: withoutProduction } = await signedIn("tillf-hand", { role: "right_hand", features: ["schedule"] });
+    assert.equal((await withoutProduction.patch(`/api/production/${dayShift.id}/2026-11-02`, { machines: { GD1: { result: 1 } } })).status, 403);
 
     const sensitive = await client.get("/api/documents?scope=global&keys=machineSkills,testResults,assessments,safetySnapshots,workItemTrash,appSettings");
     assert.deepEqual(sensitive.data.forbidden.sort(), ["assessments", "machineSkills", "safetySnapshots", "testResults", "workItemTrash"]);

@@ -5422,6 +5422,7 @@ button {
 
 .production-entry.waste-only .production-machine-row :is(input, select):disabled { background: #f1f4f8; background: light-dark(#f1f4f8, #161b23); color: #7a8699; color: light-dark(#7a8699, #7d8798); cursor: not-allowed; }
 .production-role-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: #eef2f7; background: light-dark(#eef2f7, #1c222d); color: #52627a; color: light-dark(#52627a, #abb4c4); font-size: 13px; font-weight: 600; }
+.production-field-edits { grid-column: 1 / -1; color: #64748b; color: light-dark(#64748b, #94a3b8); font-size: 12px; font-weight: 500; }
 .production-comment-author { display: block; margin-top: 4px; color: #64748b; color: light-dark(#64748b, #94a3b8); font-size: 12px; font-weight: 500; }
 .production-save-status {
   align-self: center;

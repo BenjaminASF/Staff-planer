@@ -1,7 +1,7 @@
 const { ACCOUNT_ACTIVE_SQL } = require("../auth");
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
-const { canUseChat, canDeleteChatMessage } = require("../permissions");
+const { CHAT_ROLES, canUseChat, canDeleteChatMessage } = require("../permissions");
 const { cleanText } = require("../validation");
 const { queueChatMessage } = require("../push");
 
@@ -35,7 +35,6 @@ function parseImage(image) {
 const MESSAGE_COLUMNS = "id, user_id, author_name, recipient_id, recipient_name, body, image IS NOT NULL AS has_image, created_at";
 // Messages to everyone, plus private ones the user sent or received. $1 is the user's id.
 const VISIBLE = "(recipient_id IS NULL OR recipient_id = $1 OR user_id = $1)";
-const CHAT_ROLES = ["admin", "shift_leader", "right_hand"];
 
 function serializeMessage(row) {
   const id = String(row.id);
@@ -62,7 +61,7 @@ const CHAT_MEMBER_SQL = `${ACCOUNT_ACTIVE_SQL} AND (NOT u.temporary OR 'chat' = 
 function chatRoutes({ pool }) {
   const router = express.Router();
   router.use(requireUser, (req, res, next) => {
-    if (!canUseChat(req.user)) throw new HttpError(403, "Chatten är bara för admin, skiftledare och höger hand.");
+    if (!canUseChat(req.user)) throw new HttpError(403, "Chatten är bara för admin, skiftledare, höger hand och senior operatörer.");
     next();
   });
 
