@@ -8558,7 +8558,7 @@ function setupChat() {
         <ul class="chat-mentions hidden" role="listbox" aria-label="Välj mottagare"></ul>
         <div class="chat-input-row">
           <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
-          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande… (@ för privat)" aria-label="Meddelande"></textarea>
+          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande…" aria-label="Meddelande"></textarea>
           <button class="btn primary chat-send" type="submit">Skicka</button>
         </div>
       </form>
@@ -8571,6 +8571,16 @@ function setupChat() {
   elements.toggle.addEventListener("click", () => void setChatOpen(!chatState.open));
   elements.widget.querySelector(".chat-close").addEventListener("click", () => void setChatOpen(false));
   elements.preview.addEventListener("click", () => void setChatOpen(true));
+  // A click outside the chat closes it. Where the press started decides, so a click
+  // on something inside that is redrawn meanwhile (a picked name, a deleted message)
+  // or a text selection dragged out of the chat never closes it. Scrolling the page
+  // gives no click, so it does not close the chat either.
+  let pressedInsideChat = false;
+  document.addEventListener("pointerdown", event => { pressedInsideChat = isInsideChat(event.target); }, true);
+  document.addEventListener("click", event => {
+    if (!chatState.open || pressedInsideChat || isInsideChat(event.target)) return;
+    void setChatOpen(false);
+  }, true);
   if (takeLinkParam("chat")) void setChatOpen(true);
   elements.panel.addEventListener("keydown", event => {
     if (event.key === "Escape") { event.preventDefault(); void setChatOpen(false); elements.toggle.focus(); }
@@ -8616,6 +8626,12 @@ function setupChat() {
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) void pollChat(); });
   void pollChat();
+}
+
+// Inside the chat: the panel, its button and preview, and an image opened from it.
+// On a phone the open chat covers the page with a dimmed backdrop; that counts as outside.
+function isInsideChat(target) {
+  return target instanceof Element && Boolean(target.closest(".chat-panel, .chat-toggle, .chat-preview, .chat-image-viewer"));
 }
 
 // Chat images open in a viewer on top of the page. It closes with the X button, a
@@ -9985,7 +10001,7 @@ function setChatImage(image) {
   chatState.image = image;
   attachment.classList.toggle("hidden", !image);
   attachment.querySelector("img").src = image?.dataUrl || "";
-  input.placeholder = image ? "Lägg till text (valfritt)…" : "Skriv ett meddelande… (@ för privat)";
+  input.placeholder = image ? "Lägg till text (valfritt)…" : "Skriv ett meddelande…";
   if (!image) updateChatRecipientHint();
 }
 
@@ -10053,7 +10069,7 @@ function updateChatRecipientHint() {
   recipient.classList.toggle("hidden", !member);
   recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Privat till <strong>${escapeHtml(member.name)}</strong> – bara ni två ser det` : "";
   send.textContent = member ? "Skicka privat" : "Skicka";
-  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande… (@ för privat)";
+  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande…";
 }
 
 // The @word just before the cursor, if any: "@" at the start or after a space.
