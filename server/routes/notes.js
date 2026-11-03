@@ -2,12 +2,15 @@ const { ACCOUNT_ACTIVE_SQL } = require("../auth");
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
-const { canShareNotes, noteShareShifts, canEditNote, canPrioritizeNote } = require("../permissions");
+const {
+  ROLES, canUseNotes, canShareNotes, noteShareShifts, noteRecipientRoles, canEditNote, canPrioritizeNote, canCommentNote, canDeleteNoteComment
+} = require("../permissions");
 const { addNotifications } = require("../notifications");
-const { newId, NOTE_VISIBLE_SQL } = require("../store");
+const { newId, NOTE_VISIBLE_SQL, noteAccessSql } = require("../store");
 const { cleanText } = require("../validation");
 
 const MAX_TEXT_LENGTH = 1000;
+const MAX_COMMENT_LENGTH = 1000;
 const MAX_RECIPIENTS = 500;
 const NOTE_COLORS = ["yellow", "pink", "blue", "mint", "lavender", "beige"];
 const SORT_MODES = ["priority", "newest", "oldest"];
@@ -16,7 +19,8 @@ const LAYOUT_ZONES = ["prio", "rest", "all"];
 // Notes the user may see. $1 is the user's id, $2 their shift id (or null).
 const VISIBLE = NOTE_VISIBLE_SQL;
 
-// Everyone a group note is shared with, apart from its author.
+// Everyone a group note reaches, apart from its author: the people who may see it (the
+// same rule as for the viewer, see noteAccessSql), who have the notes function.
 const RECIPIENTS = `
   SELECT n.id AS note_id, u.id, COALESCE(p.name, u.username) AS name, u.role, p.shift_id, s.read_at IS NOT NULL AS read
     FROM notes n
@@ -24,8 +28,18 @@ const RECIPIENTS = `
     LEFT JOIN people p ON p.id = u.person_id
     LEFT JOIN note_states s ON s.note_id = n.id AND s.user_id = u.id
    WHERE n.kind = 'group' AND n.id = ANY($1::text[])
-     AND (EXISTS (SELECT 1 FROM note_people np WHERE np.note_id = n.id AND np.user_id = u.id) OR p.shift_id = ANY(n.whole_shifts))
+     AND (NOT u.temporary OR 'notes' = ANY(u.features))
+     AND ${noteAccessSql({ id: "u.id", role: "u.role", shift: "p.shift_id" })}
    ORDER BY lower(COALESCE(p.name, u.username))`;
+
+// The comments on the given group notes, oldest first.
+const COMMENTS = `
+  SELECT c.id, c.note_id, c.author_id, c.body, c.created_at, COALESCE(p.name, u.username) AS author_name, u.role AS author_role
+    FROM note_comments c
+    JOIN users u ON u.id = c.author_id
+    LEFT JOIN people p ON p.id = u.person_id
+   WHERE c.note_id = ANY($1::text[])
+   ORDER BY c.created_at, c.id`;
 
 const shiftIdOf = user => user.shiftId || null;
 
@@ -44,12 +58,13 @@ async function loadNotes(db, user, id = null) {
     [user.id, shiftIdOf(user), id]
   );
   const recipients = new Map();
+  const comments = new Map();
   const groupIds = rows.filter(row => row.kind === "group").map(row => row.id);
+  const byNote = (map, row) => { if (!map.has(row.note_id)) map.set(row.note_id, []); map.get(row.note_id).push(row); };
   if (groupIds.length) {
-    for (const row of (await db.query(RECIPIENTS, [groupIds])).rows) {
-      if (!recipients.has(row.note_id)) recipients.set(row.note_id, []);
-      recipients.get(row.note_id).push(row);
-    }
+    const [people, written] = await Promise.all([db.query(RECIPIENTS, [groupIds]), db.query(COMMENTS, [groupIds])]);
+    people.rows.forEach(row => byNote(recipients, row));
+    written.rows.forEach(row => byNote(comments, row));
   }
   return rows.map(row => {
     const own = row.author_id === user.id;
@@ -68,11 +83,16 @@ async function loadNotes(db, user, id = null) {
       recipients: (recipients.get(row.id) || []).map(person => ({
         id: person.id, name: person.name, role: person.role, shiftId: person.shift_id ?? null, ...(own ? { read: person.read } : {})
       })),
+      comments: (comments.get(row.id) || []).map(comment => ({
+        id: comment.id, authorId: comment.author_id, authorName: comment.author_name, authorRole: comment.author_role,
+        text: comment.body, createdAt: comment.created_at, canDelete: canDeleteNoteComment(user, comment)
+      })),
       unread: row.kind === "group" && !own && !row.read_at,
       done: row.done,
       layout: row.layout,
       canEdit: canEditNote(user, row),
       canPrioritize: canPrioritizeNote(user, row),
+      canComment: canCommentNote(user, row),
       createdAt: row.created_at,
       updatedAt: row.updated_at
     };
@@ -97,6 +117,13 @@ function cleanNoteText(value) {
   return text;
 }
 
+function cleanCommentText(value) {
+  const text = cleanText(value, MAX_COMMENT_LENGTH + 1);
+  if (!text) throw new HttpError(400, "Skriv en kommentar.");
+  if (text.length > MAX_COMMENT_LENGTH) throw new HttpError(400, `En kommentar får vara högst ${MAX_COMMENT_LENGTH} tecken.`);
+  return text;
+}
+
 function cleanColor(value) {
   if (!NOTE_COLORS.includes(value)) throw new HttpError(400, "Okänd färg.");
   return value;
@@ -110,12 +137,21 @@ const idList = (value, label) => {
   return [...new Set(value)];
 };
 
-// Checks the chosen people and whole shifts against what the user may share with.
+const SHARE_DENIED = "Du kan inte dela anteckningar.";
+
+// Why the user may not put someone with this role on a note.
+const roleDeniedMessage = role => role === ROLES.OPERATOR
+  ? "Operatörer har inte tillgång till Anteckningar."
+  : "Du kan inte dela anteckningar med den personen.";
+
+// Checks the chosen people and whole shifts against what the user may share with
+// (see "Anteckningar" in permissions.js).
 async function cleanSharing(db, user, body) {
-  if (!canShareNotes(user)) throw new HttpError(403, "Bara admin, skiftledare och höger hand kan dela anteckningar.");
+  if (!canShareNotes(user)) throw new HttpError(403, SHARE_DENIED);
   const people = idList(body.people, "personer").filter(id => id !== user.id);
   const wholeShifts = idList(body.wholeShifts, "skift");
   const allowed = noteShareShifts(user);
+  const roles = noteRecipientRoles(user);
   if (wholeShifts.length) {
     const { rows } = await db.query("SELECT id FROM shifts WHERE id = ANY($1::text[])", [wholeShifts]);
     if (rows.length !== wholeShifts.length) throw new HttpError(400, "Skiftet finns inte.");
@@ -123,10 +159,12 @@ async function cleanSharing(db, user, body) {
   }
   if (people.length) {
     const { rows } = await db.query(
-      "SELECT u.id, p.shift_id FROM users u LEFT JOIN people p ON p.id = u.person_id WHERE u.id = ANY($1::text[])",
+      "SELECT u.id, u.role, p.shift_id FROM users u LEFT JOIN people p ON p.id = u.person_id WHERE u.id = ANY($1::text[])",
       [people]
     );
     if (rows.length !== people.length) throw new HttpError(400, "En av mottagarna finns inte.");
+    const denied = rows.find(row => !roles.includes(row.role));
+    if (denied) throw new HttpError(403, roleDeniedMessage(denied.role));
     if (allowed && !rows.every(row => allowed.includes(row.shift_id))) throw new HttpError(403, "Du kan bara dela med personer i ditt eget skift.");
   }
   return { people, wholeShifts };
@@ -153,6 +191,11 @@ const snippet = text => text.length > 120 ? `${text.slice(0, 119)}…` : text;
 function noteRoutes({ pool }) {
   const router = express.Router();
   router.use(requireUser);
+  // Operators have no notes at all.
+  router.use((req, res, next) => {
+    if (!canUseNotes(req.user)) throw new HttpError(403, "Du har inte tillgång till Anteckningar.");
+    next();
+  });
 
   router.get("/", async (req, res) => {
     const notes = await loadNotes(pool, req.user);
@@ -171,26 +214,28 @@ function noteRoutes({ pool }) {
 
   // The people the user may share a note with, by shift.
   router.get("/recipients", async (req, res) => {
-    if (!canShareNotes(req.user)) throw new HttpError(403, "Bara admin, skiftledare och höger hand kan dela anteckningar.");
+    if (!canShareNotes(req.user)) throw new HttpError(403, SHARE_DENIED);
     const allowed = noteShareShifts(req.user);
+    const roles = noteRecipientRoles(req.user);
     const [shifts, people] = await Promise.all([
       pool.query("SELECT id, name FROM shifts WHERE ($1::text[] IS NULL OR id = ANY($1)) ORDER BY sort_order NULLS LAST, name", [allowed]),
       pool.query(
         `SELECT u.id, COALESCE(p.name, u.username) AS name, u.role, p.shift_id
            FROM users u LEFT JOIN people p ON p.id = u.person_id
-          WHERE u.id <> $1 AND ($2::text[] IS NULL OR p.shift_id = ANY($2))
+          WHERE u.id <> $1 AND ($2::text[] IS NULL OR p.shift_id = ANY($2)) AND u.role = ANY($3::text[])
             AND ${ACCOUNT_ACTIVE_SQL} AND (NOT u.temporary OR 'notes' = ANY(u.features))
           ORDER BY lower(COALESCE(p.name, u.username))`,
-        [req.user.id, allowed]
+        [req.user.id, allowed, roles]
       )
     ]);
     const person = row => ({ id: row.id, name: row.name, role: row.role });
     const groups = shifts.rows.map(shift => ({ id: shift.id, name: shift.name, people: people.rows.filter(row => row.shift_id === shift.id).map(person) }))
       .filter(group => group.people.length);
-    // Admins can also reach users without a shift, such as other admins.
+    // Admins and senior operators can also reach users without a shift, such as other admins.
     const withoutShift = people.rows.filter(row => !row.shift_id || !shifts.rows.some(shift => shift.id === row.shift_id)).map(person);
     if (!allowed && withoutShift.length) groups.push({ id: null, name: "Utan skift", people: withoutShift });
-    res.json({ groups });
+    // "Hela gruppen" reaches these roles in the shift: everyone but operators.
+    res.json({ groups, wholeShiftRoles: roles });
   });
 
   router.post("/", async (req, res) => {
@@ -293,6 +338,30 @@ function noteRoutes({ pool }) {
       state = result.rows[0];
     }
     res.json({ read: Boolean(state.read_at), done: state.done, layout: state.layout });
+  });
+
+  // Comments on a group note: everyone who sees it writes them, and removes their own.
+  router.post("/:id/comments", async (req, res) => {
+    const text = cleanCommentText(req.body?.text);
+    const note = await withTransaction(pool, async db => {
+      const current = await findVisibleNote(db, req.user, req.params.id, { lock: true });
+      if (!canCommentNote(req.user, current)) throw new HttpError(400, "Bara delade anteckningar har kommentarer.");
+      await db.query("INSERT INTO note_comments (id, note_id, author_id, body) VALUES ($1, $2, $3, $4)", [newId(), current.id, req.user.id, text]);
+      // Everyone else on the note hears about it: its author and its recipients.
+      const others = [current.author_id, ...await recipientIds(db, current.id)].filter(id => id !== req.user.id);
+      await addNotifications(db, others, { kind: "noteComment", actorName: req.user.name, title: snippet(text), noteId: current.id });
+      return (await loadNotes(db, req.user, current.id))[0];
+    });
+    res.status(201).json({ note });
+  });
+
+  router.delete("/:id/comments/:commentId", async (req, res) => {
+    const note = await findVisibleNote(pool, req.user, req.params.id);
+    const { rows } = await pool.query("SELECT * FROM note_comments WHERE id = $1 AND note_id = $2", [String(req.params.commentId), note.id]);
+    if (!rows[0]) throw new HttpError(404, "Kommentaren finns inte.");
+    if (!canDeleteNoteComment(req.user, rows[0])) throw new HttpError(403, "Bara den som skrev kommentaren kan ta bort den.");
+    await pool.query("DELETE FROM note_comments WHERE id = $1", [rows[0].id]);
+    res.json({ note: (await loadNotes(pool, req.user, note.id))[0] });
   });
 
   // "Ordna lapparna": forgets where the user put the given notes in one sort order.

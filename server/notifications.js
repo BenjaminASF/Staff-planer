@@ -42,7 +42,7 @@ const NOTIFICATION_PAGE_SIZE = 50;
 const NOT_A_CHANGE = new Set(["backup:Backup exporterad"]);
 
 // Each note is also sent as a push notification to the user's devices (see push.js).
-const PUSH_KINDS = Object.freeze({ noteShared: "note", noteAdded: "note", adminChange: "update" });
+const PUSH_KINDS = Object.freeze({ noteShared: "note", noteAdded: "note", noteComment: "noteComment", adminChange: "update" });
 
 async function addNotifications(db, userIds, { kind, actorName = "", title = "", detail = "", noteId = null }) {
   const recipients = [...new Set(userIds)].filter(Boolean);
@@ -57,7 +57,7 @@ async function addNotifications(db, userIds, { kind, actorName = "", title = "",
     added.push({ userId, notificationId: id });
   }
   const pushKind = PUSH_KINDS[kind];
-  if (pushKind) await queuePush(db, added, { kind: pushKind, key: pushKind === "note" ? `note:${noteId}` : pushKind });
+  if (pushKind) await queuePush(db, added, { kind: pushKind, key: noteId ? `${pushKind}:${noteId}` : pushKind });
   return recipients.length;
 }
 
