@@ -14,7 +14,7 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Ändra sin egen profil (namn, telefon, e-post, status, lösenord) | ✓ | ✓ | ✓ | ✓ | ✓ |
 | Se andra skifts schema och rastplan (endast läsning) | ✓ | ✓ | | | |
 | Ändra schema, rast och produktion | Alla skift | Eget skift | Eget skift | | |
-| Registrera maskinsvinn, plus-/minuslåda och kommentarer på sidan Produktion | Alla skift | Eget skift | Eget skift | Eget skift, idag och igår, på dagar som redan påbörjats | |
+| Registrera maskinsvinn, plus-/minuslåda och kommentarer på sidan Produktion | Alla skift | Eget skift | Eget skift | Eget skift, idag och igår | |
 | Se vem som skrev en kommentar på sidan Produktion | ✓ | ✓ | | | |
 | Ändra skiftets dagliga produktionsmål | ✓ | ✓ | | | |
 | Dela veckans schema med operatörerna (**Dela schema**) | Alla skift | Eget skift | Eget skift | | |
@@ -26,7 +26,7 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Hantera alla profiler: namn, telefon, status, skift, användarnamn, roll och lösenord | ✓ | | | | |
 | Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | Eget skift | | |
 | Ta bort användare från sidan Användare | ✓ | | | | |
-| Chatt med text och bilder | ✓ | ✓ | ✓ | | |
+| Chatt med text och bilder | ✓ | ✓ | ✓ | ✓ | |
 | Egna anteckningar på anslagstavlan (**Anteckningar → Mina anteckningar**) | ✓ | ✓ | ✓ | ✓ | |
 | Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Alla skift | Eget skift | Eget skift | Alla skift | |
 | Kommentera delade anteckningar som man är med på | ✓ | ✓ | ✓ | ✓ | |
@@ -100,9 +100,11 @@ Allt som skrivs in på sidan **Produktion** sparas automatiskt. Varje dag sparas
 
 Skiftledare kan aldrig ändra uppgifter (namn, företag, telefon, status eller inloggning) för admin eller en annan skiftledare, inte ens i samma skift. Höger hand kan bara ändra uppgifter för operatörer och personal utan inloggning.
 
-**Senior operatör** är en operatör som också registrerar svinn och kommentarer på sidan **Produktion**. I övrigt har rollen exakt samma gränssnitt och behörigheter som en vanlig operatör. Den räknas som operatör vid bemanning och schemaläggning, ser schemat när veckan är delad och får samma mejl och notiser som operatörer. På sidan Produktion ser en senior operatör sitt eget skifts produktion men kan bara ändra **Maskinsvinn (KG)**, **Plus-/minuslåda (KG)** och **Kommentar**. Det går bara för idag och föregående kalenderdag (även över ett månadsskifte), och bara på dagar som admin, skiftledaren eller höger hand redan har påbörjat. Äldre dagar, resultat, operatörer, mål, fabriksrekord och historik är skrivskyddade. Servern slår ihop det en senior operatör sparar med det som redan är sparat, så inget annat kan ändras, och dagarna räknas i arbetsplatsens tidszon. Admin ger rollen till vem som helst och skiftledaren till personal i sitt eget skift. Höger hand kan varken ge eller ta bort rollen.
+**Senior operatör** är en operatör som också registrerar svinn och kommentarer på sidan **Produktion**. I övrigt har rollen samma gränssnitt och behörigheter som en vanlig operatör, med ett undantag till: senior operatörer använder chatten som höger hand, kan väljas som mottagare och får samma pushnotiser för chatten. Den räknas som operatör vid bemanning och schemaläggning, ser schemat när veckan är delad och får samma mejl och notiser som operatörer. På sidan Produktion ser en senior operatör sitt eget skifts produktion men kan bara ändra **Maskinsvinn (KG)**, **Plus-/minuslåda (KG)** och **Kommentar**. Det går för idag och föregående kalenderdag (även över ett månadsskifte), både innan och efter att boxresultatet har registrerats. Fyller en senior operatör i en dag som ingen har påbörjat skapas dagen med 0 box tills skiftledaren eller höger hand registrerar resultatet. Äldre dagar, boxresultat, antal dosor, operatörer, mål, fabriksrekord och historik är skrivskyddade, och servern avvisar allt annat än de tre fälten. Dagarna räknas i arbetsplatsens tidszon. Admin ger rollen till vem som helst och skiftledaren till personal i sitt eget skift. Höger hand kan varken ge eller ta bort rollen.
 
-Servern sparar vem som skrev varje kommentar på sidan Produktion, oavsett roll. Bara **admin och skiftledare** ser vem det var ("Skrivet av …" under kommentaren). Höger hand, senior operatörer och operatörer ser kommentaren men inte vem som skrev den. Servern tar bort uppgiften innan produktionen skickas till dem, och realtidsuppdateringarna om produktionen säger inte vem som sparade. Kommentarer från före ändringen har ingen sparad författare.
+Sidan Produktion sparar bara de fält man själv har ändrat (`PATCH /api/production/<skift>/<datum>`). Allt annat på dagen behålls som det är sparat, så när till exempel höger hand registrerar box samtidigt som en senior operatör registrerar svinn på samma dag skriver ingen över den andras uppgifter. Operatören som schemat placerar på en maskin fylls bara i om ingen har valt någon där än.
+
+Servern sparar vem som senast ändrade varje fält (box, antal dosor, operatör, svinn, plus-/minuslåda och kommentar) och när, och vem som skrev varje kommentar, oavsett roll. Bara **admin och skiftledare** ser det: "Skrivet av …" under kommentaren och "Senast ändrat · Box: … · Svinn: … · Plus/minus: …" under maskinen. Höger hand, senior operatörer och operatörer ser uppgifterna men inte vem som ändrade dem. Servern tar bort uppgiften innan produktionen skickas till dem, och realtidsuppdateringarna om produktionen säger inte vem som sparade. Ändringar från innan detta infördes har ingen sparad författare.
 
 **Höger hand** är skiftledarens assistent och tar över ansvaret när skiftledaren inte är på plats. Höger hand arbetar bara i sitt eget skift: ändrar schemat, lägger till operatörer, läser och skriver i chatten och registrerar dagens produktion, men kan inte ändra det dagliga målet eller maskiner och inställningar som gäller alla skift. Höger hand kan ändra operatörernas uppgifter i skiftet, men inte skiftledarens eller adminens.
 
@@ -196,7 +198,7 @@ När man stänger ett informationsmeddelande (sidtipsen och utbildningspåminnel
 
 ### Ljudnotiser
 
-Appen spelar ett kort ljud när någon annan skickar ett meddelande i chatten, utan att man behöver ladda om sidan. **Admin och skiftledare** hör också när någon annan ändrar schemat eller rastplanen för ens eget skift (eller skiftet man tittar på). **Höger hand och operatörer** hör bara när deras eget schema ändras (tillsammans med notisen om det, se nedan) och när en vecka delas. Egna ändringar ger inget ljud, och en sparning som ändrar flera saker samtidigt ger bara ett ljud, även med flera flikar öppna.
+Appen spelar ett kort ljud när någon annan skickar ett meddelande i chatten, utan att man behöver ladda om sidan. **Admin och skiftledare** hör också när någon annan ändrar schemat eller rastplanen för ens eget skift (eller skiftet man tittar på). **Höger hand, senior operatörer och operatörer** hör bara när deras eget schema ändras (tillsammans med notisen om det, se nedan) och när en vecka delas. Egna ändringar ger inget ljud, och en sparning som ändrar flera saker samtidigt ger bara ett ljud, även med flera flikar öppna.
 
 Ljudnotiserna är på från början och stängs av eller slås på under **Min profil → Ljudnotiser**, där det också finns en knapp för att testa ljudet. Valet gäller den enhet man använder. Webbläsare spelar bara upp ljud efter att man har klickat någonstans på sidan.
 
@@ -215,7 +217,7 @@ Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan r
 Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De är ett komplement till notiserna i appen, som finns kvar precis som förut. En pushnotis skickas bara till dem det gäller, aldrig till den som själv gjorde ändringen:
 
 - **Schema och placering:** när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
-- **Chatt** (admin, skiftledare och höger hand): privata meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
+- **Chatt** (admin, skiftledare, höger hand och senior operatörer): privata meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
 - **Anteckningar:** när en lapp delas med en, och när någon kommenterar en lapp man är med på (högst en notis per lapp varannan minut).
 - **Viktiga uppdateringar** (skiftledare): samma som notiserna i appen om admins ändringar, högst en var femte minut.
 
@@ -236,7 +238,7 @@ Utan nycklarna är pushnotiser avstängda, och allt annat fungerar som vanligt. 
 
 ### Chatt
 
-Admin och skiftledare har en gemensam chatt bakom knappen i nedre högra hörnet. Där kan man skicka text och bilder, och man kan också klistra in en bild direkt. Nya meddelanden visas med en röd siffra på knappen och en kort förhandsvisning. Nya meddelanden syns direkt; som reserv kollar appen också var 15:e sekund, och var 4:e sekund när chatten är öppen.
+Admin, skiftledare, höger hand och senior operatörer har en gemensam chatt bakom knappen i nedre högra hörnet, för alla skift. Man skriver till alla eller väljer en person under **Till** för ett privat meddelande. Vanliga operatörer har ingen chatt. Där kan man skicka text och bilder, och man kan också klistra in en bild direkt. Nya meddelanden visas med en röd siffra på knappen och en kort förhandsvisning. Nya meddelanden syns direkt; som reserv kollar appen också var 15:e sekund, och var 4:e sekund när chatten är öppen.
 
 Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och sparas sedan i databasen. Man kan ta bort sina egna meddelanden, och admin kan ta bort alla. Meddelanden tas aldrig bort automatiskt, och chatten ingår inte i appens backupfil.
 

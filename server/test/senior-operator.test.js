@@ -7,8 +7,6 @@ const { currentWeekKey } = require("../store");
 const PASSWORD = "losenord123";
 
 const settle = () => new Promise(resolve => setTimeout(resolve, 300));
-const machine = (personId, extra = {}) => ({ personId, personName: "", cans: null, result: 40, waste: 1, plusMinus: 0.5, comment: "", ...extra });
-const day = (date, machines) => ({ date, target: 160, total: Object.values(machines).reduce((sum, item) => sum + item.result, 0), machines, updatedAt: "2026-01-01T00:00:00.000Z" });
 const copy = value => JSON.parse(JSON.stringify(value));
 
 describe("senior operator", () => {
@@ -24,6 +22,9 @@ describe("senior operator", () => {
     const current = (await read(admin, shiftId)).documents.productionRecords;
     return client.put(recordsUrl(shiftId), { value, baseVersion: current?.version || 0 });
   };
+  const change = (client, date, machines, extra = {}, shiftId = dayShift.id) =>
+    client.patch(`/api/production/${shiftId}/${date}`, { machines, ...extra });
+  const entryOf = async (client, date, machineName) => (await read(client)).documents.productionRecords.value[date].machines[machineName];
   const stored = async () => (await server.pool.query(
     "SELECT value FROM documents WHERE scope = $1 AND key = 'productionRecords'", [dayShift.id]
   )).rows[0].value;
@@ -88,7 +89,6 @@ describe("senior operator", () => {
     assert.deepEqual(reads.data.forbidden, ["scheduleTemplates"]);
     assert.deepEqual(reads.data.unshared, ["schedule:2026-10-12"], "sees the schedule only once it is shared");
     assert.equal((await senior.put(`/api/documents/${dayShift.id}/schedule:2026-10-12`, { value: {}, baseVersion: 0 })).status, 403);
-    assert.equal((await senior.get("/api/chat/messages")).status, 403);
     assert.equal((await senior.patch(`/api/people/${seniorPerson.id}`, { name: "Annat Namn" })).status, 403);
     assert.equal((await senior.patch(`/api/people/${seniorPerson.id}`, { phone: "070-1" })).status, 200);
     const competence = await senior.get("/api/documents?scope=global&keys=machineSkills,productionSettings");
@@ -104,96 +104,158 @@ describe("senior operator", () => {
     assert.deepEqual(rows.map(row => row.kind), ["share"]);
   });
 
-  test("reads the production of their own shift only, and changes nothing before a manager has started the day", async () => {
+  test("uses the chat: is written to privately and in group messages, and answers", async () => {
+    assert.equal((await operator.get("/api/chat/messages")).status, 403, "operators still have no chat");
+    const members = (await leader.get("/api/chat/members")).data.members.map(member => member.name);
+    assert.ok(members.includes("Sven Senior") && members.includes("Kim Kväll"), "senior operators can be chosen as recipients");
+    assert.ok(!members.includes("Anna Operatör"));
+    assert.ok((await senior.get("/api/chat/members")).data.members.some(member => member.name === "Lisa Ledare"));
+
+    const stream = await openStream(server, senior);
+    let toSenior;
+    try {
+      await stream.waitFor(event => event.type === "ready");
+      await settle();
+      await server.pool.query("DELETE FROM push_outbox");
+      toSenior = await leader.post("/api/chat/messages", { text: "Kan du kolla GD2?", recipientId: seniorUser.id });
+      assert.equal(toSenior.status, 201);
+      await stream.waitFor(event => event.type === "change" && event.data.type === "chat");
+      assert.equal((await leader.post("/api/chat/messages", { text: "Möte kl 14" })).status, 201);
+      const pushes = (await server.pool.query("SELECT kind FROM push_outbox WHERE user_id = $1 ORDER BY kind", [seniorUser.id])).rows;
+      assert.deepEqual(pushes.map(row => row.kind), ["chat", "chatAll"], "a push for the private message and for messages to everyone");
+    } finally {
+      stream.close();
+    }
+
+    const unread = (await senior.get("/api/chat/unread")).data;
+    assert.equal(unread.count, 2);
+    const seen = (await senior.get("/api/chat/messages")).data.messages.map(message => message.text);
+    assert.deepEqual(seen, ["Kan du kolla GD2?", "Möte kl 14"]);
+    assert.deepEqual((await otherSenior.get("/api/chat/messages")).data.messages.map(message => message.text), ["Möte kl 14"],
+      "private messages stay private");
+
+    const reply = await senior.post("/api/chat/messages", { text: "Ja, fixat", recipientId: leaderUser.id });
+    assert.equal(reply.status, 201);
+    assert.ok((await leader.get("/api/chat/messages")).data.messages.some(message => message.text === "Ja, fixat" && message.recipientId === leaderUser.id));
+    assert.equal((await senior.delete(`/api/chat/messages/${reply.data.message.id}`)).status, 200, "removes their own message");
+    assert.equal((await senior.delete(`/api/chat/messages/${toSenior.data.message.id}`)).status, 403, "but not others'");
+  });
+
+  test("reads the production of their own shift only, and may start today's or yesterday's day", async () => {
     assert.deepEqual((await read(senior)).forbidden, []);
     assert.deepEqual((await read(senior, eveningShift.id)).forbidden, ["productionRecords"]);
     assert.deepEqual((await read(operator)).forbidden, ["productionRecords"], "operators still do not");
 
-    const notStarted = await save(senior, { [today]: day(today, { GD1: machine("", { result: 0, waste: 2 }) }) });
-    assert.equal(notStarted.status, 403);
+    assert.equal((await change(senior, twoDaysAgo, { GD1: { waste: 1 } })).status, 403, "older days are read-only");
+    assert.equal((await change(senior, "29-10-2026", { GD1: { waste: 1 } })).status, 400);
+    const started = await change(senior, today, { GD1: { waste: 2 } });
+    assert.equal(started.status, 200, JSON.stringify(started.data));
+    const day = (await stored())[today];
+    assert.equal(day.machines.GD1.waste, 2, "nobody has registered results yet");
+    assert.equal(day.total, 0);
+    assert.ok(!("result" in day.machines.GD1));
+    assert.ok(!("edits" in started.data.value[today].machines.GD1), "the answer does not say who changed what");
 
-    const records = {
-      [today]: day(today, { GD1: machine(annaPerson.id), GD2: machine(annaPerson.id) }),
-      [yesterday]: day(yesterday, { GD1: machine(annaPerson.id) }),
-      [twoDaysAgo]: day(twoDaysAgo, { GD1: machine(annaPerson.id) })
-    };
-    assert.equal((await save(leader, records)).status, 200);
-    assert.equal((await save(senior, { ...records, [today]: undefined, "2020-01-01": day("2020-01-01", {}) })).status, 403,
-      "no new days, whatever the date");
-    assert.equal((await save(senior, records, eveningShift.id)).status, 403);
+    assert.equal((await change(otherSenior, today, { GD1: { waste: 1 } })).status, 403, "not another shift");
+    assert.equal((await change(senior, today, { GD1: { waste: 1 } }, {}, eveningShift.id)).status, 403);
+    assert.equal((await change(operator, today, { GD1: { waste: 1 } })).status, 403);
   });
 
-  test("records only waste, plus/minus and comments, today and yesterday", async () => {
-    const before = await stored();
-    const value = copy((await read(senior)).documents.productionRecords.value);
-    Object.assign(value[today].machines.GD1, { waste: 3.25, plusMinus: 1, comment: "Stopp i matningen", result: 999, personId: "", cans: 5 });
-    Object.assign(value[today], { target: 1, total: 999 });
-    value[yesterday].machines.GD1.waste = 4;
-    value[today].machines.GD9 = machine("", { waste: 7 });
-    delete value[twoDaysAgo];
-    const saved = await save(senior, value);
-    assert.equal(saved.status, 200, JSON.stringify(saved.data));
-
-    const after = await stored();
-    assert.equal(after[today].machines.GD1.waste, 3.25);
-    assert.equal(after[today].machines.GD1.plusMinus, 1);
-    assert.equal(after[today].machines.GD1.comment, "Stopp i matningen");
-    assert.equal(after[yesterday].machines.GD1.waste, 4);
-    for (const field of ["result", "personId", "cans"]) assert.deepEqual(after[today].machines.GD1[field], before[today].machines.GD1[field], field);
-    assert.equal(after[today].total, before[today].total, "results and totals stay as they were");
-    assert.equal(after[today].target, before[today].target);
-    assert.equal(after[today].machines.GD9, undefined, "no new machines");
-    assert.deepEqual(after[twoDaysAgo], before[twoDaysAgo], "days left out are kept");
-
-    const older = copy((await read(senior)).documents.productionRecords.value);
-    older[twoDaysAgo].machines.GD1.comment = "För sent";
-    assert.equal((await save(senior, older)).status, 403, "older days are read-only");
-    const negative = copy((await read(senior)).documents.productionRecords.value);
-    negative[today].machines.GD1.waste = -1;
-    assert.equal((await save(senior, negative)).status, 400);
+  test("never changes results, operators, targets or the factory record", async () => {
+    for (const fields of [{ result: 5 }, { cans: 240 }, { personId: annaPerson.id }, { waste: 1, result: 5 }]) {
+      assert.equal((await change(senior, today, { GD1: fields })).status, 403, JSON.stringify(fields));
+    }
+    assert.equal((await change(senior, today, { GD1: { waste: 1 } }, { target: 1 })).status, 403);
+    assert.equal((await change(senior, today, { GD1: { waste: -1 } })).status, 400);
+    assert.equal((await change(senior, today, { GD1: { color: "red" } })).status, 400);
+    assert.equal((await senior.put(recordsUrl(dayShift.id), { value: {}, baseVersion: (await read(admin)).documents.productionRecords.version })).status, 403,
+      "the whole document is not saved by senior operators");
     assert.equal((await senior.put("/api/documents/global/productionSettings", { value: { factoryRecord: 1 }, baseVersion: 0 })).status, 403);
     assert.equal((await senior.post("/api/audit", { scope: dayShift.id, type: "production", title: "x" })).status, 403);
+    assert.equal((await stored())[today].machines.GD1.waste, 2, "nothing was saved");
   });
 
-  test("only admins and shift leaders see who wrote a comment, and the author is kept", async () => {
-    const entry = async client => (await read(client)).documents.productionRecords.value[today].machines.GD1;
-    assert.deepEqual([(await entry(admin)).commentByName, (await entry(leader)).commentByName], ["Sven Senior", "Sven Senior"]);
-    assert.equal((await entry(leader)).commentBy, seniorUser.id);
+  test("box results and waste are saved side by side, never over each other", async () => {
+    const byLeader = await change(leader, today, {
+      GD1: { personId: annaPerson.id, cans: null, result: 40, waste: 2, plusMinus: 0, comment: "" }, GD2: { result: 30 }
+    }, { target: 160 });
+    assert.equal(byLeader.status, 200, JSON.stringify(byLeader.data));
+    assert.equal((await change(senior, today, { GD1: { plusMinus: 1.5, comment: "Stopp i matningen" } })).status, 200);
+    // The right hand's page still shows the day before the senior operator's change.
+    assert.equal((await change(rightHand, today, { GD2: { result: 35 } })).status, 200);
+    assert.equal((await change(senior, today, { GD2: { waste: 0.75 } })).status, 200);
+
+    const day = (await stored())[today];
+    assert.deepEqual(
+      [day.machines.GD1.result, day.machines.GD1.waste, day.machines.GD1.plusMinus, day.machines.GD1.comment],
+      [40, 2, 1.5, "Stopp i matningen"]
+    );
+    assert.deepEqual([day.machines.GD2.result, day.machines.GD2.waste], [35, 0.75]);
+    assert.equal(day.total, 75, "the total follows the results only");
+    assert.equal(day.target, 160);
+    assert.equal(day.machines.GD1.personName, "Anna Operatör", "the name comes from the server");
+
+    assert.equal((await change(leader, yesterday, { GD1: { result: 50 } })).status, 200);
+    assert.equal((await change(senior, yesterday, { GD1: { waste: 4 } })).status, 200, "yesterday, after the results");
+    assert.deepEqual([(await stored())[yesterday].machines.GD1.result, (await stored())[yesterday].machines.GD1.waste], [50, 4]);
+  });
+
+  test("two managers starting the same day keep each other's results", async () => {
+    const date = "2026-10-20";
+    const defaults = { GD1: { personId: annaPerson.id, cans: null, result: 0 }, GD2: { personId: "", cans: null, result: 0 } };
+    assert.equal((await change(leader, date, { GD1: { result: 40 } }, { defaults, target: 160 })).status, 200);
+    // The right hand's page opened before the day existed, so it shows GD1 empty.
+    assert.equal((await change(rightHand, date, { GD2: { result: 30 } }, { defaults: { ...defaults, GD1: { personId: "", cans: null, result: 0 } }, target: 160 })).status, 200);
+    const day = (await stored())[date];
+    assert.deepEqual([day.machines.GD1.result, day.machines.GD2.result, day.total], [40, 30, 70]);
+    assert.equal(day.machines.GD1.personId, annaPerson.id, "defaults fill only what is empty");
+    assert.equal((await change(senior, today, { GD1: { waste: 1 } }, { defaults })).status, 403, "senior operators send no defaults");
+  });
+
+  test("only admins and shift leaders see who changed each field and when", async () => {
+    for (const client of [admin, leader]) {
+      const entry = await entryOf(client, today, "GD1");
+      assert.equal(entry.edits.waste.name, "Sven Senior", "the senior operator started the day with the waste");
+      assert.equal(entry.edits.plusMinus.name, "Sven Senior");
+      assert.equal(entry.edits.comment.name, "Sven Senior");
+      assert.equal(entry.edits.result.name, "Lisa Ledare");
+      assert.equal(entry.commentByName, "Sven Senior");
+      assert.ok(!Number.isNaN(Date.parse(entry.edits.waste.at)));
+    }
+    assert.equal((await entryOf(leader, today, "GD2")).edits.result.name, "Hanna Hand");
     for (const client of [rightHand, senior]) {
-      const visible = await entry(client);
-      assert.equal(visible.comment, "Stopp i matningen", "the comment itself is shown");
-      assert.ok(!("commentBy" in visible) && !("commentByName" in visible) && !("commentAt" in visible));
+      const entry = await entryOf(client, today, "GD1");
+      assert.equal(entry.comment, "Stopp i matningen", "the comment itself is shown");
+      for (const field of ["edits", "commentBy", "commentByName", "commentAt"]) assert.ok(!(field in entry), field);
     }
 
-    // A right hand saving the day, without seeing the author, keeps it.
-    const handValue = copy((await read(rightHand)).documents.productionRecords.value);
-    handValue[today].machines.GD2.result = 50;
-    assert.equal((await save(rightHand, handValue)).status, 200);
-    assert.equal((await stored())[today].machines.GD1.commentBy, seniorUser.id);
+    // Saving the same value again does not make you the one who changed it.
+    assert.equal((await change(leader, today, { GD1: { waste: 2 } })).status, 200);
+    assert.equal((await entryOf(leader, today, "GD1")).edits.waste.name, "Sven Senior");
 
-    // A new comment gets a new author, whatever the client says.
-    const forged = copy((await read(rightHand)).documents.productionRecords.value);
-    Object.assign(forged[today].machines.GD2, { comment: "Bytt rulle", commentBy: leaderUser.id, commentByName: "Lisa Ledare" });
-    assert.equal((await save(rightHand, forged)).status, 200);
-    const gd2 = (await read(leader)).documents.productionRecords.value[today].machines.GD2;
-    assert.equal(gd2.commentBy, rightHandUser.id);
-    assert.equal(gd2.commentByName, "Hanna Hand");
-    assert.ok(!("commentByName" in (await stored())[today].machines.GD2), "names are not stored");
+    // Whole-document saves keep the authors and ignore what the client says about them.
+    const value = copy((await read(leader)).documents.productionRecords.value);
+    value[today].machines.GD2.edits = { result: { by: seniorUser.id, at: "2020-01-01T00:00:00.000Z" } };
+    value[today].machines.GD2.comment = "Bytt rulle";
+    value[today].machines.GD2.commentBy = seniorUser.id;
+    assert.equal((await save(leader, value)).status, 200);
+    const gd2 = (await stored())[today].machines.GD2;
+    assert.equal(gd2.edits.result.by, rightHandUser.id);
+    assert.equal(gd2.commentBy, leaderUser.id);
+    assert.equal(gd2.edits.comment.by, leaderUser.id);
+    assert.ok(!("name" in gd2.edits.result) && !("commentByName" in (await stored())[today].machines.GD1), "names are not stored");
+    assert.equal((await stored())[today].machines.GD1.edits.waste.by, seniorUser.id);
 
-    // Admins and leaders saving the records they read do not change the authors.
-    assert.equal((await save(leader, (await read(leader)).documents.productionRecords.value)).status, 200);
-    assert.equal((await stored())[today].machines.GD1.commentBy, seniorUser.id);
-
-    const cleared = copy((await read(senior)).documents.productionRecords.value);
-    cleared[today].machines.GD2.comment = "";
-    assert.equal((await save(senior, cleared)).status, 200);
-    assert.ok(!("commentBy" in (await stored())[today].machines.GD2), "an empty comment has no author");
+    assert.equal((await change(senior, today, { GD2: { comment: "" } })).status, 200);
+    const cleared = await entryOf(leader, today, "GD2");
+    assert.ok(!("commentBy" in cleared), "an empty comment has no author");
+    assert.equal(cleared.edits.comment.name, "Sven Senior", "but who cleared it is kept");
   });
 
-  test("a version conflict does not show the authors either", async () => {
-    const result = await senior.put(recordsUrl(dayShift.id), { value: {}, baseVersion: 1 });
+  test("a version conflict does not show who changed what either", async () => {
+    const result = await rightHand.put(recordsUrl(dayShift.id), { value: {}, baseVersion: 1 });
     assert.equal(result.status, 409);
-    assert.ok(!JSON.stringify(result.data.current).includes("commentBy"));
+    assert.ok(!/commentBy|edits/.test(JSON.stringify(result.data.current)));
   });
 
   test("live updates tell only admins and shift leaders who saved the records", async () => {
@@ -203,9 +265,7 @@ describe("senior operator", () => {
       await seniorStream.waitFor(event => event.type === "ready");
       await leaderStream.waitFor(event => event.type === "ready");
       await settle();
-      const value = copy((await read(senior)).documents.productionRecords.value);
-      value[today].machines.GD1.comment = "Ny kommentar";
-      assert.equal((await save(senior, value)).status, 200);
+      assert.equal((await change(senior, today, { GD1: { comment: "Ny kommentar" } })).status, 200);
       const isRecords = event => event.type === "change" && event.data.key === "productionRecords";
       assert.equal((await leaderStream.waitFor(isRecords)).data.by, seniorUser.id);
       assert.ok(!("by" in (await seniorStream.waitFor(isRecords)).data));

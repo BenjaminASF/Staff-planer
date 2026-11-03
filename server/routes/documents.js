@@ -6,7 +6,7 @@ const {
   sharedFlagKey, weekRequiringShare, mayChangeProductionTargets, evaluatesEveryone, recordsOnlyWaste
 } = require("../permissions");
 const { isPersonScoped, evaluatedPersonIds, onlyFor, mergeFor } = require("../evaluations");
-const { wasteEditableDates, mergeWasteChanges, stampCommentAuthors, recordsFor } = require("../production");
+const { DATE_PATTERN, wasteEditableDates, applyProductionChanges, stampCommentAuthors, recordsFor } = require("../production");
 const {
   readDocuments, writeDocument, renameWorkItemReferences, countWorkItemUsage, createSafetySnapshot,
   addAuditEvent
@@ -24,6 +24,20 @@ async function assertScopeExists(db, scope) {
 }
 
 const isProductionRecords = (scope, key) => scope !== "global" && key === "productionRecords";
+
+// Locks a shift document for the rest of the transaction, creating it when it does not exist yet.
+async function lockDocument(client, scope, key, userId) {
+  const select = () => client.query("SELECT value, version, updated_at FROM documents WHERE scope = $1 AND key = $2 FOR UPDATE", [scope, key]);
+  let { rows } = await select();
+  if (!rows.length) {
+    await client.query(
+      "INSERT INTO documents (scope, key, value, updated_by) VALUES ($1, $2, '{}'::jsonb, $3) ON CONFLICT (scope, key) DO NOTHING",
+      [scope, key, userId]
+    );
+    ({ rows } = await select());
+  }
+  return { value: rows[0].value, version: rows[0].version, updatedAt: rows[0].updated_at };
+}
 
 // Returns the week of a "scheduleShared:<week>" key, otherwise null.
 function sharedWeekKey(key) {
@@ -92,9 +106,9 @@ function documentRoutes({ pool, mailer, appUrl }) {
       if (!value) throw new HttpError(403, "Du kan bara testa och bedöma operatörerna i ditt eget skift.");
     }
     if (isProductionRecords(scope, key)) {
+      // Senior operators save only single fields, through PATCH /production.
+      if (recordsOnlyWaste(req.user, scope, key)) throw new HttpError(403, "Svinn och kommentarer sparas från sidan Produktion. Ladda om sidan.");
       const stored = (await readDocuments(pool, scope, [key]))[key]?.value;
-      // Senior operators change only waste, plus/minus and comments, today and yesterday.
-      if (recordsOnlyWaste(req.user, scope, key)) value = mergeWasteChanges(stored, value, wasteEditableDates());
       value = stampCommentAuthors(stored, value, req.user.id);
     }
     const sharedWeek = sharedWeekKey(key);
@@ -128,6 +142,40 @@ function documentRoutes({ pool, mailer, appUrl }) {
         .catch(error => console.error("Schedule change notification failed:", error));
     }
     res.json(saved);
+  });
+
+  // Saves the changed fields of one production day:
+  // { machines: { <machine>: { <field>: value } }, target? }. Fields left out stay as they are,
+  // so people working on the same day at once keep each other's changes. Returns the records
+  // as the user may see them.
+  router.patch("/production/:scope/:date", async (req, res) => {
+    const { scope, date } = req.params;
+    const key = "productionRecords";
+    if (scope === "global" || !DATE_PATTERN.test(date)) throw new HttpError(400, "Okänt datum.");
+    if (!canWriteDocument(req.user, scope, key)) {
+      throw new HttpError(403, "Du har inte behörighet att ändra det här. Du kan bara ändra ditt eget skift.");
+    }
+    await assertScopeExists(pool, scope);
+    const changes = req.body || {};
+    const personIds = [changes.machines, changes.defaults]
+      .flatMap(machines => Object.values(machines && typeof machines === "object" ? machines : {}))
+      .map(fields => fields?.personId).filter(id => typeof id === "string" && id);
+    const saved = await withTransaction(pool, async client => {
+      const current = await lockDocument(client, scope, key, req.user.id);
+      const { rows } = personIds.length
+        ? await client.query("SELECT id, name FROM people WHERE id = ANY($1::text[])", [personIds])
+        : { rows: [] };
+      const records = applyProductionChanges(current.value, {
+        date, changes, userId: req.user.id,
+        seniorOnly: recordsOnlyWaste(req.user, scope, key), editableDates: wasteEditableDates(),
+        personNames: new Map(rows.map(row => [row.id, row.name]))
+      });
+      if (!records) return current;
+      const written = await writeDocument(client, { scope, key, value: records, baseVersion: current.version, userId: req.user.id });
+      if (!written) throw new HttpError(409, "Någon annan har ändrat samma sak samtidigt. Försök igen.");
+      return { value: records, ...written };
+    });
+    res.json({ value: await recordsFor(pool, req.user, saved.value), version: saved.version, updatedAt: saved.updatedAt });
   });
 
   // GET /api/audit?scopes=global,<shiftId>&since=<ISO date>

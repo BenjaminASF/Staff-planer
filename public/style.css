@@ -5422,6 +5422,7 @@ button {
 
 .production-entry.waste-only .production-machine-row :is(input, select):disabled { background: #f1f4f8; background: light-dark(#f1f4f8, #161b23); color: #7a8699; color: light-dark(#7a8699, #7d8798); cursor: not-allowed; }
 .production-role-note { margin: 0 0 12px; padding: 8px 12px; border-radius: 10px; background: #eef2f7; background: light-dark(#eef2f7, #1c222d); color: #52627a; color: light-dark(#52627a, #abb4c4); font-size: 13px; font-weight: 600; }
+.production-field-edits { grid-column: 1 / -1; color: #64748b; color: light-dark(#64748b, #94a3b8); font-size: 12px; font-weight: 500; }
 .production-comment-author { display: block; margin-top: 4px; color: #64748b; color: light-dark(#64748b, #94a3b8); font-size: 12px; font-weight: 500; }
 .production-save-status {
   align-self: center;
@@ -5488,11 +5489,20 @@ body.has-chat .app-toast { bottom: 92px; }
 .chat-input-row { display: flex; align-items: flex-end; gap: 7px; }
 .chat-attach { display: grid; flex: 0 0 auto; width: 40px; height: 40px; margin: 0; place-items: center; border: 1px solid var(--border); border-radius: 11px; color: var(--muted); cursor: pointer; }
 .chat-attach:hover { color: var(--primary-hover); border-color: var(--primary); }
-.chat-input-row textarea { flex: 1; min-height: 40px; max-height: 120px; margin: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: 11px; background: transparent; color: var(--text); font: inherit; font-size: 13px; resize: none; }
-.chat-send { flex: 0 0 auto; min-height: 40px; }
-.chat-recipient { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--muted); font-size: 12px; font-weight: 700; }
-.chat-recipient select { flex: 1; min-width: 0; min-height: 32px; margin: 0; padding: 4px 8px; border: 1px solid var(--border); border-radius: 9px; background: transparent; color: var(--text); font: inherit; font-size: 13px; }
-.chat-form.is-private .chat-recipient select { border-color: #b45309; }
+.chat-input-row textarea { flex: 1; min-width: 0; min-height: 40px; max-height: 120px; margin: 0; padding: 9px 11px; border: 1px solid var(--border); border-radius: 11px; background: transparent; color: var(--text); font: inherit; font-size: 13px; resize: none; }
+.chat-send { flex: 0 0 auto; min-height: 40px; white-space: nowrap; }
+.chat-form { position: relative; grid-template-columns: minmax(0, 1fr); }
+.chat-recipient { display: flex; align-items: center; gap: 7px; justify-self: start; max-width: 100%; margin: 0; padding: 4px 6px 4px 11px; border-radius: 999px; background: rgba(180,83,9,.14); color: #b45309; color: light-dark(#b45309, #fbbf24); font-size: 12px; font-weight: 700; }
+.chat-recipient.hidden { display: none; }
+.chat-recipient-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-recipient-remove { flex: 0 0 auto; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: rgba(180,83,9,.18); color: inherit; font-size: 14px; line-height: 1; cursor: pointer; }
+.chat-recipient-remove:hover { background: rgba(180,83,9,.3); }
+.chat-form.is-private .chat-input-row textarea, .chat-form.is-private .chat-input-row textarea:focus { border-color: #b45309; }
+.chat-mentions { position: absolute; left: 10px; right: 10px; bottom: calc(100% - 4px); z-index: 2; max-height: 220px; margin: 0; padding: 5px; overflow-y: auto; list-style: none; border: 1px solid var(--border); border-radius: 12px; background: #fff; background: light-dark(#fff, #1b2230); box-shadow: 0 12px 30px rgba(15,23,42,.2); }
+.chat-mentions.hidden { display: none; }
+.chat-mention { padding: 8px 10px; border-radius: 8px; font-size: 13px; cursor: pointer; }
+.chat-mention.is-active, .chat-mention:hover { background: var(--primary-soft); }
+.chat-mention-empty { padding: 8px 10px; color: var(--muted); font-size: 12px; }
 .chat-private { padding: 1px 7px; border: 0; border-radius: 999px; background: rgba(180,83,9,.14); color: #b45309; color: light-dark(#b45309, #fbbf24); font: inherit; font-size: 10px; font-weight: 800; cursor: pointer; }
 .chat-message.is-private { outline: 1px dashed rgba(180,83,9,.55); outline-offset: -1px; }
 .chat-message.is-mine .chat-private { background: rgba(255,255,255,.22); color: inherit; }
@@ -7597,3 +7607,5 @@ span.sn-prio { cursor: default; }
 .temporary-credentials { margin: 0 0 14px; padding: 12px 14px; border-radius: 10px; background: light-dark(#f4f6fa, #161c27); font-size: 13px; white-space: pre-wrap; word-break: break-all; }
 .temporary-form .temporary-feature input[type="checkbox"] { flex: none; width: 18px; height: 18px; min-height: 0; margin: 2px 0 0; padding: 0; accent-color: #477bf7; }
 .temporary-form .temporary-feature span { text-align: left; }
+/* A private chat message: the send button turns amber, like the private label. */
+.chat-form.is-private .chat-send.btn.primary, .chat-form.is-private .chat-send.btn.primary:hover { border-color: transparent; background: #b45309; color: #fff; }
