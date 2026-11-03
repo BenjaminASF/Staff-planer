@@ -30,11 +30,16 @@
 //                status and password. Their name and e-mail address are changed
 //                only by an admin, shift leader or right hand.
 //
-// Anteckningar (notes): everyone has a private board. Admins, shift leaders and right
-// hands also write group notes and choose exactly who sees each one: shift leaders and
-// right hands people in their own shift, admins anyone. Nobody else sees a group note,
-// admins included. Only the author changes a note's text, color and recipients; its
-// priority mark is set by the author and, on a group note they can see, by an admin.
+// Anteckningar (notes): operators have no notes at all. Everyone else has a private
+// board and writes group notes, choosing exactly who sees each one, one by one or a whole
+// shift. Recipients may have any role but operator: admins and senior operators share
+// with anyone in any shift, shift leaders and right hands with people in their own shift.
+// A whole shift means everyone in it but operators, including people who join it later.
+// Operators are kept off notes every time notes are read (noteAccessSql in store.js), so
+// this holds after a role change too. Nobody else sees a group note, admins included. Only the author changes a note's text,
+// color and recipients; everyone on a group note comments on it, and removes their own
+// comments. The priority mark is set by the author and, on a group note they can see, by
+// an admin.
 //
 // Produktion: who last changed each field and wrote each comment is saved with it. Only
 // admins and shift leaders see who that was (see production.js).
@@ -355,15 +360,26 @@ function canDeleteChatMessage(user, message) {
   return isAdmin(user) || (Boolean(message.user_id) && message.user_id === user?.id);
 }
 
+// Operators have no notes at all: no page, no board, no shared notes.
+function canUseNotes(user) {
+  return Boolean(user?.id) && ROLE_VALUES.includes(user.role) && user.role !== ROLES.OPERATOR && hasFeature(user, FEATURES.NOTES);
+}
+
 // Who may write group notes, and the shifts whose people they may share them with
 // (null means every shift).
 function canShareNotes(user) {
-  return isShiftManager(user) && hasFeature(user, FEATURES.NOTES);
+  return canUseNotes(user);
 }
 
 function noteShareShifts(user) {
-  if (isAdmin(user)) return null;
+  if (isAdmin(user) || user?.role === ROLES.SENIOR_OPERATOR) return null;
   return canShareNotes(user) && user.shiftId ? [user.shiftId] : [];
+}
+
+// The roles a user may put on their group notes: everyone with notes, so every role but operator.
+const NOTE_RECIPIENT_ROLES = Object.freeze(ROLE_VALUES.filter(role => role !== ROLES.OPERATOR));
+function noteRecipientRoles(user) {
+  return canShareNotes(user) ? [...NOTE_RECIPIENT_ROLES] : [];
 }
 
 function canEditNote(user, note) {
@@ -373,6 +389,15 @@ function canEditNote(user, note) {
 // `note` must be one the user can see.
 function canPrioritizeNote(user, note) {
   return canEditNote(user, note) || (note?.kind === "group" && isAdmin(user));
+}
+
+// `note` must be a group note the user can see.
+function canCommentNote(user, note) {
+  return canUseNotes(user) && note?.kind === "group";
+}
+
+function canDeleteNoteComment(user, comment) {
+  return Boolean(user?.id) && comment?.author_id === user.id;
 }
 
 function canManagePush(user) {
@@ -471,8 +496,12 @@ module.exports = {
   canDeleteAccount,
   canManagePush,
   canExportShiftBackup,
+  canUseNotes,
   canShareNotes,
   noteShareShifts,
+  noteRecipientRoles,
+  canCommentNote,
+  canDeleteNoteComment,
   canEditNote,
   canPrioritizeNote
 };

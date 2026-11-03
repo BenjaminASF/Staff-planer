@@ -8,10 +8,19 @@ const newId = () => crypto.randomUUID();
 // SQL condition matching documents that belong to a shift (not global, not personal).
 const SHIFT_SCOPE_SQL = `scope <> 'global' AND scope NOT LIKE '${PERSONAL_SCOPE_PREFIX}%'`;
 
+// Whether a viewer may see the note n. `id`, `role` and `shift` are SQL expressions for the
+// viewer's user id, role and shift id. The roles are read as they are now, so the rules in
+// permissions.js ("Anteckningar") hold even after someone changes role: operators see no
+// notes, and notes written by an operator are seen by nobody.
+function noteAccessSql({ id, role, shift }) {
+  const author = "(SELECT au.role FROM users au WHERE au.id = n.author_id)";
+  return `(${role} IS DISTINCT FROM 'operator' AND ${author} <> 'operator' AND (n.author_id = ${id} OR (n.kind = 'group'
+  AND (EXISTS (SELECT 1 FROM note_people np WHERE np.note_id = n.id AND np.user_id = ${id})
+       OR ${shift}::text = ANY(n.whole_shifts)))))`;
+}
+
 // Notes the user may see, for a query on notes n. $1 is the user's id, $2 their shift id (or null).
-const NOTE_VISIBLE_SQL = `(n.author_id = $1 OR (n.kind = 'group' AND (
-  EXISTS (SELECT 1 FROM note_people np WHERE np.note_id = n.id AND np.user_id = $1)
-  OR $2::text = ANY(n.whole_shifts))))`;
+const NOTE_VISIBLE_SQL = noteAccessSql({ id: "$1", role: "(SELECT vu.role FROM users vu WHERE vu.id = $1)", shift: "$2" });
 
 const serializeShift = row => ({ id: row.id, name: row.name, color: row.color || "", sortOrder: row.sort_order });
 
@@ -376,6 +385,7 @@ module.exports = {
   currentWeekKey,
   isoWeekNumber,
   NOTE_VISIBLE_SQL,
+  noteAccessSql,
   productionRetentionStart,
   purgeExpiredProductionRecords,
   renameWorkItemReferences,

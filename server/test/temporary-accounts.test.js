@@ -162,10 +162,14 @@ describe("temporary accounts", () => {
     assert.equal((await client.get("/api/notes")).status, 403);
     assert.equal((await client.post("/api/notes", { text: "hej" })).status, 403);
 
-    const { client: withNotes } = await signedIn("med-anteckningar", { features: ["notes"] });
+    const { client: operatorWithNotes } = await signedIn("med-anteckningar", { features: ["notes"] });
+    assert.equal((await operatorWithNotes.get("/api/notes")).status, 403, "operators have no notes, even with the function ticked");
+    assert.equal((await operatorWithNotes.post("/api/notes", { text: "egen lapp" })).status, 403);
+
+    const { client: withNotes } = await signedIn("senior-anteckningar", { role: "senior_operator", features: ["notes"] });
     assert.equal((await withNotes.get("/api/notes")).status, 200);
     assert.equal((await withNotes.post("/api/notes", { text: "egen lapp" })).status, 201);
-    assert.equal((await withNotes.get("/api/notes/recipients")).status, 403, "an operator shares no notes");
+    assert.equal((await withNotes.get("/api/notes/recipients")).status, 200, "a senior operator shares notes");
   });
 
   test("a temporary shift leader plans their shift but administers nothing and sees nothing sensitive", async () => {

@@ -169,10 +169,15 @@ describe("pushnotiser", () => {
   });
 
   test("shared notes push to their recipients, and nothing is sent once the note is gone", async () => {
-    const note = await leader.post("/api/notes", { kind: "group", text: "Ny rulle", people: [operatorUser.id] });
+    const note = await leader.post("/api/notes", { kind: "group", text: "Ny rulle", people: [rightHandUser.id] });
     assert.equal(note.status, 201);
     await flush();
-    assert.deepEqual(sent.map(item => [item.endpoint, item.payload.body]), [[endpointFor("olle"), "En anteckning har delats med dig."]]);
+    assert.deepEqual(sent.map(item => [item.endpoint, item.payload.body]), [[endpointFor("hand"), "En anteckning har delats med dig."]]);
+
+    sent.length = 0;
+    assert.equal((await rightHand.post(`/api/notes/${note.data.note.id}/comments`, { text: "Den är på plats." })).status, 201);
+    await flush();
+    assert.deepEqual(sent.map(item => [item.endpoint, item.payload.body]), [[endpointFor("leader"), "Det finns en ny kommentar på en anteckning."]], "a comment tells the others on the note, not its writer");
 
     sent.length = 0;
     const other = await leader.post("/api/notes", { kind: "group", text: "Ångra", people: [rightHandUser.id] });
@@ -246,10 +251,11 @@ describe("pushnotiser", () => {
     try {
       assert.equal((await leader.post("/api/chat/messages", { text: "Hej", recipientId: rightHandUser.id })).status, 201);
       assert.equal((await leader.post("/api/chat/messages", { text: "Hej alla" })).status, 201);
-      assert.equal((await leader.post("/api/notes", { kind: "group", text: "Lapp", people: [operatorUser.id] })).status, 201, "inside a transaction too");
+      assert.equal((await leader.post("/api/notes", { kind: "group", text: "Lapp", people: [rightHandUser.id] })).status, 201, "inside a transaction too");
       await save(leader, dayShift.id, `schedule:${weekAfter(week, 1)}`, { "Linje 3": { fri: rightHandPerson.id } });
       assert.equal((await admin.patch(`/api/people/${operatorPerson.id}`, { shiftId: eveningShift.id })).status, 200);
-      assert.deepEqual((await operator.get("/api/notifications")).data.notifications.map(note => note.kind).slice(0, 2), ["placementChange", "noteShared"]);
+      assert.equal((await operator.get("/api/notifications")).data.notifications[0].kind, "placementChange");
+      assert.ok((await rightHand.get("/api/notifications")).data.notifications.some(note => note.kind === "noteShared"));
     } finally {
       console.error = quiet;
       await server.pool.query("ALTER TABLE push_outbox_away RENAME TO push_outbox");

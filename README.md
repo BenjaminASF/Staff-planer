@@ -27,8 +27,9 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Sidan Användare: inloggningar, roller och lösenord samlat | Alla skift | Eget skift | Eget skift | | |
 | Ta bort användare från sidan Användare | ✓ | | | | |
 | Chatt med text och bilder | ✓ | ✓ | ✓ | ✓ | |
-| Egna anteckningar på anslagstavlan (**Anteckningar → Mina anteckningar**) | ✓ | ✓ | ✓ | ✓ | ✓ |
-| Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Alla skift | Eget skift | Eget skift | Läser det som delas med dem | Läser det som delas med dem |
+| Egna anteckningar på anslagstavlan (**Anteckningar → Mina anteckningar**) | ✓ | ✓ | ✓ | ✓ | |
+| Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Alla skift | Eget skift | Eget skift | Alla skift | |
+| Kommentera delade anteckningar som man är med på | ✓ | ✓ | ✓ | ✓ | |
 | Ta bort personal och användare, ändra roller | ✓ | | | | |
 | Skapa och ta bort skift, backup och import | ✓ | | | | |
 | Exportera backup av sitt eget skift (**Översikt → Backup av skiftet**) | | ✓ | | | |
@@ -66,14 +67,23 @@ Operatörer ser en veckas schema och rastplan först när admin eller skiftledar
 
 **Anteckningar** ligger bredvid **Personal** i menyn och är en anslagstavla med färgade lappar. Siffran på länken visar hur många delade anteckningar man inte har läst.
 
+**Operatörer har inte Anteckningar.** Länken visas inte för dem, sidan skickar dem vidare och servern nekar alla anrop. De kan inte heller väljas som mottagare och ingår aldrig i Hela gruppen.
+
 - **Mina anteckningar** är privata. Ingen annan ser dem, inte heller admin.
-- **Gruppens anteckningar**: admin, skiftledare och höger hand väljer med **Dela med** exakt vilka som ska se en lapp. De söker på namn, kryssar i personer eller väljer **Dela med hela gruppen**. Skiftledare och höger hand kan bara välja personer i sitt eget skift, admin kan välja i alla skift. Den som inte har valts ser inte lappen, inte heller admin. Hela gruppen gäller också den som börjar i skiftet senare.
+- **Gruppens anteckningar**: admin, skiftledare, höger hand och senior operatörer väljer med **Dela med** exakt vilka som ska se en lapp. De söker på namn, kryssar i en eller flera personer eller väljer **Dela med hela gruppen** för ett skift. Den som inte har valts ser inte lappen, inte heller admin. Hela gruppen gäller också den som börjar i skiftet senare.
+  - Mottagarna kan ha alla roller utom operatör: admin, skiftledare, höger hand och senior operatörer.
+  - **Admin och senior operatörer** väljer bland personer i alla skift. **Skiftledare och höger hand** väljer bara bland personer i sitt eget skift.
+  - **Hela gruppen** betyder alla i skiftet utom operatörer, oavsett vem som skriver lappen.
+  - Servern kontrollerar varje gång lapparna visas att operatörer inte är med, så regeln håller även om någon byter roll senare. Den som blir operatör förlorar Anteckningar, och lappar som en operatör har skrivit syns inte för någon.
+- **Kommentarer**: alla som är med på en delad lapp kan skriva kommentarer under den. Var och en tar bort sina egna kommentarer. De andra på lappen får en notis om nya kommentarer. Kommentarerna försvinner med lappen.
 - **Notiser**: mottagarna får en notis och ser lappen som **NY** tills de har öppnat den. Den som läggs till i efterhand får en notis. Den som tas bort förlorar lappen, notisen och sina markeringar direkt. Författaren ser vilka som har läst.
-- **Ändra**: bara den som skrev lappen ändrar text, färg och mottagare och tar bort den. Var och en markerar själv en lapp som **klar**.
+- **Ändra**: bara den som skrev lappen ändrar text, färg och mottagare och tar bort den. De andra på lappen kommenterar. Var och en markerar själv en lapp som **klar**.
 - **Prioritet**: flaggan uppe till vänster markerar lappen som prioriterad. Markeringen syns för alla som ser lappen och kan ändras av den som skrev den, och av admin på delade lappar som admin ser. Med **Sortera: Prioritet först** (standard) ligger prioriterade lappar överst. Där finns också **Nyaste först** och **Äldsta först**.
 - Lapparna dras dit man vill och storleken ändras i hörnet. Placeringen sparas för varje användare och sortering, och **Ordna lapparna** lägger dem i kolumner igen. På mobilen visas lapparna i en enkel lista.
 
 **Anteckningar** ersätter den tidigare listan **Att göra**. Uppgifter som inte var klara flyttades till ägarens **Mina anteckningar**, och gamla länkar till Att göra leder hit.
+
+När rollreglerna ovan infördes (migrationen `024_notes_roles_and_comments.sql`) raderades alla anteckningar som operatörer hade skrivit, egna och delade, för gott, med deras mottagare, markeringar och notiser. Operatörer togs bort från andras lappar. Inga anteckningar som andra roller skrivit raderades.
 
 ### Mejl när schemat delas
 
@@ -133,7 +143,7 @@ Bara **admin** skapar och ändrar tillfälliga konton, under **Användare → Ti
 - **Namn, användarnamn och lösenord.** Lösenordet kan genereras. Det hashas med scrypt som alla andra lösenord. Personen behöver inte byta det, men kan göra det under **Min profil**. Efter att kontot har skapats visas uppgifterna en gång, färdiga att kopiera, tillsammans med länken.
 - **Roll och skift.** Alla roller utom admin. Personen finns i personallistan och kan schemaläggas som annan personal.
 - **Giltighetstid.** 1 dag, 7 dagar, 30 dagar eller ett eget slutdatum (högst ett år i taget). Kontot slutar fungera vid slutdatumet: inloggningen nekas och en öppen session slutar gälla direkt.
-- **Funktioner.** Schema, Rast, Produktion, Anteckningar och Chatt. Inget är valt från början. Personen får bara det som både rollen och funktionerna tillåter, till exempel kräver Chatt rollen Skiftledare eller Höger hand.
+- **Funktioner.** Schema, Rast, Produktion, Anteckningar och Chatt. Inget är valt från början. Personen får bara det som både rollen och funktionerna tillåter, till exempel kräver Chatt rollen Skiftledare eller Höger hand, och Anteckningar en annan roll än Operatör.
 - **Inaktivera, aktivera, förläng och ta bort** när som helst. Inaktivering och borttagning loggar ut personen direkt. Skapande och ändringar syns i ändringshistoriken.
 
 Ett tillfälligt konto når aldrig administration (användare, roller, inställningar, maskiner, backup, historik), testresultat, kompetens, bedömningar eller andra personers kontaktuppgifter, oavsett roll. Det ser bara sitt eget skift. Servern släpper bara igenom en uttrycklig lista med adresser för tillfälliga konton (`temporaryMayCall` i [`server/permissions.js`](server/permissions.js)), och kontrollerar dessutom roll och funktioner som vanligt. Tillfälliga konton kan inte logga in med Microsoft eller via fliken Vanlig inloggning, och vanliga konton kan inte logga in via fliken Tillfälligt konto. Samma spärr mot för många felaktiga inloggningsförsök gäller. Utgångna och inaktiverade konton får inga pushnotiser eller mejl. Skiftledare kan ändra status för inhyrd personal i sitt skift, men inte deras inloggning.
@@ -198,7 +208,7 @@ Klockan uppe till höger visar korta notiser, med en röd siffra för olästa:
 
 - **Skiftledare** får en notis när en admin ändrar något i deras skift (till exempel schemat, personal eller någons status) eller i gemensamma inställningar och maskiner. Notisen säger vem som ändrade och vad.
 - **Den vars eget schema ändras** får en notis, oavsett vem som gjorde ändringen: när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), och när man flyttas till ett annat skift. Andra får ingen notis om det. Flera ändringar i samma vecka blir en enda notis så länge den inte är läst. Höger hand och operatörer får inga notiser om andra ändringar.
-- **Alla som får en anteckning delad** får en notis med lappens text och vem som delade den. Ett klick på notisen öppnar lappen under **Anteckningar**.
+- **Alla som får en anteckning delad** får en notis med lappens text och vem som delade den. Alla på en delad lapp får en notis när någon annan kommenterar den. Ett klick på notisen öppnar lappen under **Anteckningar**. En notis om en lapp man inte längre får se visas inte.
 
 Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan räknas notiserna som lästa, och **Rensa alla** tar bort dem. Notiser äldre än 30 dagar tas bort automatiskt.
 
@@ -208,7 +218,7 @@ Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De
 
 - **Schema och placering:** när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
 - **Chatt** (admin, skiftledare, höger hand och senior operatörer): privata meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
-- **Anteckningar:** när en lapp delas med en.
+- **Anteckningar:** när en lapp delas med en, och när någon kommenterar en lapp man är med på (högst en notis per lapp varannan minut).
 - **Viktiga uppdateringar** (skiftledare): samma som notiserna i appen om admins ändringar, högst en var femte minut.
 
 Notisen visar bara en kort text som "Ditt schema för vecka 45 har ändrats", aldrig namn eller meddelandetext, och ett tryck på den öppnar rätt sida. Precis innan varje notis skickas kontrollerar servern att personen fortfarande får se det notisen gäller. Chattmeddelanden och notiser som redan har lästs i appen ger ingen pushnotis. Notiser som inte hunnit skickas inom en timme slängs, så ingen får gamla händelser i efterhand.

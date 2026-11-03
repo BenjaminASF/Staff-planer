@@ -7410,6 +7410,23 @@ button.admin-mode-chip:hover { border-color: var(--ds-border-strong); color: var
 .sn-note.done .sn-text { opacity: .55; }
 .sn-foot { display: flex; align-items: center; gap: 8px; min-width: 0; min-height: 24px; color: var(--sn-ink-soft); font-size: 12px; }
 .sn-shared { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sn-comment-count { display: inline-flex; flex: none; align-items: center; gap: 3px; font-weight: 700; }
+.sn-comment-count svg { width: 13px; height: 13px; }
+/* Comments in the opened group note */
+.sn-comments { display: grid; gap: 8px; padding: 12px; border-radius: 12px; background: rgba(255, 255, 255, .42); }
+.sn-comment-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.sn-comment { display: flex; align-items: flex-start; gap: 8px; }
+.sn-comment-body { flex: 1; min-width: 0; }
+.sn-comment-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; color: var(--sn-ink-soft); font-size: 12px; }
+.sn-comment-head b { color: var(--sn-ink); font-size: 13px; }
+.sn-comment-body p { margin: 2px 0 0; font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sn-comment-del { margin-left: auto; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--sn-ink-soft); font-size: 16px; line-height: 1; cursor: pointer; }
+.sn-comment-del:hover { background: rgba(0, 0, 0, .08); color: var(--sn-ink); }
+.sn-comment-form { display: flex; align-items: flex-end; gap: 8px; }
+.sn-big .sn-comment-form textarea { flex: 1; min-height: 44px; padding: 8px 10px; border: 1px solid rgba(0, 0, 0, .14); border-radius: 10px; outline: none; resize: vertical;
+  background: rgba(255, 255, 255, .75); background-image: none; color: var(--sn-ink); font: 400 15px/1.4 var(--sn-font); }
+.sn-big .sn-comment-form textarea:focus { border-color: var(--sn-ink-soft); background: #fff; }
+.sn-comment-form .sn-btn:disabled { cursor: not-allowed; opacity: .45; }
 .sn-new-tag { position: absolute; top: -9px; right: -8px; padding: 5px 8px; border-radius: 6px; background: var(--sn-stamp); color: #fff; font: 800 11px/1 var(--sn-font); letter-spacing: .08em; transform: rotate(6deg); box-shadow: 0 3px 8px -2px rgba(160, 40, 20, .5); }
 .sn-check { position: absolute; right: 10px; bottom: 34px; width: 46px; height: 46px; pointer-events: none; }
 .sn-check circle { fill: rgba(255, 255, 255, .55); stroke: var(--sn-check); stroke-width: 2.5; }

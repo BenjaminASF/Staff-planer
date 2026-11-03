@@ -23,6 +23,7 @@ const KINDS = Object.freeze({
   chat: { url: "index.html?chat=1", urgency: "high", text: () => "Du har fått ett privat meddelande." },
   chatAll: { interval: 300, url: "index.html?chat=1", text: () => "Det finns nya meddelanden i chatten." },
   note: { url: "anteckningar.html", text: () => "En anteckning har delats med dig." },
+  noteComment: { interval: 120, url: "anteckningar.html", text: () => "Det finns en ny kommentar på en anteckning." },
   update: { interval: 300, url: "index.html?notifications=1", text: () => "Det finns nya uppdateringar som berör dig." }
 });
 
@@ -271,7 +272,8 @@ async function stillRelevant(db, user, row) {
       );
       return rows.length > 0;
     }
-    case "note": {
+    case "note":
+    case "noteComment": {
       const { rows } = await db.query(
         `SELECT 1 FROM notifications x JOIN notes n ON n.id = x.note_id
           WHERE x.id = $3 AND x.user_id = $1 AND x.read_at IS NULL AND ${NOTE_VISIBLE_SQL}`,
