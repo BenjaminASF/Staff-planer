@@ -1,3 +1,4 @@
+const { ACCOUNT_ACTIVE_SQL } = require("./auth");
 const { ROLES, OPERATOR_ROLES, isAdmin } = require("./permissions");
 const { newId, isoWeekNumber, currentWeekKey } = require("./store");
 const { queuePush, placementWeek, scheduleChangeRecipients, queueScheduleChange, queuePlacementChange } = require("./push");
@@ -12,7 +13,8 @@ async function notifyScheduleShared({ pool, mailer, shiftId, weekKey, appUrl }) 
        FROM people p
        JOIN users u ON u.person_id = p.id
        LEFT JOIN shifts s ON s.id = p.shift_id
-      WHERE p.shift_id = $1 AND u.role = ANY($2::text[]) AND p.email <> ''`,
+      WHERE p.shift_id = $1 AND u.role = ANY($2::text[]) AND p.email <> ''
+        AND ${ACCOUNT_ACTIVE_SQL} AND (NOT u.temporary OR 'schedule' = ANY(u.features))`,
     [shiftId, OPERATOR_ROLES]
   );
   const week = isoWeekNumber(weekKey);
@@ -66,7 +68,7 @@ async function notifyAdminChange(db, { user, scope, type = "", title = "", detai
   if (!isAdmin(user) || !title || NOT_A_CHANGE.has(`${type}:${title}`)) return 0;
   const { rows } = await db.query(
     `SELECT u.id FROM users u JOIN people p ON p.id = u.person_id
-      WHERE u.role = $1 AND u.id <> $2 AND ($3 = 'global' OR p.shift_id = $3)`,
+      WHERE u.role = $1 AND u.id <> $2 AND ($3 = 'global' OR p.shift_id = $3) AND NOT u.temporary`,
     [ROLES.LEADER, user.id, scope]
   );
   return addNotifications(db, rows.map(row => row.id), { kind: "adminChange", actorName: user.name, title, detail });

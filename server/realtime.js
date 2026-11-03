@@ -11,7 +11,11 @@ const HEARTBEAT_MS = 25 * 1000;
 const STREAM_LIFETIME_MS = 10 * 60 * 1000;
 const RECONNECT_DELAY_MS = 2000;
 
+// A temporary account's open page stops getting changes at its end date.
+const accountEnded = user => Boolean(user?.accountExpiresAt) && new Date(user.accountExpiresAt).getTime() <= Date.now();
+
 function canReceive(user, change) {
+  if (accountEnded(user)) return false;
   if (change.type === "document") return canReadDocument(user, change.scope, change.key);
   if (change.type === "chat") return canUseChat(user);
   if (change.type === "notification") return Boolean(user?.id) && change.userId === user.id;
@@ -163,7 +167,16 @@ function createRealtimeHub(pool) {
     }
   }
 
-  return { handler, close, get subscriberCount() { return subscribers.size; } };
+  // Ends the open pages of a user whose sessions were ended (a disabled or deleted account).
+  // The browser reconnects, and the session check turns it away.
+  function disconnectUser(userId) {
+    if (!userId) return;
+    for (const subscriber of subscribers) {
+      if (subscriber.user?.id === userId) subscriber.res.end();
+    }
+  }
+
+  return { handler, close, disconnectUser, get subscriberCount() { return subscribers.size; } };
 }
 
 module.exports = { createRealtimeHub };

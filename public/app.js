@@ -149,6 +149,26 @@ const PAGE_ACCESS = {
   "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR],
   "hjalp.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR]
 };
+// Temporary accounts (hired staff, see server/permissions.js) open a page only when their role
+// allows it and the admin ticked its function. true: every temporary account. Pages not listed
+// (administration, staff, competence, settings) are never theirs.
+const TEMPORARY_PAGE_FEATURES = {
+  "dashboard.html": "schedule",
+  "index.html": "schedule",
+  "rast.html": "breaks",
+  "produktion.html": "production",
+  "anteckningar.html": "notes",
+  "profil.html": true,
+  "hjalp.html": true
+};
+// The functions an admin can give a temporary account, in the order they are shown.
+const TEMPORARY_FEATURES = [
+  ["schedule", "Schema", "Veckoschemat för skiftet"],
+  ["breaks", "Rast", "Rastplaneringen"],
+  ["production", "Produktion", "Produktionssidan"],
+  ["notes", "Anteckningar", "Egna anteckningar och delade lappar"],
+  ["chat", "Chatt", "Chatten för skiftledning"]
+];
 // Shift leaders may look at other shifts here, read-only. Everywhere else they work in their own shift.
 const SHIFT_BROWSING_PAGES = ["index.html", "rast.html"];
 const MIN_PASSWORD_LENGTH = 8;
@@ -366,6 +386,9 @@ function makeId() {
 // Roles and shifts.
 
 const hasRole = (...roles) => Boolean(currentUser) && roles.includes(currentUser.role);
+const isTemporaryAccount = () => Boolean(currentUser?.temporary);
+// Regular accounts have every function their role allows.
+const hasFeature = feature => !isTemporaryAccount() || (currentUser.features || []).includes(feature);
 const isAdmin = () => hasRole(ROLES.ADMIN);
 const isShiftLeader = () => hasRole(ROLES.LEADER);
 const isRightHand = () => hasRole(ROLES.RIGHT_HAND);
@@ -375,12 +398,14 @@ const isSeniorOperator = () => hasRole(ROLES.SENIOR_OPERATOR);
 // Everyone who plans a shift. A right hand plans only their own shift.
 const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND);
 // Machines, departments and settings are shared by all shifts.
-const canChangeSharedSettings = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
-const canChangeProductionTarget = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+const canChangeSharedSettings = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
+const canChangeProductionTarget = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
 // Only admins and shift leaders see who wrote a comment on the production page (the server hides it from others).
-const canSeeCommentAuthors = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+const canSeeCommentAuthors = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
 // Admins test and assess everyone; shift leaders the operators in their own shift.
-const canEvaluate = () => hasRole(ROLES.ADMIN, ROLES.LEADER);
+const canEvaluate = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
+// The history of changes is not for temporary accounts.
+const canSeeHistory = () => canManageStaff() && !isTemporaryAccount();
 const EVALUATED_BY_LEADERS = [ROLES.OPERATOR, ROLES.SENIOR_OPERATOR, ROLES.RIGHT_HAND];
 
 function getCurrentPage() {
@@ -388,7 +413,10 @@ function getCurrentPage() {
 }
 
 function canOpenPage(page) {
-  return (PAGE_ACCESS[page] || []).includes(currentUser?.role);
+  if (!(PAGE_ACCESS[page] || []).includes(currentUser?.role)) return false;
+  if (!isTemporaryAccount()) return true;
+  const feature = TEMPORARY_PAGE_FEATURES[page];
+  return feature === true || (Boolean(feature) && hasFeature(feature));
 }
 
 function getOwnShiftId() {
@@ -443,7 +471,7 @@ function newShiftColorChoices() {
 }
 
 function canBrowseShifts() {
-  return isAdmin() || (isShiftLeader() && SHIFT_BROWSING_PAGES.includes(getCurrentPage()));
+  return isAdmin() || (isShiftLeader() && !isTemporaryAccount() && SHIFT_BROWSING_PAGES.includes(getCurrentPage()));
 }
 
 // The shift whose schedule, break plan and other shift data this page shows.
@@ -1845,7 +1873,7 @@ async function saveTestResults(results) {
 
 // Competence is read by shift leaders and right hands too, since scheduling depends on it.
 async function getCompetenceDocument(key) {
-  if (!canManageStaff()) return {};
+  if (!canManageStaff() || isTemporaryAccount()) return {};
   const value = await getGlobalDocument(key, {});
   return isPlainObject(value) ? value : {};
 }
@@ -1933,7 +1961,7 @@ function getStartOfToday() {
 
 // Today's changes in the current shift and in shared settings.
 async function getAuditLog() {
-  if (!canManageStaff()) return [];
+  if (!canSeeHistory()) return [];
   const scopes = ["global", getShiftScope()].filter(scope => scope && (scope === "global" || canEditShift(scope)));
   const data = await apiRequest("GET", `/audit?scopes=${scopes.map(encodeURIComponent).join(",")}&since=${encodeURIComponent(getStartOfToday().toISOString())}`);
   return data.events;
@@ -1943,7 +1971,7 @@ async function getAuditLog() {
 const GLOBAL_AUDIT_TYPES = new Set(["settings", "department", "backup"]);
 
 async function addAuditEvent(type, title, detail = "", undo = null) {
-  if (!canManageStaff()) return;
+  if (!canSeeHistory()) return;
   const scope = GLOBAL_AUDIT_TYPES.has(type) || !canEditActiveShift() ? "global" : getShiftScope();
   try {
     await apiRequest("POST", "/audit", { scope, type, title, detail, undo });
@@ -2152,6 +2180,13 @@ function setupRoleNavigation() {
   setupMobileNavigation();
 }
 
+// When a temporary account ends, as "9 nov 14:00".
+function formatAccountEnd(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleString("sv-SE", { day: "numeric", month: "short", year: date.getFullYear() === new Date().getFullYear() ? undefined : "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function renderSidebarAccount() {
   const sidebar = document.querySelector(".sidebar");
   if (!sidebar || !currentUser) return;
@@ -2170,7 +2205,10 @@ function renderSidebarAccount() {
   const shiftControl = canBrowseShifts() && shifts.length && !hasShiftPicker
     ? `<label class="sidebar-shift"><span>Visar skift</span><select id="shiftSwitcher">${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === scope ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}${shift.id === getOwnShiftId() ? " (ditt)" : ""}</option>`).join("")}</select></label>`
     : `<div class="sidebar-shift"><span>Skift</span><strong>${shiftColorDot(scope)}${escapeHtml(getShiftName(scope) || "Inget skift")}</strong></div>`;
-  box.innerHTML = `<a class="sidebar-user" href="profil.html"><strong>${escapeHtml(currentPerson?.name || currentUser.username)}</strong><small>${escapeHtml(ROLE_LABELS[currentUser.role] || "")}</small></a>${shiftControl}`;
+  const temporaryNote = isTemporaryAccount() && currentUser.expiresAt
+    ? `<small class="sidebar-temporary" title="Tillfälligt konto">Tillfälligt konto · t.o.m. ${escapeHtml(formatAccountEnd(currentUser.expiresAt))}</small>`
+    : "";
+  box.innerHTML = `<a class="sidebar-user" href="profil.html"><strong>${escapeHtml(currentPerson?.name || currentUser.username)}</strong><small>${escapeHtml(ROLE_LABELS[currentUser.role] || "")}</small>${temporaryNote}</a>${shiftControl}`;
   box.querySelector("#shiftSwitcher")?.addEventListener("change", event => {
     sessionStorage.setItem(ACTIVE_SHIFT_KEY, event.target.value);
     location.reload();
@@ -6833,6 +6871,7 @@ async function renderUsersPage() {
     root.innerHTML = `
       ${isAdmin() ? "" : `<p class="shift-notice users-shift-notice">${shiftColorDot(getOwnShiftId())}<strong>${escapeHtml(getShiftName(getOwnShiftId()) || "Inget skift")}</strong> · Du ser användarna i ditt eget skift</p>`}
       <div id="usersStats" class="dashboard-stats users-stats"></div>
+      ${isAdmin() ? '<section id="temporaryAccounts" class="card temporary-accounts"></section>' : ""}
       <section class="card">
         <div class="filter-bar users-filter-bar">
           <input id="usersSearch" type="search" placeholder="Sök namn, användarnamn eller företag" aria-label="Sök användare" />
@@ -6844,6 +6883,7 @@ async function renderUsersPage() {
             <option value="${ROLES.SENIOR_OPERATOR}">Senior operatörer</option>
             <option value="${ROLES.OPERATOR}">Operatörer</option>
             <option value="none">Utan inloggning</option>
+            ${isAdmin() ? '<option value="temporary">Tillfälliga konton</option>' : ""}
             <option value="">Alla personer</option>
           </select>
           ${isAdmin() ? `<select id="usersShiftFilter" aria-label="Visa skift"><option value="">Alla skift</option>${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === usersPageFilters.shift ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}<option value="none">Utan skift</option></select>` : ""}
@@ -6858,6 +6898,7 @@ async function renderUsersPage() {
 
   const everyone = await getAllPeople();
   const people = isAdmin() ? everyone : everyone.filter(person => getOwnShiftId() && person.shiftId === getOwnShiftId());
+  if (isAdmin()) renderTemporaryAccounts(root.querySelector("#temporaryAccounts"), everyone);
   const withAccount = people.filter(person => person.account);
   const countRole = role => withAccount.filter(person => person.account.role === role).length;
   const waiting = withAccount.filter(person => waitsForPassword(person.account)).length;
@@ -6877,7 +6918,8 @@ async function renderUsersPage() {
     .filter(person => {
       if (role === "accounts" && !person.account) return false;
       if (role === "none" && person.account) return false;
-      if (role && role !== "accounts" && role !== "none" && person.account?.role !== role) return false;
+      if (role === "temporary" && !person.account?.temporary) return false;
+      if (role && !["accounts", "none", "temporary"].includes(role) && person.account?.role !== role) return false;
       if (shift && (shift === "none" ? person.shiftId : person.shiftId !== shift)) return false;
       return !query || `${person.name} ${person.account?.username || ""} ${person.company || ""}`.toLocaleLowerCase().includes(query);
     })
@@ -6897,7 +6939,7 @@ async function renderUsersPage() {
       <div class="person-meta">
         <h3>${escapeHtml(person.name)}${person.id === currentPerson?.id ? ' <small class="user-you">(du)</small>' : ""}</h3>
         <p>${details}</p>
-        <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${pushBlockedMark(person)}${account?.microsoftLinked ? ' <span class="person-role-badge user-microsoft" title="Loggar in med Microsoft">Microsoft</span>' : ""}${waitsForPassword(account) ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}
+        <span class="person-role-badge${account ? ` role-${escapeHtml(account.role)}` : " no-account"}">${escapeHtml(describeAccount(person))}</span>${pushBlockedMark(person)}${account?.microsoftLinked ? ' <span class="person-role-badge user-microsoft" title="Loggar in med Microsoft">Microsoft</span>' : ""}${waitsForPassword(account) ? ' <span class="person-role-badge user-waiting">Väntar på nytt lösenord</span>' : ""}${account?.temporary ? ` ${temporaryStatusBadge(account)}` : ""}
       </div>
       <div class="person-actions">${canEditPerson(person) ? `<button class="btn${account ? "" : " primary"}" type="button" data-manage-user="${escapeHtml(person.id)}">${account ? "Hantera" : "Skapa inloggning"}</button>` : ""}${isAdmin() && person.id !== currentPerson?.id ? `<button class="btn danger" type="button" data-remove-user="${escapeHtml(person.id)}">Ta bort</button>` : ""}</div>
     </div>`;
@@ -6907,6 +6949,282 @@ async function renderUsersPage() {
     const person = visible.find(item => item.id === button.dataset.removeUser);
     if (person) openRemoveUserDialog(person);
   }));
+}
+
+// Temporary accounts (hired staff). Only admins create and change them; see server/permissions.js.
+
+// The roles under which each function means something. A function the role has no use for
+// cannot be ticked.
+const TEMPORARY_FEATURE_ROLES = {
+  schedule: null,
+  breaks: null,
+  production: [ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR],
+  notes: null,
+  chat: [ROLES.LEADER, ROLES.RIGHT_HAND]
+};
+const featureFitsRole = (feature, role) => !TEMPORARY_FEATURE_ROLES[feature] || TEMPORARY_FEATURE_ROLES[feature].includes(role);
+const TEMPORARY_DURATIONS = [["1", "1 dag"], ["7", "7 dagar"], ["30", "30 dagar"], ["custom", "Eget slutdatum"]];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function temporaryAccountState(account) {
+  if (account.disabled) return "disabled";
+  const end = new Date(account.expiresAt).getTime();
+  if (end <= Date.now()) return "expired";
+  return end - Date.now() < 2 * DAY_MS ? "ending" : "active";
+}
+
+function temporaryStatusBadge(account) {
+  const state = temporaryAccountState(account);
+  const end = formatAccountEnd(account.expiresAt);
+  const text = {
+    disabled: "Tillfälligt · inaktiverat",
+    expired: `Tillfälligt · gick ut ${end}`,
+    ending: `Tillfälligt · går ut ${end}`,
+    active: `Tillfälligt · t.o.m. ${end}`
+  }[state];
+  return `<span class="person-role-badge temporary-badge temporary-${state}">${escapeHtml(text)}</span>`;
+}
+
+const temporaryLoginLink = () => `${location.origin}/?tillfallig`;
+
+function renderTemporaryAccounts(section, everyone) {
+  if (!section || !isAdmin()) return;
+  const order = { active: 0, ending: 0, disabled: 1, expired: 2 };
+  const accounts = everyone.filter(person => person.account?.temporary)
+    .sort((first, second) => order[temporaryAccountState(first.account)] - order[temporaryAccountState(second.account)]
+      || new Date(first.account.expiresAt) - new Date(second.account.expiresAt));
+  const featureNames = account => {
+    const names = TEMPORARY_FEATURES.filter(([id]) => account.features.includes(id)).map(([, label]) => label);
+    return names.length ? names.join(", ") : "Inga funktioner valda";
+  };
+  section.innerHTML = `
+    <div class="temporary-accounts-head">
+      <div><h3>Tillfälliga konton</h3><p>Inloggningar för inhyrd personal. De slutar fungera automatiskt vid slutdatumet.</p></div>
+      <div class="temporary-accounts-tools">
+        <button class="btn" type="button" data-temporary-copy-link title="${escapeHtml(temporaryLoginLink())}">Kopiera inloggningslänk</button>
+        <button class="btn primary" type="button" data-temporary-new>+ Nytt tillfälligt konto</button>
+      </div>
+    </div>
+    ${accounts.length ? `<div class="temporary-accounts-list">${accounts.map(person => {
+      const account = person.account;
+      const state = temporaryAccountState(account);
+      return `<div class="temporary-account-row temporary-row-${state}">
+        <div class="person-meta">
+          <h3>${escapeHtml(person.name)} <small>${escapeHtml(account.username)}</small></h3>
+          <p>${escapeHtml(ROLE_LABELS[account.role] || "")} · ${shiftColorDot(person.shiftId)}${escapeHtml(getShiftName(person.shiftId) || "Inget skift")} · ${escapeHtml(featureNames(account))}</p>
+          ${temporaryStatusBadge(account)}
+        </div>
+        <div class="person-actions">
+          <button class="btn" type="button" data-temporary-edit="${escapeHtml(person.id)}">Ändra</button>
+          ${state === "expired" ? "" : `<button class="btn" type="button" data-temporary-toggle="${escapeHtml(person.id)}">${account.disabled ? "Aktivera" : "Inaktivera"}</button>`}
+          <button class="btn danger" type="button" data-temporary-remove="${escapeHtml(person.id)}">Ta bort</button>
+        </div>
+      </div>`;
+    }).join("")}</div>` : '<div class="empty-state">Inga tillfälliga konton ännu.</div>'}`;
+  const find = id => accounts.find(person => person.id === id);
+  section.querySelector("[data-temporary-new]").addEventListener("click", () => openTemporaryAccountDialog());
+  section.querySelector("[data-temporary-copy-link]").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(temporaryLoginLink());
+      showAppToast("Länken till tillfällig inloggning är kopierad.");
+    } catch {
+      prompt("Kopiera länken:", temporaryLoginLink());
+    }
+  });
+  section.querySelectorAll("[data-temporary-edit]").forEach(button => button.addEventListener("click", () => openTemporaryAccountDialog(find(button.dataset.temporaryEdit))));
+  section.querySelectorAll("[data-temporary-remove]").forEach(button => button.addEventListener("click", () => {
+    const person = find(button.dataset.temporaryRemove);
+    if (person) openRemoveUserDialog(person);
+  }));
+  section.querySelectorAll("[data-temporary-toggle]").forEach(button => bindOnce(button, "click", async () => {
+    const person = find(button.dataset.temporaryToggle);
+    if (!person) return;
+    const disable = !person.account.disabled;
+    if (disable && !confirm(`Inaktivera ${person.name}? Personen loggas ut direkt och kan inte logga in förrän kontot aktiveras igen.`)) return;
+    button.disabled = true;
+    try {
+      await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, { disabled: disable });
+      peopleCache = null;
+      showAppToast(disable ? `${person.name} är inaktiverad och utloggad.` : `${person.name} kan logga in igen.`);
+      await renderUsersPage();
+    } catch (error) {
+      button.disabled = false;
+      showAppToast(error instanceof ApiError ? error.message : "Det gick inte att spara.", "error");
+    }
+  }));
+}
+
+// The end date a duration choice gives: whole days from now, or the end of a chosen day.
+function temporaryEndFrom(duration, customDate, customTime) {
+  if (duration === "keep") return null;
+  if (duration !== "custom") return new Date(Date.now() + Number(duration) * DAY_MS);
+  if (!customDate) throw new ApiError(400, "Välj ett slutdatum.");
+  const end = new Date(`${customDate}T${customTime || "23:59"}`);
+  if (Number.isNaN(end.getTime())) throw new ApiError(400, "Ogiltigt slutdatum.");
+  if (end.getTime() <= Date.now()) throw new ApiError(400, "Slutdatumet måste ligga i framtiden.");
+  return end;
+}
+
+// Creates a temporary account (no person) or changes one.
+function openTemporaryAccountDialog(person = null) {
+  if (!isAdmin()) return;
+  const editing = Boolean(person?.account?.temporary);
+  const account = editing ? person.account : { role: ROLES.OPERATOR, features: ["schedule"] };
+  const roles = ROLE_VALUES_FOR_TEMPORARY();
+  const tomorrow = formatDateKey(new Date(Date.now() + DAY_MS));
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<section class="replacement-modal temporary-modal" aria-labelledby="temporaryTitle">
+    <h3 id="temporaryTitle">${editing ? `Tillfälligt konto: ${escapeHtml(person.name)}` : "Nytt tillfälligt konto"}</h3>
+    <p class="temporary-modal-intro">${editing ? temporaryStatusBadge(account) : "För inhyrd personal. Kontot syns i personallistan och kan schemaläggas, men loggar bara in med användarnamn och lösenord och slutar fungera vid slutdatumet."}</p>
+    <form class="temporary-form">
+      <fieldset><legend>Person och inloggning</legend>
+        <div class="temporary-grid">
+          <label>Namn<input name="name" value="${escapeHtml(person?.name || "")}" maxlength="120" required ${editing ? "disabled" : ""} /></label>
+          <label>Företag<input name="company" value="${escapeHtml(person?.company || "")}" maxlength="120" placeholder="Bemanningsföretag" ${editing ? "disabled" : ""} /></label>
+          <label>Användarnamn<input name="username" value="${escapeHtml(account.username || "")}" autocomplete="off" maxlength="60" required ${editing ? "disabled" : ""} /></label>
+          <label>${editing ? "Nytt lösenord (valfritt)" : "Lösenord"}<span class="temporary-password"><input name="password" value="${editing ? "" : generateTemporaryPassword()}" autocomplete="off" minlength="${MIN_PASSWORD_LENGTH}" ${editing ? "" : "required"} /><button class="btn" type="button" data-generate-password>Generera</button></span><small>Minst ${MIN_PASSWORD_LENGTH} tecken. Personen kan byta det själv under Min profil.</small></label>
+        </div>
+      </fieldset>
+      <fieldset><legend>Roll och skift</legend>
+        <div class="temporary-grid">
+          <label>Roll<select name="role">${roles.map(role => `<option value="${role}"${role === account.role ? " selected" : ""}>${ROLE_LABELS[role]}</option>`).join("")}</select><small>Admin kan inte väljas för tillfälliga konton.</small></label>
+          <label>Skift<select name="shiftId" ${editing ? "disabled" : ""}>${shiftOptionsHtml(person?.shiftId || (shifts.length === 1 ? shifts[0].id : ""))}</select>${editing ? "<small>Byt skift under Hantera i personallistan.</small>" : ""}</label>
+        </div>
+      </fieldset>
+      <fieldset><legend>Giltighetstid</legend>
+        <div class="temporary-durations" role="radiogroup" aria-label="Giltighetstid">
+          ${editing ? `<label class="temporary-chip"><input type="radio" name="duration" value="keep" checked /><span>Behåll (${escapeHtml(formatAccountEnd(account.expiresAt))})</span></label>` : ""}
+          ${TEMPORARY_DURATIONS.map(([value, label]) => `<label class="temporary-chip"><input type="radio" name="duration" value="${value}"${!editing && value === "7" ? " checked" : ""} /><span>${editing && value !== "custom" ? `${label} från nu` : label}</span></label>`).join("")}
+        </div>
+        <div class="temporary-custom" hidden>
+          <label>Slutdatum<input name="customDate" type="date" min="${formatDateKey(new Date())}" value="${tomorrow}" /></label>
+          <label>Klockan<input name="customTime" type="time" value="23:59" /></label>
+        </div>
+        <p class="temporary-end-preview" aria-live="polite"></p>
+      </fieldset>
+      <fieldset><legend>Funktioner</legend>
+        <p class="temporary-help">Personen får bara det som både rollen och de valda funktionerna tillåter. Administration, personaluppgifter, testresultat, kompetens och bedömningar ingår aldrig.</p>
+        <div class="temporary-features">
+          ${TEMPORARY_FEATURES.map(([id, label, description]) => `<label class="temporary-feature"><input type="checkbox" name="features" value="${id}"${account.features.includes(id) ? " checked" : ""} /><span><strong>${label}</strong><small>${description}</small><small class="temporary-feature-unavailable"></small></span></label>`).join("")}
+        </div>
+      </fieldset>
+      <p class="inline-message" role="status" aria-live="polite"></p>
+      <div class="temporary-actions"><button class="btn" type="button" data-action="cancel">Avbryt</button><button class="btn primary" type="submit">${editing ? "Spara ändringar" : "Skapa konto"}</button></div>
+    </form>
+  </section>`;
+  document.body.appendChild(overlay);
+  const form = overlay.querySelector("form");
+  const status = overlay.querySelector(".inline-message");
+  let cleanupFocus;
+  const close = () => { overlay.remove(); cleanupFocus?.(); };
+  cleanupFocus = manageDialogFocus(overlay.querySelector(".temporary-modal"), close);
+  overlay.querySelector('[data-action="cancel"]').addEventListener("click", close);
+  overlay.querySelector("[data-generate-password]").addEventListener("click", () => { form.elements.password.value = generateTemporaryPassword(); });
+  if (!editing) {
+    form.elements.name.addEventListener("input", () => {
+      if (!form.elements.username.dataset.touched) form.elements.username.value = suggestUsername(form.elements.name.value);
+    });
+    form.elements.username.addEventListener("input", () => { form.elements.username.dataset.touched = "1"; });
+  }
+  const custom = overlay.querySelector(".temporary-custom");
+  const preview = overlay.querySelector(".temporary-end-preview");
+  const updateDuration = () => {
+    const duration = form.elements.duration.value;
+    custom.hidden = duration !== "custom";
+    try {
+      const end = temporaryEndFrom(duration, form.elements.customDate.value, form.elements.customTime.value);
+      preview.textContent = end ? `Kontot slutar fungera ${end.toLocaleString("sv-SE", { weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}.` : "";
+    } catch (error) {
+      preview.textContent = error.message;
+    }
+  };
+  const updateFeatures = () => {
+    const role = form.elements.role.value;
+    form.querySelectorAll('[name="features"]').forEach(box => {
+      const fits = featureFitsRole(box.value, role);
+      box.disabled = !fits;
+      if (!fits) box.checked = false;
+      box.closest(".temporary-feature").querySelector(".temporary-feature-unavailable").textContent = fits ? "" : "Ingår inte i den valda rollen";
+    });
+  };
+  form.addEventListener("change", event => {
+    if (["duration", "customDate", "customTime"].includes(event.target.name)) updateDuration();
+    if (event.target.name === "role") updateFeatures();
+  });
+  form.elements.customDate.addEventListener("input", updateDuration);
+  updateDuration();
+  updateFeatures();
+  (editing ? form.elements.role : form.elements.name).focus();
+
+  bindOnce(form, "submit", async event => {
+    event.preventDefault();
+    status.textContent = "";
+    status.className = "inline-message";
+    const submit = form.querySelector('button[type="submit"]');
+    submit.disabled = true;
+    try {
+      const features = [...form.querySelectorAll('[name="features"]:checked')].map(box => box.value);
+      const end = temporaryEndFrom(form.elements.duration.value, form.elements.customDate.value, form.elements.customTime.value);
+      const password = form.elements.password.value;
+      if (password && password.length < MIN_PASSWORD_LENGTH) throw new ApiError(400, `Lösenordet måste vara minst ${MIN_PASSWORD_LENGTH} tecken.`);
+      const role = form.elements.role.value;
+      if (editing) {
+        const changes = { features };
+        if (role !== account.role) changes.role = role;
+        if (end) changes.expiresAt = end.toISOString();
+        if (password) changes.password = password;
+        await apiRequest("PATCH", `/people/${encodeURIComponent(person.id)}/account`, changes);
+        showAppToast(`${person.name} är uppdaterad.`);
+      } else {
+        const name = form.elements.name.value.trim();
+        if (!name) throw new ApiError(400, "Ange ett namn.");
+        const shiftId = form.elements.shiftId.value || null;
+        if (!shiftId && [ROLES.LEADER, ROLES.RIGHT_HAND].includes(role)) throw new ApiError(400, "En skiftledare eller höger hand måste tillhöra ett skift.");
+        await apiRequest("POST", "/people", {
+          name, company: form.elements.company.value.trim(), shiftId,
+          account: { username: form.elements.username.value.trim(), password, role, temporary: true, expiresAt: end.toISOString(), features }
+        });
+        showTemporaryAccountCreated({ name, username: normalizeLoginName(form.elements.username.value), password, end });
+      }
+      peopleCache = null;
+      close();
+      await refreshAppViews();
+    } catch (error) {
+      submit.disabled = false;
+      status.textContent = error instanceof ApiError ? error.message : "Det gick inte att spara.";
+      status.className = "inline-message error";
+    }
+  });
+}
+
+const ROLE_VALUES_FOR_TEMPORARY = () => [ROLES.OPERATOR, ROLES.SENIOR_OPERATOR, ROLES.RIGHT_HAND, ROLES.LEADER];
+const normalizeLoginName = value => String(value || "").trim().toLowerCase();
+
+// What the admin hands over to the hired person: the link, username and password, once.
+function showTemporaryAccountCreated({ name, username, password, end }) {
+  const text = `Inloggning till Staff Planner\nLänk: ${temporaryLoginLink()}\nAnvändarnamn: ${username}\nLösenord: ${password}\nGäller till: ${end.toLocaleString("sv-SE", { dateStyle: "short", timeStyle: "short" })}`;
+  const overlay = document.createElement("div");
+  overlay.className = "modal-overlay";
+  overlay.innerHTML = `<section class="replacement-modal temporary-modal temporary-created">
+    <h3>Kontot är skapat</h3>
+    <p>Ge uppgifterna till ${escapeHtml(name)}. Lösenordet visas bara nu.</p>
+    <pre class="temporary-credentials">${escapeHtml(text)}</pre>
+    <div class="temporary-actions"><button class="btn" type="button" data-copy>Kopiera</button><button class="btn primary" type="button" data-close>Klar</button></div>
+  </section>`;
+  document.body.appendChild(overlay);
+  let cleanupFocus;
+  const close = () => { overlay.remove(); cleanupFocus?.(); };
+  cleanupFocus = manageDialogFocus(overlay.querySelector(".temporary-modal"), close);
+  overlay.querySelector("[data-close]").addEventListener("click", close);
+  overlay.querySelector("[data-copy]").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      showAppToast("Inloggningsuppgifterna är kopierade.");
+    } catch {
+      showAppToast("Markera texten och kopiera den.", "error");
+    }
+  });
 }
 
 // Admins remove either just the login (the person stays in the staff list) or the
@@ -6983,6 +7301,12 @@ function loginInstructions(username, password) {
 }
 
 function renderAccountSection(person) {
+  if (person.account?.temporary) {
+    return `<p><strong>${escapeHtml(person.account.username)}</strong> · ${escapeHtml(ROLE_LABELS[person.account.role] || "")} · ${temporaryStatusBadge(person.account)}</p>
+      ${isAdmin()
+        ? `<div class="person-account-row"><button class="btn primary" type="button" data-temporary-manage="${escapeHtml(person.id)}">Hantera tillfälligt konto</button></div>`
+        : "<p>Tillfälligt konto. Det hanteras av admin.</p>"}`;
+  }
   if (person.account) {
     const lastLogin = person.account.lastLoginAt ? new Date(person.account.lastLoginAt).toLocaleString("sv-SE") : "aldrig";
     return `<p><strong>${escapeHtml(person.account.username)}</strong> · ${escapeHtml(ROLE_LABELS[person.account.role] || "")} · senast inloggad ${escapeHtml(lastLogin)}${waitsForPassword(person.account) ? " · väntar på nytt lösenord" : ""}</p>
@@ -7066,6 +7390,11 @@ async function editPerson(id) {
 
   const accountBody = overlay.querySelector(".person-account-body");
   accountBody.addEventListener("click", async event => {
+    if (event.target.closest("[data-temporary-manage]")) {
+      close();
+      openTemporaryAccountDialog(person);
+      return;
+    }
     const action = event.target.closest("[data-account-action]")?.dataset.accountAction;
     if (!action) return;
     const field = name => accountBody.querySelector(`[name="${name}"]`);
@@ -8160,7 +8489,7 @@ function getChatElements() {
 }
 
 function setupChat() {
-  if (!canManageStaff() || document.getElementById("chatWidget")) return;
+  if (!canManageStaff() || !hasFeature("chat") || document.getElementById("chatWidget")) return;
   const widget = document.createElement("div");
   widget.id = "chatWidget";
   widget.className = "chat-widget";
@@ -8338,7 +8667,7 @@ function setNotesBadge(count) {
 }
 
 async function refreshNotesBadge() {
-  if (!currentUser) return;
+  if (!currentUser || !hasFeature("notes")) return;
   try {
     setNotesBadge((await apiRequest("GET", "/notes/unread")).count);
   } catch (error) {
@@ -10005,7 +10334,9 @@ async function openAppUI(justSignedIn = false) {
     return;
   }
   if (!canOpenPage(getCurrentPage())) {
-    location.replace("index.html");
+    // A temporary account may lack the schedule; it goes to the first page it has.
+    const fallback = ["index.html", "rast.html", "anteckningar.html", "produktion.html", "profil.html"].find(canOpenPage) || "profil.html";
+    location.replace(fallback);
     return;
   }
   const linked = applyLinkedShift();
@@ -10037,6 +10368,16 @@ const AUTH_FORMS = {
     title: "Logga in",
     subtitle: "Logga in med ditt användarnamn och lösenord.",
     button: "Logga in",
+    fields: [
+      { name: "username", type: "text", label: "Användarnamn", autocomplete: "username" },
+      { name: "password", type: "password", label: "Lösenord", autocomplete: "current-password" }
+    ]
+  },
+  // Temporary accounts (hired staff) sign in here, with what the admin gave them.
+  temporaryLogin: {
+    title: "Logga in",
+    subtitle: "För inhyrd personal. Logga in med användarnamnet och lösenordet du har fått av admin.",
+    button: "Logga in med tillfälligt konto",
     fields: [
       { name: "username", type: "text", label: "Användarnamn", autocomplete: "username" },
       { name: "password", type: "password", label: "Lösenord", autocomplete: "current-password" }
@@ -10089,6 +10430,48 @@ const PASSWORD_LOGIN_KEY = "staff_password_login";
 
 function rememberLoginMethod(me) {
   setPasswordLoginPreferred(!me.user.viaMicrosoft);
+  setTemporaryLoginPreferred(Boolean(me.user.temporary));
+}
+
+// The login page has two methods: the regular one (Microsoft, or a password for staff without
+// Microsoft) and "Tillfälligt konto" for hired staff. A device where a temporary account signed
+// in, or that opened /?tillfallig, shows the temporary sign-in instead of going to Microsoft.
+const TEMPORARY_LOGIN_KEY = "staff_temporary_login";
+
+function setTemporaryLoginPreferred(preferred) {
+  try {
+    if (preferred) localStorage.setItem(TEMPORARY_LOGIN_KEY, "1");
+    else localStorage.removeItem(TEMPORARY_LOGIN_KEY);
+  } catch {
+    // Private mode: /?tillfallig still opens the temporary sign-in.
+  }
+}
+
+function prefersTemporaryLogin() {
+  try {
+    return localStorage.getItem(TEMPORARY_LOGIN_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+// The two tabs above the login form. onChange gets "regular" or "temporary".
+function renderLoginMethods(active, onChange) {
+  let tabs = document.getElementById("authMethods");
+  if (!tabs) {
+    tabs = document.createElement("div");
+    tabs.id = "authMethods";
+    tabs.className = "auth-methods";
+    tabs.setAttribute("role", "tablist");
+    tabs.setAttribute("aria-label", "Välj inloggning");
+    document.getElementById("authTitle")?.after(tabs);
+  }
+  tabs.innerHTML = [["regular", "Vanlig inloggning"], ["temporary", "Tillfälligt konto"]].map(([method, label]) =>
+    `<button type="button" role="tab" class="auth-method${method === active ? " active" : ""}" aria-selected="${method === active}" data-login-method="${method}">${label}</button>`
+  ).join("");
+  tabs.querySelectorAll("[data-login-method]").forEach(button => button.addEventListener("click", () => {
+    if (button.dataset.loginMethod !== active) onChange(button.dataset.loginMethod);
+  }));
 }
 
 function setPasswordLoginPreferred(preferred) {
@@ -10186,23 +10569,54 @@ async function continueAfterSignIn(me, justSignedIn = false) {
 }
 
 // showPassword opens the password form under the Microsoft button straight away.
-function showAuthScreen(mode, { microsoftLoginError = "", showPassword = false } = {}) {
+// temporary opens the "Tillfälligt konto" tab.
+function showAuthScreen(mode, { microsoftLoginError = "", showPassword = false, temporary = false } = {}) {
   setAuthenticatedView(false);
   document.getElementById("appShell")?.classList.add("hidden");
   document.getElementById("authScreen")?.classList.remove("hidden");
   finishInitialViewSetup();
   clearAuthMessage();
+  if (mode !== "login") document.getElementById("authMethods")?.remove();
   if (mode === "login") {
-    renderAuthForm("login", async values => {
-      try {
-        await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
-      } catch (error) {
-        // Linked to Microsoft: the password no longer works, so this device goes to Microsoft next time.
-        if (error instanceof ApiError && error.data?.code === "microsoft_required") setPasswordLoginPreferred(false);
-        throw error;
+    const showLogin = method => {
+      clearAuthMessage();
+      renderLoginMethods(method, next => {
+        setTemporaryLoginPreferred(next === "temporary");
+        showLogin(next);
+      });
+      if (method === "temporary") {
+        renderAuthForm("temporaryLogin", async values => {
+          try {
+            await continueAfterSignIn(await apiRequest("POST", "/login/temporary", { username: values.username, password: values.password }), true);
+          } catch (error) {
+            // A regular account: the regular tab is where it signs in.
+            if (error instanceof ApiError && error.data?.code === "regular_required") {
+              setTemporaryLoginPreferred(false);
+              showLogin("regular");
+              showPasswordLogin();
+            }
+            throw error;
+          }
+        });
+        return;
       }
-    }, { microsoft: microsoftLoginAvailable });
-    if (showPassword) showPasswordLogin();
+      renderAuthForm("login", async values => {
+        try {
+          await continueAfterSignIn(await apiRequest("POST", "/login", { username: values.username, password: values.password }), true);
+        } catch (error) {
+          // Linked to Microsoft: the password no longer works, so this device goes to Microsoft next time.
+          if (error instanceof ApiError && error.data?.code === "microsoft_required") setPasswordLoginPreferred(false);
+          // A temporary account signs in under its own tab.
+          if (error instanceof ApiError && error.data?.code === "temporary_required") {
+            setTemporaryLoginPreferred(true);
+            showLogin("temporary");
+          }
+          throw error;
+        }
+      }, { microsoft: microsoftLoginAvailable });
+      if (showPassword) showPasswordLogin();
+    };
+    showLogin(temporary ? "temporary" : "regular");
   } else if (mode === "setup") {
     renderAuthForm("setup", async values => {
       checkNewPassword(values.password, values.confirm);
@@ -10247,15 +10661,18 @@ async function setupAuthUI() {
   const setup = await apiRequest("GET", "/setup");
   microsoftLoginAvailable = Boolean(setup.microsoftLogin);
   const showPassword = takeLinkParam("losenord") || prefersPasswordLogin();
+  // /?tillfallig: the link admin gives hired staff. The device remembers it.
+  if (takeLinkParam("tillfallig")) setTemporaryLoginPreferred(true);
+  const temporary = prefersTemporaryLogin();
   // Straight on to Microsoft without a click, unless the login page has something to show:
   // a problem, a sign-out notice, a sign-in that came back without a session (so it never
   // loops) or the password form.
-  const stayOnLoginPage = setup.needsSetup || microsoftLoginError || backFromMicrosoft || showPassword || sessionStorage.getItem(AUTH_NOTICE_KEY);
+  const stayOnLoginPage = setup.needsSetup || microsoftLoginError || backFromMicrosoft || showPassword || temporary || sessionStorage.getItem(AUTH_NOTICE_KEY);
   if (microsoftLoginAvailable && !stayOnLoginPage) {
     goToMicrosoftLogin();
     return;
   }
-  showAuthScreen(setup.needsSetup ? "setup" : "login", { microsoftLoginError, showPassword });
+  showAuthScreen(setup.needsSetup ? "setup" : "login", { microsoftLoginError, showPassword, temporary });
 }
 
 // Avoid flashing the login screen between pages while the session is checked.

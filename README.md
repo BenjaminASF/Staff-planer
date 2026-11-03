@@ -122,6 +122,20 @@ Railway kontrollerar `/api/health` vid varje driftsättning (se [`railway.json`]
 
 Admin och skiftledare skapar inloggningar under **Lägg till** eller via **Redigera** på personalsidan. Personen får ett användarnamn och ett tillfälligt lösenord och väljer ett eget lösenord vid första inloggningen. Glömda lösenord återställs på samma sätt.
 
+### Tillfälliga konton (inhyrd personal)
+
+Inloggningssidan har två flikar: **Vanlig inloggning** (Microsoft, eller lösenord för personal utan Microsoft-konto, precis som förut) och **Tillfälligt konto**. Den som öppnar appen skickas som vanligt direkt till Microsoft. Inhyrd personal får i stället länken `https://<appens adress>/?tillfallig`, som öppnar fliken **Tillfälligt konto**. Enheten kommer ihåg det, så nästa gång visas fliken direkt.
+
+Bara **admin** skapar och ändrar tillfälliga konton, under **Användare → Tillfälliga konton**:
+
+- **Namn, användarnamn och lösenord.** Lösenordet kan genereras. Det hashas med scrypt som alla andra lösenord. Personen behöver inte byta det, men kan göra det under **Min profil**. Efter att kontot har skapats visas uppgifterna en gång, färdiga att kopiera, tillsammans med länken.
+- **Roll och skift.** Alla roller utom admin. Personen finns i personallistan och kan schemaläggas som annan personal.
+- **Giltighetstid.** 1 dag, 7 dagar, 30 dagar eller ett eget slutdatum (högst ett år i taget). Kontot slutar fungera vid slutdatumet: inloggningen nekas och en öppen session slutar gälla direkt.
+- **Funktioner.** Schema, Rast, Produktion, Anteckningar och Chatt. Inget är valt från början. Personen får bara det som både rollen och funktionerna tillåter, till exempel kräver Chatt rollen Skiftledare eller Höger hand.
+- **Inaktivera, aktivera, förläng och ta bort** när som helst. Inaktivering och borttagning loggar ut personen direkt. Skapande och ändringar syns i ändringshistoriken.
+
+Ett tillfälligt konto når aldrig administration (användare, roller, inställningar, maskiner, backup, historik), testresultat, kompetens, bedömningar eller andra personers kontaktuppgifter, oavsett roll. Det ser bara sitt eget skift. Servern släpper bara igenom en uttrycklig lista med adresser för tillfälliga konton (`temporaryMayCall` i [`server/permissions.js`](server/permissions.js)), och kontrollerar dessutom roll och funktioner som vanligt. Tillfälliga konton kan inte logga in med Microsoft eller via fliken Vanlig inloggning, och vanliga konton kan inte logga in via fliken Tillfälligt konto. Samma spärr mot för många felaktiga inloggningsförsök gäller. Utgångna och inaktiverade konton får inga pushnotiser eller mejl. Skiftledare kan ändra status för inhyrd personal i sitt skift, men inte deras inloggning.
+
 ### Inloggning med Microsoft
 
 Med en appregistrering i Microsoft Entra ID loggar personalen in med sitt Microsoft-jobbkonto. Den som öppnar appen utan att vara inloggad skickas direkt till Microsofts inloggning, utan något klick, och kommer sedan tillbaka till sidan den öppnade. Är man redan inloggad hos Microsoft i webbläsaren kommer man in direkt, utan att Microsoft frågar något.

@@ -1,3 +1,4 @@
+const { ACCOUNT_ACTIVE_SQL } = require("./auth");
 const webPush = require("web-push");
 const { OPERATOR_ROLES, canReadDocument, canUseChat, sharedFlagKey, weekRequiringShare } = require("./permissions");
 const { newId, readDocuments, currentWeekKey, isoWeekNumber, NOTE_VISIBLE_SQL, isPlainObject } = require("./store");
@@ -109,7 +110,7 @@ async function queuePush(db, targets, { kind, key = kind, ref = {}, exceptUserId
                                 WHERE o.user_id = u.id AND o.dedupe_key = $5 AND o.sent_at IS NOT NULL), '-infinity') + make_interval(secs => $8))
        FROM unnest($1::text[], $2::text[], $3::bigint[]) AS t(user_id, notification_id, message_id)
        JOIN users u ON u.id = t.user_id
-      WHERE NOT u.push_blocked AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.user_id = u.id)
+      WHERE NOT u.push_blocked AND ${ACCOUNT_ACTIVE_SQL} AND EXISTS (SELECT 1 FROM push_subscriptions s WHERE s.user_id = u.id)
      ON CONFLICT (user_id, dedupe_key) WHERE sent_at IS NULL DO NOTHING`,
     [
       items.map(item => item.userId), items.map(item => item.notificationId ?? null), items.map(item => item.messageId ?? null),
@@ -179,9 +180,13 @@ function placementWeek(key) {
   return PLACEMENT_PREFIXES.includes(prefix) && WEEK_KEY.test(week || "") ? week : null;
 }
 
+// Only logins that may be used now: expired and disabled temporary accounts get nothing.
 const loadUsers = async (db, where, params) => (await db.query(
-  `SELECT u.id, u.role, u.push_blocked, p.shift_id FROM users u JOIN people p ON p.id = u.person_id WHERE ${where}`, params
-)).rows.map(row => ({ id: row.id, role: row.role, shiftId: row.shift_id, pushBlocked: row.push_blocked }));
+  `SELECT u.id, u.role, u.push_blocked, p.shift_id, u.temporary, u.features
+     FROM users u JOIN people p ON p.id = u.person_id WHERE (${where}) AND ${ACCOUNT_ACTIVE_SQL}`, params
+)).rows.map(row => ({
+  id: row.id, role: row.role, shiftId: row.shift_id, pushBlocked: row.push_blocked, temporary: row.temporary, features: row.features || []
+}));
 
 // Whether the user sees the shift's schedule for the week: operators only once it is shared.
 async function seesWeek(db, user, scope, week, sharedCache = {}) {

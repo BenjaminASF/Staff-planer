@@ -1,3 +1,4 @@
+const { ACCOUNT_ACTIVE_SQL } = require("../auth");
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { canUseChat, canDeleteChatMessage } = require("../permissions");
@@ -55,6 +56,9 @@ function parseMessageId(value) {
   return /^\d{1,18}$/.test(id) ? id : null;
 }
 
+// Users who can be written to: active, and temporary accounts only with the chat ticked.
+const CHAT_MEMBER_SQL = `${ACCOUNT_ACTIVE_SQL} AND (NOT u.temporary OR 'chat' = ANY(u.features))`;
+
 function chatRoutes({ pool }) {
   const router = express.Router();
   router.use(requireUser, (req, res, next) => {
@@ -85,7 +89,7 @@ function chatRoutes({ pool }) {
   router.get("/members", async (req, res) => {
     const { rows } = await pool.query(
       `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id
-        WHERE u.role = ANY($1) AND u.id <> $2 ORDER BY lower(p.name)`,
+        WHERE u.role = ANY($1) AND u.id <> $2 AND ${CHAT_MEMBER_SQL} ORDER BY lower(p.name)`,
       [CHAT_ROLES, req.user.id]
     );
     res.json({ members: rows.map(row => ({ id: row.id, name: row.name })) });
@@ -99,7 +103,7 @@ function chatRoutes({ pool }) {
     let recipient = null;
     if (req.body?.recipientId) {
       const result = await pool.query(
-        `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id WHERE u.id = $1 AND u.role = ANY($2)`,
+        `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id WHERE u.id = $1 AND u.role = ANY($2) AND ${CHAT_MEMBER_SQL}`,
         [String(req.body.recipientId), CHAT_ROLES]
       );
       recipient = result.rows[0];
