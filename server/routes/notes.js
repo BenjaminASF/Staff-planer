@@ -140,12 +140,9 @@ const idList = (value, label) => {
 const SHARE_DENIED = "Du kan inte dela anteckningar.";
 
 // Why the user may not put someone with this role on a note.
-function roleDeniedMessage(user, role) {
-  if (role === ROLES.OPERATOR) return "Operatörer har inte tillgång till Anteckningar.";
-  if (role === ROLES.ADMIN && user.role === ROLES.SENIOR_OPERATOR) return "Senior operatörer kan inte dela anteckningar med admin.";
-  if (role === ROLES.SENIOR_OPERATOR && user.role === ROLES.ADMIN) return "Admin kan inte dela anteckningar med senior operatörer.";
-  return "Du kan inte dela anteckningar med den personen.";
-}
+const roleDeniedMessage = role => role === ROLES.OPERATOR
+  ? "Operatörer har inte tillgång till Anteckningar."
+  : "Du kan inte dela anteckningar med den personen.";
 
 // Checks the chosen people and whole shifts against what the user may share with
 // (see "Anteckningar" in permissions.js).
@@ -167,13 +164,8 @@ async function cleanSharing(db, user, body) {
     );
     if (rows.length !== people.length) throw new HttpError(400, "En av mottagarna finns inte.");
     const denied = rows.find(row => !roles.includes(row.role));
-    if (denied) throw new HttpError(403, roleDeniedMessage(user, denied.role));
+    if (denied) throw new HttpError(403, roleDeniedMessage(denied.role));
     if (allowed && !rows.every(row => allowed.includes(row.shift_id))) throw new HttpError(403, "Du kan bara dela med personer i ditt eget skift.");
-    // Shift leaders and right hands may pick an admin, but then no senior operators.
-    if (rows.some(row => row.role === ROLES.ADMIN) && user.role !== ROLES.ADMIN
-      && (wholeShifts.length || rows.some(row => row.role === ROLES.SENIOR_OPERATOR))) {
-      throw new HttpError(403, "En anteckning som delas med admin kan inte också delas med senior operatörer eller hela gruppen.");
-    }
   }
   return { people, wholeShifts };
 }
@@ -242,9 +234,8 @@ function noteRoutes({ pool }) {
     // Admins and senior operators can also reach users without a shift, such as other admins.
     const withoutShift = people.rows.filter(row => !row.shift_id || !shifts.rows.some(shift => shift.id === row.shift_id)).map(person);
     if (!allowed && withoutShift.length) groups.push({ id: null, name: "Utan skift", people: withoutShift });
-    // "Hela gruppen" reaches these roles in the shift (an admin only on an admin's note).
-    const wholeShiftRoles = roles.filter(role => role !== ROLES.ADMIN || req.user.role === ROLES.ADMIN);
-    res.json({ groups, wholeShiftRoles });
+    // "Hela gruppen" reaches these roles in the shift: everyone but operators.
+    res.json({ groups, wholeShiftRoles: roles });
   });
 
   router.post("/", async (req, res) => {

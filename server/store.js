@@ -10,20 +10,13 @@ const SHIFT_SCOPE_SQL = `scope <> 'global' AND scope NOT LIKE '${PERSONAL_SCOPE_
 
 // Whether a viewer may see the note n. `id`, `role` and `shift` are SQL expressions for the
 // viewer's user id, role and shift id. The roles are read as they are now, so the rules in
-// permissions.js ("Anteckningar") hold even after someone changes role:
-// - operators see no notes, and notes written by an operator are seen by nobody;
-// - a whole shift reaches an admin only on an admin's note;
-// - admins never see a note written by or shared one by one with a senior operator, nor a
-//   note of someone else's that is shared with a whole shift (it may hold senior operators);
-// - senior operators never see a note written by or shared one by one with an admin.
+// permissions.js ("Anteckningar") hold even after someone changes role: operators see no
+// notes, and notes written by an operator are seen by nobody.
 function noteAccessSql({ id, role, shift }) {
   const author = "(SELECT au.role FROM users au WHERE au.id = n.author_id)";
-  const pickedRole = picked => `EXISTS (SELECT 1 FROM note_people xp JOIN users xu ON xu.id = xp.user_id WHERE xp.note_id = n.id AND xu.role = '${picked}')`;
   return `(${role} IS DISTINCT FROM 'operator' AND ${author} <> 'operator' AND (n.author_id = ${id} OR (n.kind = 'group'
   AND (EXISTS (SELECT 1 FROM note_people np WHERE np.note_id = n.id AND np.user_id = ${id})
-       OR (${shift}::text = ANY(n.whole_shifts) AND (${role} <> 'admin' OR ${author} = 'admin')))
-  AND (${role} <> 'admin' OR (${author} <> 'senior_operator' AND NOT ${pickedRole("senior_operator")} AND (${author} = 'admin' OR n.whole_shifts = '{}')))
-  AND (${role} <> 'senior_operator' OR (${author} <> 'admin' AND NOT ${pickedRole("admin")})))))`;
+       OR ${shift}::text = ANY(n.whole_shifts)))))`;
 }
 
 // Notes the user may see, for a query on notes n. $1 is the user's id, $2 their shift id (or null).

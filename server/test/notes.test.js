@@ -127,93 +127,67 @@ describe("anteckningar", () => {
     assert.equal((await leader.post("/api/notes", { kind: "group", text: "Hej", people: [otherSeniorUser.id] })).status, 403);
     assert.equal((await rightHand.post("/api/notes", { kind: "group", text: "Hej", wholeShifts: [eveningShift.id] })).status, 403);
     assert.equal((await leader.post("/api/notes", { kind: "group", text: "Hej" })).status, 400, "a group note needs a recipient");
-    const groups = (await rightHand.get("/api/notes/recipients")).data.groups;
-    assert.deepEqual(groups.map(group => group.id), [dayShift.id]);
-    assert.deepEqual(groups[0].people.map(person => person.id).sort(), [otherAdminUser.id, leaderUser.id, seniorUser.id].sort());
+    const recipients = (await rightHand.get("/api/notes/recipients")).data;
+    assert.deepEqual(recipients.groups.map(group => group.id), [dayShift.id]);
+    assert.deepEqual(recipients.groups[0].people.map(person => person.id).sort(), [otherAdminUser.id, leaderUser.id, seniorUser.id].sort());
+    assert.deepEqual(recipients.wholeShiftRoles.sort(), ["admin", "right_hand", "senior_operator", "shift_leader"]);
 
     const whole = await rightHand.post("/api/notes", { kind: "group", text: "Möte 14.00", wholeShifts: [dayShift.id] });
     assert.equal(whole.status, 201);
-    assert.deepEqual(recipientsOf(whole.data.note), [leaderUser.id, seniorUser.id].sort(), "the whole shift: leaders, right hands and senior operators, no admin");
-    assert.ok(!(await sees(otherAdmin, whole.data.note.id)));
+    assert.deepEqual(recipientsOf(whole.data.note), [otherAdminUser.id, leaderUser.id, seniorUser.id].sort(), "the whole shift: everyone in it but operators");
+    assert.ok(await sees(otherAdmin, whole.data.note.id));
+    assert.ok(!(await sees(admin, whole.data.note.id)), "an admin outside the shift is not in it");
     await rightHand.delete(`/api/notes/${whole.data.note.id}`);
   });
 
-  test("admins share with anyone but senior operators, and a whole shift includes its later members", async () => {
-    const groups = (await admin.get("/api/notes/recipients")).data;
-    assert.deepEqual(groups.groups.map(group => group.id), [dayShift.id, eveningShift.id], "shifts without anyone to share with are left out");
-    assert.deepEqual(groups.wholeShiftRoles.sort(), ["admin", "right_hand", "shift_leader"]);
+  test("admins share with anyone in any shift, and a whole shift includes its later members", async () => {
+    const recipients = (await admin.get("/api/notes/recipients")).data;
+    assert.deepEqual(recipients.groups.map(group => group.id), [dayShift.id, eveningShift.id], "shifts without anyone to share with are left out");
+    assert.deepEqual(recipients.wholeShiftRoles.sort(), ["admin", "right_hand", "senior_operator", "shift_leader"]);
     const people = await pickable(admin);
-    assert.ok(!people.includes(seniorUser.id) && !people.includes(otherSeniorUser.id), "senior operators are not offered");
-
-    const toSenior = await admin.post("/api/notes", { kind: "group", text: "Hej", people: [seniorUser.id] });
-    assert.equal(toSenior.status, 403);
-    assert.equal(toSenior.data.error, "Admin kan inte dela anteckningar med senior operatörer.");
+    assert.ok([otherAdminUser.id, leaderUser.id, rightHandUser.id, seniorUser.id, otherLeaderUser.id, otherSeniorUser.id].every(id => people.includes(id)));
 
     const created = await admin.post("/api/notes", { kind: "group", text: "Brandövning tisdag", wholeShifts: [eveningShift.id], people: [leaderUser.id] });
     assert.equal(created.status, 201);
     const id = created.data.note.id;
-    assert.deepEqual(recipientsOf(created.data.note), [leaderUser.id, otherLeaderUser.id].sort(), "no senior operators or operators in the whole shift");
-    for (const client of [otherSenior, otherOperator, rightHand]) assert.ok(!(await sees(client, id)));
+    assert.deepEqual(recipientsOf(created.data.note), [leaderUser.id, otherLeaderUser.id, otherSeniorUser.id].sort(), "no operators in the whole shift");
+    for (const client of [otherOperator, rightHand]) assert.ok(!(await sees(client, id)));
 
     const newcomer = server.client();
     await admin.post("/api/people", { name: "Nina Ny", shiftId: eveningShift.id, account: { username: "nina", password: PASSWORD, role: "right_hand", mustChangePassword: false } });
     await newcomer.login("nina", PASSWORD);
     const seen = (await notesOf(newcomer)).notes.find(note => note.id === id);
     assert.equal(seen?.unread, true);
-
-    const dayWhole = await admin.post("/api/notes", { kind: "group", text: "Till dagskiftet", wholeShifts: [dayShift.id] });
-    assert.deepEqual(recipientsOf(dayWhole.data.note), [otherAdminUser.id, leaderUser.id, rightHandUser.id].sort(), "an admin's whole shift includes admins in it");
-    assert.ok(!(await sees(senior, dayWhole.data.note.id)));
   });
 
-  test("senior operators share with shift leaders, right hands and senior operators in any shift, never admins", async () => {
-    const recipients = (await senior.get("/api/notes/recipients")).data;
-    assert.deepEqual(recipients.groups.map(group => group.id), [dayShift.id, eveningShift.id]);
-    assert.deepEqual(recipients.wholeShiftRoles.sort(), ["right_hand", "senior_operator", "shift_leader"]);
-    const people = recipients.groups.flatMap(group => group.people.map(person => person.id));
-    assert.ok(!people.includes(adminUser.id) && !people.includes(otherAdminUser.id), "admins are not offered");
-    assert.ok([leaderUser.id, rightHandUser.id, otherLeaderUser.id, otherSeniorUser.id].every(id => people.includes(id)));
+  test("admins and senior operators share notes with each other, one by one and as a whole shift", async () => {
+    const people = (await senior.get("/api/notes/recipients")).data.groups.flatMap(group => group.people.map(person => person.id));
+    assert.ok([adminUser.id, otherAdminUser.id, leaderUser.id, rightHandUser.id, otherLeaderUser.id, otherSeniorUser.id].every(id => people.includes(id)), "a senior operator picks admins and anyone in any shift");
+    assert.ok(!people.includes(operatorUser.id) && !people.includes(otherOperatorUser.id));
 
-    for (const admins of [[adminUser.id], [otherAdminUser.id]]) {
-      const denied = await senior.post("/api/notes", { kind: "group", text: "Hej", people: admins });
-      assert.equal(denied.status, 403);
-      assert.equal(denied.data.error, "Senior operatörer kan inte dela anteckningar med admin.");
-    }
+    const toAdmin = await senior.post("/api/notes", { kind: "group", text: "GD-3 läcker lim", people: [adminUser.id, otherLeaderUser.id] });
+    assert.equal(toAdmin.status, 201);
+    assert.deepEqual(recipientsOf(toAdmin.data.note), [adminUser.id, otherLeaderUser.id].sort());
+    assert.ok(await sees(admin, toAdmin.data.note.id));
+    assert.ok((await noteKinds(admin)).includes("noteShared"));
+    assert.equal((await admin.post(`/api/notes/${toAdmin.data.note.id}/comments`, { text: "Tack, jag kollar." })).status, 201);
+    assert.ok((await noteKinds(senior)).includes("noteComment"));
 
-    const one = await senior.post("/api/notes", { kind: "group", text: "Maskin 4 låter konstigt", people: [otherLeaderUser.id, otherSeniorUser.id] });
-    assert.equal(one.status, 201);
-    assert.deepEqual(recipientsOf(one.data.note), [otherLeaderUser.id, otherSeniorUser.id].sort());
-    assert.ok(await sees(otherSenior, one.data.note.id));
-    assert.ok((await noteKinds(otherLeader)).includes("noteShared"));
+    const toSenior = await admin.post("/api/notes", { kind: "group", text: "Inventering fredag", people: [seniorUser.id, otherSeniorUser.id] });
+    assert.equal(toSenior.status, 201);
+    assert.ok(await sees(senior, toSenior.data.note.id));
+    assert.ok(await sees(otherSenior, toSenior.data.note.id));
 
-    const whole = await senior.post("/api/notes", { kind: "group", text: "Till hela dagskiftet", wholeShifts: [dayShift.id] });
-    assert.equal(whole.status, 201);
-    assert.deepEqual(recipientsOf(whole.data.note), [leaderUser.id, rightHandUser.id].sort(), "Bodil (admin) and Olle (operator) are not in it");
-    for (const client of [otherAdmin, admin, operator]) assert.ok(!(await sees(client, whole.data.note.id)));
-    assert.equal((await admin.patch(`/api/notes/${whole.data.note.id}`, { priority: true })).status, 404, "admins cannot reach it at all");
-  });
+    const seniorWhole = await senior.post("/api/notes", { kind: "group", text: "Till hela dagskiftet", wholeShifts: [dayShift.id] });
+    assert.deepEqual(recipientsOf(seniorWhole.data.note), [otherAdminUser.id, leaderUser.id, rightHandUser.id].sort(), "Bodil (admin) is in the whole shift, Olle (operator) is not");
+    assert.ok(!(await sees(operator, seniorWhole.data.note.id)));
+    const adminWhole = await admin.post("/api/notes", { kind: "group", text: "Till dagskiftet", wholeShifts: [dayShift.id] });
+    assert.deepEqual(recipientsOf(adminWhole.data.note), [otherAdminUser.id, leaderUser.id, rightHandUser.id, seniorUser.id].sort());
 
-  test("an admin and a senior operator never share a note, even after a role change", async () => {
-    const mixed = await leader.post("/api/notes", { kind: "group", text: "Hej", people: [otherAdminUser.id, seniorUser.id] });
-    assert.equal(mixed.status, 403);
-    assert.equal(mixed.data.error, "En anteckning som delas med admin kan inte också delas med senior operatörer eller hela gruppen.");
-    assert.equal((await leader.post("/api/notes", { kind: "group", text: "Hej", people: [otherAdminUser.id], wholeShifts: [dayShift.id] })).status, 403);
-
-    const withAdmin = await leader.post("/api/notes", { kind: "group", text: "Till Bodil och Hanna", people: [otherAdminUser.id, rightHandUser.id] });
-    assert.equal(withAdmin.status, 201);
-    const id = withAdmin.data.note.id;
-    assert.ok(await sees(otherAdmin, id));
-    assert.equal((await leader.patch(`/api/notes/${id}`, { people: [otherAdminUser.id, seniorUser.id] })).status, 403, "the same rule when changing it");
-
-    // Hanna becomes a senior operator: the admin no longer sees the note, nor does Hanna.
-    const hanna = (await admin.get("/api/people")).data.people.find(person => person.account?.username === "hanna");
-    assert.equal((await admin.patch(`/api/people/${hanna.id}/account`, { role: "senior_operator" })).status, 200);
-    assert.ok(!(await sees(otherAdmin, id)));
-    assert.ok(!(await sees(rightHand, id)));
-    assert.ok(!(await otherAdmin.get("/api/notifications")).data.notifications.some(note => note.noteId === id), "nor its notification");
-    assert.equal((await admin.patch(`/api/people/${hanna.id}/account`, { role: "right_hand" })).status, 200);
-    assert.ok(await sees(otherAdmin, id));
-    await leader.delete(`/api/notes/${id}`);
+    const mixed = await leader.post("/api/notes", { kind: "group", text: "Till Bodil och Sara", people: [otherAdminUser.id, seniorUser.id], wholeShifts: [dayShift.id] });
+    assert.equal(mixed.status, 201, "shift leaders put an admin and senior operators on the same note");
+    assert.ok(await sees(otherAdmin, mixed.data.note.id));
+    assert.ok(await sees(senior, mixed.data.note.id));
   });
 
   test("changing who a note is shared with notifies new people and cuts off removed ones", async () => {
@@ -224,7 +198,7 @@ describe("anteckningar", () => {
 
     const changed = await leader.patch(`/api/notes/${id}`, { people: [seniorUser.id], wholeShifts: [dayShift.id] });
     assert.equal(changed.status, 200);
-    assert.deepEqual(recipientsOf(changed.data.note), [seniorUser.id, rightHandUser.id].sort());
+    assert.deepEqual(recipientsOf(changed.data.note), [otherAdminUser.id, seniorUser.id, rightHandUser.id].sort(), "the whole day shift, Bodil (admin) included");
 
     const removed = await leader.patch(`/api/notes/${id}`, { people: [seniorUser.id], wholeShifts: [] });
     assert.deepEqual(recipientsOf(removed.data.note), [seniorUser.id]);
@@ -271,7 +245,8 @@ describe("anteckningar", () => {
     assert.deepEqual(first.data.note.comments.map(comment => [comment.authorId, comment.text, comment.canDelete]), [[seniorUser.id, "Har ni testat den?", true]]);
     assert.ok((await noteKinds(otherSenior)).includes("noteComment"), "the author hears about it");
     assert.ok((await noteKinds(otherLeader)).includes("noteComment"), "and so do the other recipients");
-    assert.ok(!(await noteKinds(senior)).includes("noteComment"), "but not the one who wrote it");
+    const commentNotices = async client => (await client.get("/api/notifications")).data.notifications.filter(note => note.kind === "noteComment" && note.noteId === id);
+    assert.equal((await commentNotices(senior)).length, 0, "but not the one who wrote it");
 
     assert.equal((await otherLeader.post(`/api/notes/${id}/comments`, { text: "Ja, den fungerar." })).status, 201);
     assert.equal((await otherSenior.post(`/api/notes/${id}/comments`, { text: "Tack!" })).status, 201);
@@ -342,7 +317,7 @@ describe("anteckningar", () => {
     assert.ok(await sees(otherSenior, own));
   });
 
-  test("the update removes operators' notes for good and parts admins from senior operators", async () => {
+  test("the update removes operators' notes for good and leaves everyone else's", async () => {
     const pool = server.pool;
     const insert = (id, author, kind, wholeShifts = []) => pool.query(
       "INSERT INTO notes (id, author_id, kind, body, whole_shifts) VALUES ($1, $2, $3, $1, $4)", [id, author, kind, wholeShifts]
@@ -363,7 +338,7 @@ describe("anteckningar", () => {
     await share("lisa-to-olle", rightHandUser.id);
     await state("lisa-to-olle", operatorUser.id);
     await notify("lisa-to-olle", operatorUser.id);
-    // Admins and senior operators on the same notes.
+    // Admins and senior operators on the same notes stay as they are.
     await insert("ada-to-sara", adminUser.id, "group");
     await share("ada-to-sara", seniorUser.id);
     await share("ada-to-sara", leaderUser.id);
@@ -382,14 +357,14 @@ describe("anteckningar", () => {
     assert.deepEqual(left, ["ada-to-sara", "leader-personal", "lisa-to-bodil", "lisa-to-both", "lisa-to-olle"], "only the operator's notes are gone");
     const on = async note => (await pool.query("SELECT user_id FROM note_people WHERE note_id = $1", [note])).rows.map(row => row.user_id).sort();
     assert.deepEqual(await on("lisa-to-olle"), [rightHandUser.id]);
-    assert.deepEqual(await on("ada-to-sara"), [leaderUser.id]);
-    assert.deepEqual(await on("lisa-to-both"), [seniorUser.id]);
-    assert.deepEqual(await on("lisa-to-bodil"), [otherAdminUser.id], "an admin stays on a note without senior operators");
+    assert.deepEqual(await on("ada-to-sara"), [seniorUser.id, leaderUser.id].sort());
+    assert.deepEqual(await on("lisa-to-both"), [otherAdminUser.id, seniorUser.id].sort());
+    assert.deepEqual(await on("lisa-to-bodil"), [otherAdminUser.id]);
     const count = async (sql, params) => (await pool.query(sql, params)).rows[0].n;
     assert.equal(await count("SELECT count(*)::int AS n FROM note_states WHERE user_id = $1", [operatorUser.id]), 0);
     assert.equal(await count("SELECT count(*)::int AS n FROM notifications WHERE user_id = $1 AND note_id IS NOT NULL", [operatorUser.id]), 0);
-    assert.equal(await count("SELECT count(*)::int AS n FROM notifications WHERE note_id = 'ada-to-sara' AND user_id = $1", [seniorUser.id]), 0);
-    assert.equal(await count("SELECT count(*)::int AS n FROM notifications WHERE note_id = 'lisa-to-both' AND user_id = $1", [otherAdminUser.id]), 0);
+    assert.equal(await count("SELECT count(*)::int AS n FROM notifications WHERE note_id = 'ada-to-sara' AND user_id = $1", [seniorUser.id]), 1);
+    assert.equal(await count("SELECT count(*)::int AS n FROM notifications WHERE note_id = 'lisa-to-both' AND user_id = $1", [otherAdminUser.id]), 1);
     assert.equal(await count("SELECT count(*)::int AS n FROM note_comments WHERE note_id = 'olle-group'", []), 0);
     assert.equal(await count("SELECT count(*)::int AS n FROM notifications WHERE note_id = 'olle-group'", []), 0);
   });

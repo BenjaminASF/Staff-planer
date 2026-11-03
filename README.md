@@ -28,7 +28,7 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Ta bort användare från sidan Användare | ✓ | | | | |
 | Chatt med text och bilder | ✓ | ✓ | ✓ | | |
 | Egna anteckningar på anslagstavlan (**Anteckningar → Mina anteckningar**) | ✓ | ✓ | ✓ | ✓ | |
-| Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Admin, skiftledare och höger hand i alla skift | Eget skift, inklusive senior operatörer | Eget skift, inklusive senior operatörer | Skiftledare, höger hand och senior operatörer i alla skift | |
+| Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Alla skift | Eget skift | Eget skift | Alla skift | |
 | Kommentera delade anteckningar som man är med på | ✓ | ✓ | ✓ | ✓ | |
 | Ta bort personal och användare, ändra roller | ✓ | | | | |
 | Skapa och ta bort skift, backup och import | ✓ | | | | |
@@ -71,10 +71,10 @@ Operatörer ser en veckas schema och rastplan först när admin eller skiftledar
 
 - **Mina anteckningar** är privata. Ingen annan ser dem, inte heller admin.
 - **Gruppens anteckningar**: admin, skiftledare, höger hand och senior operatörer väljer med **Dela med** exakt vilka som ska se en lapp. De söker på namn, kryssar i en eller flera personer eller väljer **Dela med hela gruppen** för ett skift. Den som inte har valts ser inte lappen, inte heller admin. Hela gruppen gäller också den som börjar i skiftet senare.
-  - **Admin** delar med admin, skiftledare och höger hand i alla skift, aldrig med senior operatörer. Hela gruppen betyder skiftets admin, skiftledare och höger hand.
-  - **Skiftledare och höger hand** delar med skiftledare, höger hand och senior operatörer i sitt eget skift. Hela gruppen betyder skiftets skiftledare, höger hand och senior operatörer. De kan också välja en admin i skiftet, men då kan lappen inte samtidigt delas med senior operatörer eller hela gruppen.
-  - **Senior operatörer** delar med skiftledare, höger hand och andra senior operatörer i alla skift, aldrig med admin. Hela gruppen betyder skiftets skiftledare, höger hand och senior operatörer.
-  - Admin och senior operatörer är alltså aldrig med på samma lapp. Servern kontrollerar det varje gång lapparna visas, så regeln håller även om någon byter roll senare. Den som blir operatör förlorar Anteckningar, och lappar som en operatör har skrivit syns inte för någon.
+  - Mottagarna kan ha alla roller utom operatör: admin, skiftledare, höger hand och senior operatörer.
+  - **Admin och senior operatörer** väljer bland personer i alla skift. **Skiftledare och höger hand** väljer bara bland personer i sitt eget skift.
+  - **Hela gruppen** betyder alla i skiftet utom operatörer, oavsett vem som skriver lappen.
+  - Servern kontrollerar varje gång lapparna visas att operatörer inte är med, så regeln håller även om någon byter roll senare. Den som blir operatör förlorar Anteckningar, och lappar som en operatör har skrivit syns inte för någon.
 - **Kommentarer**: alla som är med på en delad lapp kan skriva kommentarer under den. Var och en tar bort sina egna kommentarer. De andra på lappen får en notis om nya kommentarer. Kommentarerna försvinner med lappen.
 - **Notiser**: mottagarna får en notis och ser lappen som **NY** tills de har öppnat den. Den som läggs till i efterhand får en notis. Den som tas bort förlorar lappen, notisen och sina markeringar direkt. Författaren ser vilka som har läst.
 - **Ändra**: bara den som skrev lappen ändrar text, färg och mottagare och tar bort den. De andra på lappen kommenterar. Var och en markerar själv en lapp som **klar**.
@@ -83,7 +83,7 @@ Operatörer ser en veckas schema och rastplan först när admin eller skiftledar
 
 **Anteckningar** ersätter den tidigare listan **Att göra**. Uppgifter som inte var klara flyttades till ägarens **Mina anteckningar**, och gamla länkar till Att göra leder hit.
 
-När rollreglerna ovan infördes (migrationen `024_notes_roles_and_comments.sql`) raderades alla anteckningar som operatörer hade skrivit, egna och delade, för gott, med deras mottagare, markeringar och notiser. Operatörer togs bort från andras lappar. Där admin och senior operatörer fanns på samma lapp togs senior operatörerna bort från admins lappar och admin från övriga. Inga anteckningar som andra roller skrivit raderades.
+När rollreglerna ovan infördes (migrationen `024_notes_roles_and_comments.sql`) raderades alla anteckningar som operatörer hade skrivit, egna och delade, för gott, med deras mottagare, markeringar och notiser. Operatörer togs bort från andras lappar. Inga anteckningar som andra roller skrivit raderades.
 
 ### Mejl när schemat delas
 

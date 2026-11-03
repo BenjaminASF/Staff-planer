@@ -30,18 +30,12 @@
 //                only by an admin, shift leader or right hand.
 //
 // Anteckningar (notes): operators have no notes at all. Everyone else has a private
-// board and writes group notes, choosing exactly who sees each one (one by one, or a
-// whole shift):
-//   Admin            – admins, shift leaders and right hands in any shift, never senior
-//                      operators.
-//   Skiftledare,     – anyone with notes in their own shift: shift leaders, right hands,
-//   Höger hand         senior operators, and an admin picked one by one. A note with an
-//                      admin on it is not also shared with senior operators or a whole shift.
-//   Senior operatör  – shift leaders, right hands and senior operators in any shift, never
-//                      admins.
-// So an admin and a senior operator never share a note; the rule is checked again every
-// time notes are read (noteAccessSql in store.js), so a later role change cannot break it.
-// Nobody else sees a group note, admins included. Only the author changes a note's text,
+// board and writes group notes, choosing exactly who sees each one, one by one or a whole
+// shift. Recipients may have any role but operator: admins and senior operators share
+// with anyone in any shift, shift leaders and right hands with people in their own shift.
+// A whole shift means everyone in it but operators, including people who join it later.
+// Operators are kept off notes every time notes are read (noteAccessSql in store.js), so
+// this holds after a role change too. Nobody else sees a group note, admins included. Only the author changes a note's text,
 // color and recipients; everyone on a group note comments on it, and removes their own
 // comments. The priority mark is set by the author and, on a group note they can see, by
 // an admin.
@@ -379,15 +373,10 @@ function noteShareShifts(user) {
   return canShareNotes(user) && user.shiftId ? [user.shiftId] : [];
 }
 
-// The roles a user may put on their group notes.
-const NOTE_RECIPIENT_ROLES = Object.freeze({
-  [ROLES.ADMIN]: [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
-  [ROLES.LEADER]: [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR],
-  [ROLES.RIGHT_HAND]: [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR],
-  [ROLES.SENIOR_OPERATOR]: [ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR]
-});
+// The roles a user may put on their group notes: everyone with notes, so every role but operator.
+const NOTE_RECIPIENT_ROLES = Object.freeze(ROLE_VALUES.filter(role => role !== ROLES.OPERATOR));
 function noteRecipientRoles(user) {
-  return canShareNotes(user) ? NOTE_RECIPIENT_ROLES[user.role] || [] : [];
+  return canShareNotes(user) ? [...NOTE_RECIPIENT_ROLES] : [];
 }
 
 function canEditNote(user, note) {

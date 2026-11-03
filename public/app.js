@@ -2484,7 +2484,7 @@ function renderHelpPage() {
     ? [
       ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
       ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
-      ...(isSeniorOperator() && canOpenPage("anteckningar.html") ? [["Anteckningar", "Under Anteckningar har du egna lappar och kan dela lappar med skiftledare, höger hand och andra senior operatörer i alla skift, en och en eller hela gruppen. Alla på en delad lapp kan kommentera den."]] : []),
+      ...(isSeniorOperator() && canOpenPage("anteckningar.html") ? [["Anteckningar", "Under Anteckningar har du egna lappar och kan dela lappar med admin, skiftledare, höger hand och andra senior operatörer i alla skift, en och en eller hela gruppen. Alla på en delad lapp kan kommentera den."]] : []),
       ["Ledig eller borta?", "Öppna Min profil och ändra din status till Ledig. Skiftledaren ser ändringen direkt."],
       currentUser.viaMicrosoft
         ? ["Inloggning", "Du loggar in med ditt Microsoft-konto och behöver inget eget lösenord i Staff Planner."]
@@ -2497,8 +2497,8 @@ function renderHelpPage() {
       ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
       ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
       ["Anteckningar", isAdmin()
-        ? "Under Anteckningar delar du lappar med admin, skiftledare och höger hand i alla skift. Senior operatörer och operatörer kan inte vara med på dina lappar. Alla på en delad lapp kan kommentera den."
-        : "Under Anteckningar delar du lappar med personer i ditt skift: skiftledare, höger hand och senior operatörer. Väljer du en admin kan lappen inte samtidigt delas med senior operatörer eller hela gruppen. Operatörer har inte Anteckningar. Alla på en delad lapp kan kommentera den."],
+        ? "Under Anteckningar delar du lappar med admin, skiftledare, höger hand och senior operatörer i alla skift, en och en eller hela gruppen. Operatörer har inte Anteckningar. Alla på en delad lapp kan kommentera den."
+        : "Under Anteckningar delar du lappar med personer i ditt skift: admin, skiftledare, höger hand och senior operatörer, en och en eller hela gruppen. Operatörer har inte Anteckningar. Alla på en delad lapp kan kommentera den."],
       ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas egna anteckningar är privata."],
       ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen. På iPhone: Dela → Lägg till på hemskärmen i Safari."],
       ["Pushnotiser", "Slå på pushnotiser under Min profil för notiser i telefonen om schemaändringar, chatt, anteckningar och viktiga uppdateringar. Admin kan stänga av dem för en användare under Hantera."]
@@ -9438,21 +9438,12 @@ async function loadNoteRecipients() {
   return notesState.recipients;
 }
 
-// "Hela gruppen" reaches only some roles in the shift (never admins on someone else's note).
+// "Hela gruppen" reaches everyone in the shift with notes, so not operators.
 const inWholeShift = person => notesState.wholeShiftRoles.includes(person.role);
 function wholeShiftRoleText() {
   const plural = { admin: "admin", shift_leader: "skiftledare", right_hand: "höger hand", senior_operator: "senior operatörer" };
   const names = notesState.wholeShiftRoles.map(role => plural[role] || role);
   return names.length > 1 ? `${names.slice(0, -1).join(", ")} och ${names.at(-1)}` : names.join("");
-}
-
-// Shift leaders and right hands may pick an admin, but then no senior operators or whole shift.
-function noteSharingConflict(people, wholeShifts) {
-  if (isAdmin()) return "";
-  const roles = people.map(person => person.role);
-  return roles.includes(ROLES.ADMIN) && (wholeShifts.length || roles.includes(ROLES.SENIOR_OPERATOR))
-    ? "En anteckning som delas med admin kan inte också delas med senior operatörer eller hela gruppen."
-    : "";
 }
 
 // Who a note being written would reach, worked out from the people the user may pick.
@@ -9520,13 +9511,8 @@ async function openNoteShareSheet() {
     }).join("");
     const empty = groups.length ? `Ingen heter "${escapeHtml(query)}".` : "Det finns ingen att dela med ännu.";
     document.getElementById("notesSheetBody").innerHTML = html || `<div class="sn-noresult">${empty}</div>`;
-    const conflict = noteSharingConflict(ids.map(id => known.get(id)).filter(Boolean), [...whole]);
-    const info = document.getElementById("notesSheetInfo");
-    info.textContent = conflict || (ids.length ? `${ids.length} mottagare valda` : "Ingen vald");
-    info.classList.toggle("sn-sheet-warning", Boolean(conflict));
-    const done = document.getElementById("notesSheetDone");
-    done.textContent = ids.length ? `Klar (${ids.length})` : "Klar";
-    done.disabled = Boolean(conflict);
+    document.getElementById("notesSheetInfo").textContent = ids.length ? `${ids.length} mottagare valda` : "Ingen vald";
+    document.getElementById("notesSheetDone").textContent = ids.length ? `Klar (${ids.length})` : "Klar";
   };
   const close = () => { layer.innerHTML = ""; document.getElementById("notesShareBtn")?.focus(); };
   draw();
