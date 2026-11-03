@@ -8566,6 +8566,16 @@ function setupChat() {
   elements.toggle.addEventListener("click", () => void setChatOpen(!chatState.open));
   elements.widget.querySelector(".chat-close").addEventListener("click", () => void setChatOpen(false));
   elements.preview.addEventListener("click", () => void setChatOpen(true));
+  // A click outside the chat closes it. Where the press started decides, so a click
+  // on something inside that is redrawn meanwhile (a picked name, a deleted message)
+  // or a text selection dragged out of the chat never closes it. Scrolling the page
+  // gives no click, so it does not close the chat either.
+  let pressedInsideChat = false;
+  document.addEventListener("pointerdown", event => { pressedInsideChat = isInsideChat(event.target); }, true);
+  document.addEventListener("click", event => {
+    if (!chatState.open || pressedInsideChat || isInsideChat(event.target)) return;
+    void setChatOpen(false);
+  }, true);
   if (takeLinkParam("chat")) void setChatOpen(true);
   elements.panel.addEventListener("keydown", event => {
     if (event.key === "Escape") { event.preventDefault(); void setChatOpen(false); elements.toggle.focus(); }
@@ -8611,6 +8621,12 @@ function setupChat() {
   });
   document.addEventListener("visibilitychange", () => { if (!document.hidden) void pollChat(); });
   void pollChat();
+}
+
+// Inside the chat: the panel, its button and preview, and an image opened from it.
+// On a phone the open chat covers the page with a dimmed backdrop; that counts as outside.
+function isInsideChat(target) {
+  return target instanceof Element && Boolean(target.closest(".chat-panel, .chat-toggle, .chat-preview, .chat-image-viewer"));
 }
 
 // Chat images open in a viewer on top of the page. It closes with the X button, a
