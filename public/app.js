@@ -143,7 +143,8 @@ const PAGE_ACCESS = {
   "maskiner.html": [ROLES.ADMIN, ROLES.LEADER],
   "maskinhantering.html": [ROLES.ADMIN, ROLES.LEADER],
   "bedomning.html": [ROLES.ADMIN, ROLES.LEADER],
-  "anteckningar.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR],
+  // Operators have no notes at all (server/permissions.js, "Anteckningar").
+  "anteckningar.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR],
   "add.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
   "installningar.html": [ROLES.ADMIN, ROLES.LEADER],
   "profil.html": [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR, ROLES.OPERATOR],
@@ -166,7 +167,7 @@ const TEMPORARY_FEATURES = [
   ["schedule", "Schema", "Veckoschemat för skiftet"],
   ["breaks", "Rast", "Rastplaneringen"],
   ["production", "Produktion", "Produktionssidan"],
-  ["notes", "Anteckningar", "Egna anteckningar och delade lappar"],
+  ["notes", "Anteckningar", "Egna anteckningar och delade lappar (inte för operatörer)"],
   ["chat", "Chatt", "Chatten för skiftledning"]
 ];
 // Shift leaders may look at other shifts here, read-only. Everywhere else they work in their own shift.
@@ -2285,7 +2286,7 @@ async function renderProfilePage() {
       <div class="settings-actions"><span id="preferencesMessage" class="inline-message" aria-live="polite"></span><button id="testSoundBtn" class="btn" type="button">Testa ljudet</button></div>
     </form>
     <section id="pushSettings" class="card settings-card">
-      <div><h3>Pushnotiser</h3><p>Få en kort notis i telefonen eller datorn när ditt schema eller din placering ändras, när en anteckning delas med dig${canManageStaff() ? ", när du får chattmeddelanden och vid viktiga uppdateringar" : ""}, även när Staff Planner är stängd. Notisen visar aldrig namn eller meddelandetext.</p></div>
+      <div><h3>Pushnotiser</h3><p>Få en kort notis i telefonen eller datorn när ditt schema eller din placering ändras${canOpenPage("anteckningar.html") ? ", när en anteckning delas med dig eller kommenteras" : ""}${canManageStaff() ? ", när du får chattmeddelanden och vid viktiga uppdateringar" : ""}, även när Staff Planner är stängd. Notisen visar aldrig namn eller meddelandetext.</p></div>
       <div class="push-settings-body"><p>Hämtar…</p></div>
       <p class="inline-message push-settings-message" role="status" aria-live="polite"></p>
     </section>`;
@@ -2483,6 +2484,7 @@ function renderHelpPage() {
     ? [
       ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
       ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
+      ...(isSeniorOperator() && canOpenPage("anteckningar.html") ? [["Anteckningar", "Under Anteckningar har du egna lappar och kan dela lappar med skiftledare, höger hand och andra senior operatörer i alla skift, en och en eller hela gruppen. Alla på en delad lapp kan kommentera den."]] : []),
       ["Ledig eller borta?", "Öppna Min profil och ändra din status till Ledig. Skiftledaren ser ändringen direkt."],
       currentUser.viaMicrosoft
         ? ["Inloggning", "Du loggar in med ditt Microsoft-konto och behöver inget eget lösenord i Staff Planner."]
@@ -2494,6 +2496,9 @@ function renderHelpPage() {
       ["Bygg arbetsplatser", "Under Maskinhantering lägger du till maskiner och stationer och kopplar dem till linjer. Schema, bemanning och rast följer kopplingarna. De gäller alla skift och kan pausas."],
       ["Skapa schema", "Välj personer i listorna. Du kan också kopiera en dag eller använda en sparad veckomall."],
       ["Kontrollera varningar", "Röda rutor saknar bemanning. Inaktiva eller obehöriga personer visar orsaken direkt."],
+      ["Anteckningar", isAdmin()
+        ? "Under Anteckningar delar du lappar med admin, skiftledare och höger hand i alla skift. Senior operatörer och operatörer kan inte vara med på dina lappar. Alla på en delad lapp kan kommentera den."
+        : "Under Anteckningar delar du lappar med personer i ditt skift: skiftledare, höger hand och senior operatörer. Väljer du en admin kan lappen inte samtidigt delas med senior operatörer eller hela gruppen. Operatörer har inte Anteckningar. Alla på en delad lapp kan kommentera den."],
       ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas egna anteckningar är privata."],
       ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen. På iPhone: Dela → Lägg till på hemskärmen i Safari."],
       ["Pushnotiser", "Slå på pushnotiser under Min profil för notiser i telefonen om schemaändringar, chatt, anteckningar och viktiga uppdateringar. Admin kan stänga av dem för en användare under Hantera."]
@@ -8592,9 +8597,9 @@ function openChatImageViewer(src, alt) {
   });
 }
 
-// Anteckningar: a board of sticky notes. "Mina anteckningar" are private; on
-// "Gruppens anteckningar" admins, shift leaders and right hands share notes with the
-// people they choose. Each user's read and done marks and where the notes sit on
+// Anteckningar: a board of sticky notes, for everyone but operators. "Mina anteckningar"
+// are private; on "Gruppens anteckningar" admins, shift leaders, right hands and senior
+// operators share notes with the people they may choose, who comment on them. Each user's read and done marks and where the notes sit on
 // their board are saved on the server; the priority mark is shared by everyone who
 // sees the note. The server decides who sees what (server/routes/notes.js).
 const NOTE_COLORS = [["yellow", "Ljusgul"], ["pink", "Rosa"], ["blue", "Ljusblå"], ["mint", "Mintgrön"], ["lavender", "Lavendel"], ["beige", "Beige"]];
@@ -8605,9 +8610,10 @@ const NOTES_TAB_KEY = "staff_notes_tab";
 const NOTE_FLAG_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h12l-2.5 4.5L17 13H5z"/><path d="M5 21V4"/></svg>';
 const NOTE_CHECK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
 const NOTE_SHARE_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></svg>';
+const NOTE_COMMENT_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a8 8 0 0 1-11.6 7.1L4 20.5l1.4-4.6A8 8 0 1 1 21 12z"/></svg>';
 const notesState = {
   notes: [], canShare: false, loaded: false, filter: "all", z: 10,
-  open: null, justCreated: null, gesture: null, recipients: null, pendingReload: false, unread: 0
+  open: null, justCreated: null, gesture: null, recipients: null, wholeShiftRoles: [], pendingReload: false, unread: 0
 };
 
 const notesBoard = () => document.getElementById("notesBoard");
@@ -8667,7 +8673,7 @@ function setNotesBadge(count) {
 }
 
 async function refreshNotesBadge() {
-  if (!currentUser || !hasFeature("notes")) return;
+  if (!currentUser || !canOpenPage("anteckningar.html")) return;
   try {
     setNotesBadge((await apiRequest("GET", "/notes/unread")).count);
   } catch (error) {
@@ -8738,6 +8744,7 @@ function setupNotesPage() {
 // Called for live changes: fetches again, but leaves an open note or a drag alone until it ends.
 async function reloadNotesPage() {
   if (!notesBoard() || !notesState.loaded) return;
+  if (notesState.open && !notesState.open.isNew) void refreshOpenNoteComments();
   if (notesState.open || notesState.gesture) { notesState.pendingReload = true; return; }
   notesState.pendingReload = false;
   try {
@@ -8745,6 +8752,19 @@ async function reloadNotesPage() {
     renderNotesPage();
   } catch (error) {
     console.warn("Notes could not be reloaded:", error);
+  }
+}
+
+// New comments show at once in the opened note; the rest waits until it is closed.
+async function refreshOpenNoteComments() {
+  const id = notesState.open?.note.id;
+  try {
+    const fresh = (await apiRequest("GET", "/notes")).notes.find(note => note.id === id);
+    if (!fresh || notesState.open?.note.id !== id) return;
+    notesState.open.note.comments = fresh.comments;
+    drawNoteComments();
+  } catch (error) {
+    console.warn("Comments could not be reloaded:", error);
   }
 }
 
@@ -8813,8 +8833,10 @@ function noteCardHtml(note, position) {
     ? `<div class="sn-meta">${noteAvatar(note.authorName, "sm")}<b>${escapeHtml(own ? "Du" : note.authorName)}</b><time datetime="${escapeHtml(note.createdAt)}">${noteAge(note.createdAt)}</time></div>`
     : `<div class="sn-meta"><time class="sn-solo" datetime="${escapeHtml(note.createdAt)}">${noteAge(note.createdAt)}</time></div>`;
   const shown = note.recipients.slice(0, 4);
+  const commentCount = (note.comments || []).length;
+  const comments = commentCount ? `<span class="sn-comment-count" title="${commentCount} ${commentCount === 1 ? "kommentar" : "kommentarer"}">${NOTE_COMMENT_ICON}${commentCount}</span>` : "";
   const foot = note.kind === "group"
-    ? `<div class="sn-foot"><span class="sn-stack">${shown.map(person => noteAvatar(person.name, "sm")).join("")}${note.recipients.length > 4 ? `<span class="sn-av sm sn-more">+${note.recipients.length - 4}</span>` : ""}</span><span class="sn-shared">${escapeHtml(noteShareText(note))}</span></div>`
+    ? `<div class="sn-foot">${comments}<span class="sn-stack">${shown.map(person => noteAvatar(person.name, "sm")).join("")}${note.recipients.length > 4 ? `<span class="sn-av sm sn-more">+${note.recipients.length - 4}</span>` : ""}</span><span class="sn-shared">${escapeHtml(noteShareText(note))}</span></div>`
     : "";
   const label = `${note.kind === "group" ? `Anteckning från ${note.authorName}` : "Egen anteckning"}${note.priority ? ", prioriterad" : ""}${note.unread ? ", ny" : ""}${note.done ? ", klar" : ""}: ${note.text}`;
   return `<article class="sn-note ${noteDecoration(note)}${note.done ? " done" : ""}${notesState.justCreated === note.id ? " pop" : ""}" data-note-id="${escapeHtml(note.id)}" style="${style}" tabindex="0" role="button" aria-label="${escapeHtml(label)}">
@@ -8868,7 +8890,7 @@ function renderNotesPage() {
   setNotesBadge(unread);
   document.getElementById("notesNewBtn").classList.toggle("hidden", tab === "group" && !canShare);
   document.getElementById("notesHint").textContent = tab === "group" && !canShare
-    ? "Här ser du anteckningar som delas med dig. Admin, skiftledare och höger hand kan dela nya."
+    ? "Här ser du anteckningar som delas med dig."
     : isNotesFlow() ? "Tryck på en lapp för att läsa och skriva." : "Dra lapparna dit du vill. Klicka på en lapp för att läsa och skriva.";
   const filters = tab === "group"
     ? [["all", "Alla"], ["unread", `Olästa${unread ? ` (${unread})` : ""}`], ...(canShare ? [["fromme", "Från mig"]] : []), ["open", "Inte klara"]]
@@ -9124,6 +9146,14 @@ function openNoteHtml() {
       ${chips.length ? `<div class="sn-recips">${chips.join("")}</div>` : '<span class="sn-hint">Välj minst en person innan du delar lappen.</span>'}
     </div>`;
   }
+  const comments = note.kind === "group" && !isNew ? `<section class="sn-comments" aria-label="Kommentarer">
+      <span class="sn-label">Kommentarer</span>
+      <div id="notesComments">${noteCommentsHtml(note)}</div>
+      ${note.canComment ? `<form class="sn-comment-form" id="notesCommentForm">
+        <textarea id="notesCommentText" rows="2" maxlength="1000" placeholder="Skriv en kommentar…" aria-label="Kommentar">${escapeHtml(notesState.open.commentDraft || "")}</textarea>
+        <button type="submit" class="sn-btn" id="notesCommentSend"${(notesState.open.commentDraft || "").trim() ? "" : " disabled"}>Skicka</button>
+      </form>` : ""}
+    </section>` : "";
   let foot;
   if (confirm === "delete") {
     foot = `<div class="sn-confirm"><span>Ta bort lappen${note.kind === "group" ? ` för alla ${note.recipients.length} mottagare` : ""}? Det går inte att ångra.</span><button type="button" class="sn-btn del" data-note-act="yes-delete">Ta bort</button><button type="button" class="sn-btn" data-note-act="no">Avbryt</button></div>`;
@@ -9139,7 +9169,59 @@ function openNoteHtml() {
       <button type="button" class="sn-primary" data-note-act="close">Stäng</button>`;
   }
   return `${note.done && !isNew ? noteCheckMark(notesState.open.animateCheck) : ""}<div class="sn-big-head">${head}${priorityTag}<button type="button" class="sn-close" data-note-act="close" aria-label="Stäng">×</button></div>
-    <div class="sn-big-scroll">${body}${colors}${share}</div><div class="sn-big-foot">${foot}</div>`;
+    <div class="sn-big-scroll">${body}${colors}${share}${comments}</div><div class="sn-big-foot">${foot}</div>`;
+}
+
+function noteCommentsHtml(note) {
+  const list = note.comments || [];
+  if (!list.length) return '<span class="sn-hint">Inga kommentarer än.</span>';
+  return `<ol class="sn-comment-list">${list.map(comment => `<li class="sn-comment">
+      ${noteAvatar(comment.authorName, "sm")}
+      <div class="sn-comment-body"><div class="sn-comment-head"><b>${escapeHtml(comment.authorId === currentUser.id ? `${comment.authorName} (du)` : comment.authorName)}</b><span>${escapeHtml(ROLE_LABELS[comment.authorRole] || "")} · <time datetime="${escapeHtml(comment.createdAt)}">${noteAge(comment.createdAt)}</time></span>
+        ${comment.canDelete ? `<button type="button" class="sn-comment-del" data-comment-delete="${escapeHtml(comment.id)}" aria-label="Ta bort kommentaren" title="Ta bort kommentaren">×</button>` : ""}</div>
+        <p>${escapeHtml(comment.text)}</p></div>
+    </li>`).join("")}</ol>`;
+}
+
+// Redraws only the comments of the opened note, so a comment being written is left alone.
+function drawNoteComments() {
+  const box = document.getElementById("notesComments");
+  if (box && notesState.open) box.innerHTML = noteCommentsHtml(notesState.open.note);
+}
+
+async function sendNoteComment() {
+  const open = notesState.open;
+  const input = document.getElementById("notesCommentText");
+  const text = input?.value.trim();
+  if (!open || !text) return;
+  const button = document.getElementById("notesCommentSend");
+  if (button) button.disabled = true;
+  try {
+    const { note: saved } = await apiRequest("POST", `/notes/${encodeURIComponent(open.note.id)}/comments`, { text });
+    Object.assign(open.note, saved);
+    open.commentDraft = "";
+    input.value = "";
+    drawNoteComments();
+    const list = document.querySelector(".sn-comment-list");
+    list?.lastElementChild?.scrollIntoView({ block: "nearest" });
+    input.focus();
+  } catch (error) {
+    showAppToast(error.message || "Kommentaren kunde inte sparas.", "error");
+  } finally {
+    if (button) button.disabled = !document.getElementById("notesCommentText")?.value.trim();
+  }
+}
+
+async function deleteNoteComment(commentId) {
+  const open = notesState.open;
+  if (!open || !confirm("Vill du ta bort kommentaren?")) return;
+  try {
+    const { note: saved } = await apiRequest("DELETE", `/notes/${encodeURIComponent(open.note.id)}/comments/${encodeURIComponent(commentId)}`);
+    Object.assign(open.note, saved);
+    drawNoteComments();
+  } catch (error) {
+    showAppToast(error.message || "Kommentaren kunde inte tas bort.", "error");
+  }
 }
 
 function drawOpenNote() {
@@ -9148,12 +9230,12 @@ function drawOpenNote() {
   const { note, isNew } = notesState.open;
   big.className = `sn-big ${isNew ? "tape" : noteDecoration(note)}${note.done && !isNew ? " done" : ""}`;
   big.style.setProperty("--sn-paper", noteColorVar(note.color));
-  const textarea = document.getElementById("notesText");
-  const selection = textarea && document.activeElement === textarea ? [textarea.selectionStart, textarea.selectionEnd] : null;
+  const focused = document.activeElement;
+  const typing = ["notesText", "notesCommentText"].includes(focused?.id) ? [focused.id, focused.selectionStart, focused.selectionEnd] : null;
   big.innerHTML = openNoteHtml();
   notesState.open.animateCheck = false;
-  const restored = document.getElementById("notesText");
-  if (selection && restored) { restored.focus(); restored.setSelectionRange(...selection); }
+  const restored = typing && document.getElementById(typing[0]);
+  if (restored) { restored.focus(); restored.setSelectionRange(typing[1], typing[2]); }
 }
 
 // Zooms the opened note out of (or back into) the small one it came from.
@@ -9181,6 +9263,17 @@ function showOpenNote(fromElement) {
     layer.dataset.bound = "true";
     layer.addEventListener("input", handleOpenNoteInput);
     layer.addEventListener("click", handleOpenNoteClick);
+    layer.addEventListener("submit", event => {
+      if (event.target.id !== "notesCommentForm") return;
+      event.preventDefault();
+      void sendNoteComment();
+    });
+    layer.addEventListener("keydown", event => {
+      // Enter sends a comment; Shift+Enter starts a new line.
+      if (event.target.id !== "notesCommentText" || event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+      event.preventDefault();
+      void sendNoteComment();
+    });
   }
 }
 
@@ -9230,6 +9323,12 @@ async function flushNoteText() {
 }
 
 function handleOpenNoteInput(event) {
+  if (event.target.id === "notesCommentText" && notesState.open) {
+    notesState.open.commentDraft = event.target.value;
+    const send = document.getElementById("notesCommentSend");
+    if (send) send.disabled = !event.target.value.trim();
+    return;
+  }
   if (event.target.id !== "notesText" || !notesState.open) return;
   const { note, isNew } = notesState.open;
   note.text = event.target.value;
@@ -9268,6 +9367,8 @@ async function handleOpenNoteClick(event) {
     return;
   }
   if (event.target.closest("#notesShareBtn")) { void openNoteShareSheet(); return; }
+  const commentDelete = event.target.closest("[data-comment-delete]");
+  if (commentDelete) { void deleteNoteComment(commentDelete.dataset.commentDelete); return; }
   const action = event.target.closest("[data-note-act]")?.dataset.noteAct;
   if (!action) return;
   if (action === "close" || action === "cancel") void tryCloseNote(action === "cancel");
@@ -9329,8 +9430,29 @@ async function createNoteFromDraft() {
 /* ---------- "Dela med" ---------- */
 
 async function loadNoteRecipients() {
-  notesState.recipients ??= (await apiRequest("GET", "/notes/recipients")).groups;
+  if (!notesState.recipients) {
+    const data = await apiRequest("GET", "/notes/recipients");
+    notesState.recipients = data.groups;
+    notesState.wholeShiftRoles = data.wholeShiftRoles || [];
+  }
   return notesState.recipients;
+}
+
+// "Hela gruppen" reaches only some roles in the shift (never admins on someone else's note).
+const inWholeShift = person => notesState.wholeShiftRoles.includes(person.role);
+function wholeShiftRoleText() {
+  const plural = { admin: "admin", shift_leader: "skiftledare", right_hand: "höger hand", senior_operator: "senior operatörer" };
+  const names = notesState.wholeShiftRoles.map(role => plural[role] || role);
+  return names.length > 1 ? `${names.slice(0, -1).join(", ")} och ${names.at(-1)}` : names.join("");
+}
+
+// Shift leaders and right hands may pick an admin, but then no senior operators or whole shift.
+function noteSharingConflict(people, wholeShifts) {
+  if (isAdmin()) return "";
+  const roles = people.map(person => person.role);
+  return roles.includes(ROLES.ADMIN) && (wholeShifts.length || roles.includes(ROLES.SENIOR_OPERATOR))
+    ? "En anteckning som delas med admin kan inte också delas med senior operatörer eller hela gruppen."
+    : "";
 }
 
 // Who a note being written would reach, worked out from the people the user may pick.
@@ -9338,7 +9460,7 @@ function draftRecipients(note) {
   const groups = notesState.recipients || [];
   const chosen = new Map();
   groups.forEach(group => group.people.forEach(person => {
-    if (note.people.includes(person.id) || (group.id && note.wholeShifts.includes(group.id))) chosen.set(person.id, { ...person, shiftId: group.id });
+    if (note.people.includes(person.id) || (group.id && note.wholeShifts.includes(group.id) && inWholeShift(person))) chosen.set(person.id, { ...person, shiftId: group.id });
   }));
   chosen.delete(currentUser.id);
   return [...chosen.values()];
@@ -9372,7 +9494,7 @@ async function openNoteShareSheet() {
   const groupOf = id => groups.find(group => group.id === id);
   const chosen = () => {
     const ids = new Set([...people].filter(id => known.has(id)));
-    whole.forEach(id => groupOf(id)?.people.forEach(person => ids.add(person.id)));
+    whole.forEach(id => groupOf(id)?.people.filter(inWholeShift).forEach(person => ids.add(person.id)));
     ids.delete(currentUser.id);
     return [...ids];
   };
@@ -9380,24 +9502,31 @@ async function openNoteShareSheet() {
     const ids = chosen();
     document.getElementById("notesChips").innerHTML = ids.length
       ? [...[...whole].map(id => `<button type="button" class="sn-chip" data-unwhole="${escapeHtml(id)}"><span class="sn-av sm sn-group-av" aria-hidden="true">${escapeHtml((groupOf(id)?.name || "S").slice(0, 2))}</span> Hela ${escapeHtml(groupOf(id)?.name || "skiftet")} <span aria-hidden="true">×</span></button>`),
-         ...ids.filter(id => !whole.has(known.get(id)?.shiftId)).map(id => `<button type="button" class="sn-chip" data-unpick="${escapeHtml(id)}" aria-label="Ta bort ${escapeHtml(known.get(id).name)}">${noteAvatar(known.get(id).name, "sm")} ${escapeHtml(firstName(known.get(id).name))} <span aria-hidden="true">×</span></button>`)].join("")
+         ...ids.filter(id => !whole.has(known.get(id)?.shiftId) || !inWholeShift(known.get(id))).map(id => `<button type="button" class="sn-chip" data-unpick="${escapeHtml(id)}" aria-label="Ta bort ${escapeHtml(known.get(id).name)}">${noteAvatar(known.get(id).name, "sm")} ${escapeHtml(firstName(known.get(id).name))} <span aria-hidden="true">×</span></button>`)].join("")
       : '<span class="sn-hint">Markera en eller flera personer nedan.</span>';
     const q = query.trim().toLowerCase();
     const html = groups.map(group => {
       const list = group.people.filter(person => !q || person.name.toLowerCase().includes(q));
       if (q && !list.length) return "";
       const all = Boolean(group.id) && whole.has(group.id);
-      const wholeRow = group.id && !q
-        ? `<label class="sn-prow whole"><input type="checkbox" data-whole="${escapeHtml(group.id)}"${all ? " checked" : ""} /><span class="sn-av lg sn-group-av" aria-hidden="true">${escapeHtml(group.name.slice(0, 2))}</span><span class="sn-pwho"><strong>Dela med hela gruppen</strong><span>Alla ${group.people.length} i ${escapeHtml(group.name)}</span></span></label>`
+      const members = group.people.filter(inWholeShift);
+      const covered = person => all && inWholeShift(person);
+      const wholeRow = group.id && !q && members.length
+        ? `<label class="sn-prow whole"><input type="checkbox" data-whole="${escapeHtml(group.id)}"${all ? " checked" : ""} /><span class="sn-av lg sn-group-av" aria-hidden="true">${escapeHtml(group.name.slice(0, 2))}</span><span class="sn-pwho"><strong>Dela med hela gruppen</strong><span>Alla ${members.length} i ${escapeHtml(group.name)}: ${escapeHtml(wholeShiftRoleText())}</span></span></label>`
         : "";
       return `<div><div class="sn-grp-head">${escapeHtml(group.name)}</div>${wholeRow}
-        ${list.map(person => `<label class="sn-prow${all ? " disabled" : ""}"><input type="checkbox" data-pick="${escapeHtml(person.id)}"${all || people.has(person.id) ? " checked" : ""}${all ? " disabled" : ""} />${noteAvatar(person.name, "lg")}<span class="sn-pwho"><span>${escapeHtml(person.name)}</span><span>${escapeHtml(ROLE_LABELS[person.role] || "")}</span></span></label>`).join("")}
+        ${list.map(person => `<label class="sn-prow${covered(person) ? " disabled" : ""}"><input type="checkbox" data-pick="${escapeHtml(person.id)}"${covered(person) || people.has(person.id) ? " checked" : ""}${covered(person) ? " disabled" : ""} />${noteAvatar(person.name, "lg")}<span class="sn-pwho"><span>${escapeHtml(person.name)}</span><span>${escapeHtml(ROLE_LABELS[person.role] || "")}</span></span></label>`).join("")}
       </div>`;
     }).join("");
     const empty = groups.length ? `Ingen heter "${escapeHtml(query)}".` : "Det finns ingen att dela med ännu.";
     document.getElementById("notesSheetBody").innerHTML = html || `<div class="sn-noresult">${empty}</div>`;
-    document.getElementById("notesSheetInfo").textContent = ids.length ? `${ids.length} mottagare valda` : "Ingen vald";
-    document.getElementById("notesSheetDone").textContent = ids.length ? `Klar (${ids.length})` : "Klar";
+    const conflict = noteSharingConflict(ids.map(id => known.get(id)).filter(Boolean), [...whole]);
+    const info = document.getElementById("notesSheetInfo");
+    info.textContent = conflict || (ids.length ? `${ids.length} mottagare valda` : "Ingen vald");
+    info.classList.toggle("sn-sheet-warning", Boolean(conflict));
+    const done = document.getElementById("notesSheetDone");
+    done.textContent = ids.length ? `Klar (${ids.length})` : "Klar";
+    done.disabled = Boolean(conflict);
   };
   const close = () => { layer.innerHTML = ""; document.getElementById("notesShareBtn")?.focus(); };
   draw();
@@ -9426,7 +9555,7 @@ async function openNoteShareSheet() {
   document.getElementById("notesSheetDone").addEventListener("click", () => {
     // People inside a whole shift are covered by the shift itself.
     const next = {
-      people: [...people].filter(id => known.has(id) && !whole.has(known.get(id).shiftId)),
+      people: [...people].filter(id => known.has(id) && !(whole.has(known.get(id).shiftId) && inWholeShift(known.get(id)))),
       wholeShifts: [...whole]
     };
     close();
@@ -9539,7 +9668,8 @@ async function loadNotifications({ announce = false } = {}) {
 
 const NOTIFICATION_HEADINGS = {
   noteShared: "har delat en anteckning med dig",
-  noteAdded: "lade till dig på en anteckning"
+  noteAdded: "lade till dig på en anteckning",
+  noteComment: "kommenterade en anteckning"
 };
 // Notes about the user's own schedule; the title says what changed.
 const PERSONAL_NOTIFICATION_KINDS = new Set(["scheduleChange", "placementChange"]);

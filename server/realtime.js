@@ -1,5 +1,5 @@
 const {
-  canReadDocument, canUseChat, weekRequiringShare, sharedFlagKey
+  canReadDocument, canUseChat, canUseNotes, weekRequiringShare, sharedFlagKey
 } = require("./permissions");
 const { readDocuments } = require("./store");
 const { changeFor } = require("./production");
@@ -20,7 +20,7 @@ function canReceive(user, change) {
   if (change.type === "chat") return canUseChat(user);
   if (change.type === "notification") return Boolean(user?.id) && change.userId === user.id;
   // Only says that notes changed; each page fetches the notes it may see.
-  if (change.type === "notes") return Boolean(user?.id);
+  if (change.type === "notes") return canUseNotes(user);
   return change.type === "people" || change.type === "shifts";
 }
 

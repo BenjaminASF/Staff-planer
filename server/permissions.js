@@ -29,11 +29,22 @@
 //                status and password. Their name and e-mail address are changed
 //                only by an admin, shift leader or right hand.
 //
-// Anteckningar (notes): everyone has a private board. Admins, shift leaders and right
-// hands also write group notes and choose exactly who sees each one: shift leaders and
-// right hands people in their own shift, admins anyone. Nobody else sees a group note,
-// admins included. Only the author changes a note's text, color and recipients; its
-// priority mark is set by the author and, on a group note they can see, by an admin.
+// Anteckningar (notes): operators have no notes at all. Everyone else has a private
+// board and writes group notes, choosing exactly who sees each one (one by one, or a
+// whole shift):
+//   Admin            – admins, shift leaders and right hands in any shift, never senior
+//                      operators.
+//   Skiftledare,     – anyone with notes in their own shift: shift leaders, right hands,
+//   Höger hand         senior operators, and an admin picked one by one. A note with an
+//                      admin on it is not also shared with senior operators or a whole shift.
+//   Senior operatör  – shift leaders, right hands and senior operators in any shift, never
+//                      admins.
+// So an admin and a senior operator never share a note; the rule is checked again every
+// time notes are read (noteAccessSql in store.js), so a later role change cannot break it.
+// Nobody else sees a group note, admins included. Only the author changes a note's text,
+// color and recipients; everyone on a group note comments on it, and removes their own
+// comments. The priority mark is set by the author and, on a group note they can see, by
+// an admin.
 //
 // Produktion: whoever writes a machine's comment is saved with it. Only admins and shift
 // leaders see who that was (see production.js).
@@ -352,15 +363,31 @@ function canDeleteChatMessage(user, message) {
   return isAdmin(user) || (Boolean(message.user_id) && message.user_id === user?.id);
 }
 
+// Operators have no notes at all: no page, no board, no shared notes.
+function canUseNotes(user) {
+  return Boolean(user?.id) && ROLE_VALUES.includes(user.role) && user.role !== ROLES.OPERATOR && hasFeature(user, FEATURES.NOTES);
+}
+
 // Who may write group notes, and the shifts whose people they may share them with
 // (null means every shift).
 function canShareNotes(user) {
-  return isShiftManager(user) && hasFeature(user, FEATURES.NOTES);
+  return canUseNotes(user);
 }
 
 function noteShareShifts(user) {
-  if (isAdmin(user)) return null;
+  if (isAdmin(user) || user?.role === ROLES.SENIOR_OPERATOR) return null;
   return canShareNotes(user) && user.shiftId ? [user.shiftId] : [];
+}
+
+// The roles a user may put on their group notes.
+const NOTE_RECIPIENT_ROLES = Object.freeze({
+  [ROLES.ADMIN]: [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND],
+  [ROLES.LEADER]: [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR],
+  [ROLES.RIGHT_HAND]: [ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR],
+  [ROLES.SENIOR_OPERATOR]: [ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR]
+});
+function noteRecipientRoles(user) {
+  return canShareNotes(user) ? NOTE_RECIPIENT_ROLES[user.role] || [] : [];
 }
 
 function canEditNote(user, note) {
@@ -370,6 +397,15 @@ function canEditNote(user, note) {
 // `note` must be one the user can see.
 function canPrioritizeNote(user, note) {
   return canEditNote(user, note) || (note?.kind === "group" && isAdmin(user));
+}
+
+// `note` must be a group note the user can see.
+function canCommentNote(user, note) {
+  return canUseNotes(user) && note?.kind === "group";
+}
+
+function canDeleteNoteComment(user, comment) {
+  return Boolean(user?.id) && comment?.author_id === user.id;
 }
 
 function canManagePush(user) {
@@ -466,8 +502,12 @@ module.exports = {
   canDeleteAccount,
   canManagePush,
   canExportShiftBackup,
+  canUseNotes,
   canShareNotes,
   noteShareShifts,
+  noteRecipientRoles,
+  canCommentNote,
+  canDeleteNoteComment,
   canEditNote,
   canPrioritizeNote
 };
