@@ -8553,7 +8553,7 @@ function setupChat() {
         <ul class="chat-mentions hidden" role="listbox" aria-label="Välj mottagare"></ul>
         <div class="chat-input-row">
           <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
-          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande… (@ för privat)" aria-label="Meddelande"></textarea>
+          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande…" aria-label="Meddelande"></textarea>
           <button class="btn primary chat-send" type="submit">Skicka</button>
         </div>
       </form>
@@ -9885,7 +9885,7 @@ function setChatImage(image) {
   chatState.image = image;
   attachment.classList.toggle("hidden", !image);
   attachment.querySelector("img").src = image?.dataUrl || "";
-  input.placeholder = image ? "Lägg till text (valfritt)…" : "Skriv ett meddelande… (@ för privat)";
+  input.placeholder = image ? "Lägg till text (valfritt)…" : "Skriv ett meddelande…";
   if (!image) updateChatRecipientHint();
 }
 
@@ -9953,7 +9953,7 @@ function updateChatRecipientHint() {
   recipient.classList.toggle("hidden", !member);
   recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Privat till <strong>${escapeHtml(member.name)}</strong> – bara ni två ser det` : "";
   send.textContent = member ? "Skicka privat" : "Skicka";
-  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande… (@ för privat)";
+  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande…";
 }
 
 // The @word just before the cursor, if any: "@" at the start or after a space.
