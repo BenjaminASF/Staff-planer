@@ -141,3 +141,106 @@ describe("chat for admins and shift leaders", () => {
     assert.equal(older.data.hasOlder, false);
   });
 });
+
+describe("handovers in the chat", () => {
+  let server;
+  let admin, redLeader, blueLeader, rightHand, senior, operator;
+  let red, blue, users;
+  const departments = (overrides = {}) => ["GD", "ETIKETTO", "Packning"].map(name => ({ name, status: "ok", comment: "", ...overrides[name] }));
+
+  before(async () => {
+    server = await startTestServer();
+    [admin, redLeader, blueLeader, rightHand, senior, operator] = Array.from({ length: 6 }, () => server.client());
+    await admin.post("/api/setup", { setupCode: SETUP_CODE, name: "Ada Admin", username: "ada", password: PASSWORD });
+    [red, blue] = (await admin.get("/api/shifts")).data.shifts;
+    const account = (username, role) => ({ username, password: PASSWORD, role, mustChangePassword: false });
+    await admin.post("/api/people", { name: "Lisa Ledare", shiftId: red.id, account: account("lisa", "shift_leader") });
+    await admin.post("/api/people", { name: "Bo Blå", shiftId: blue.id, account: account("bosse", "shift_leader") });
+    await admin.post("/api/people", { name: "Hanna Hand", shiftId: red.id, account: account("hanna", "right_hand") });
+    await admin.post("/api/people", { name: "Sara Senior", shiftId: red.id, account: account("sara", "senior_operator") });
+    await admin.post("/api/people", { name: "Olle Operatör", shiftId: red.id, account: account("olle", "operator") });
+    users = {
+      admin: (await admin.get("/api/me")).data.user,
+      lisa: (await redLeader.login("lisa", PASSWORD)).user,
+      bo: (await blueLeader.login("bosse", PASSWORD)).user,
+      hanna: (await rightHand.login("hanna", PASSWORD)).user,
+      sara: (await senior.login("sara", PASSWORD)).user
+    };
+    await operator.login("olle", PASSWORD);
+  });
+
+  after(async () => {
+    await server?.close();
+  });
+
+  test("members come with role and shift, so the shift leaders can be picked", async () => {
+    const { members } = (await rightHand.get("/api/chat/members")).data;
+    const bo = members.find(member => member.name === "Bo Blå");
+    assert.deepEqual(bo, { id: users.bo.id, name: "Bo Blå", role: "shift_leader", shiftId: blue.id });
+  });
+
+  test("a right hand hands over their own shift to a chosen shift leader; everyone in the chat sees it", async () => {
+    const sent = await rightHand.post("/api/chat/messages", { handover: {
+      to: [users.bo.id], prio: "  Kör GD-3 först  ", other: "",
+      departments: departments({ ETIKETTO: { status: "problem", comment: "Rullen fastnade två gånger" } })
+    } });
+    assert.equal(sent.status, 201, JSON.stringify(sent.data));
+    const { message } = sent.data;
+    assert.equal(message.text, "");
+    assert.equal(message.recipientId, null);
+    assert.deepEqual(message.handover, {
+      fromShiftId: red.id, fromShiftName: red.name, to: [{ id: users.bo.id, name: "Bo Blå" }], prio: "Kör GD-3 först",
+      departments: [
+        { name: "GD", status: "ok", comment: "" },
+        { name: "ETIKETTO", status: "problem", comment: "Rullen fastnade två gånger" },
+        { name: "Packning", status: "ok", comment: "" }
+      ],
+      other: ""
+    });
+    for (const client of [admin, redLeader, blueLeader, senior]) {
+      const { data } = await client.get("/api/chat/messages");
+      assert.deepEqual(data.messages.at(-1).handover, message.handover);
+    }
+    assert.equal((await blueLeader.get("/api/chat/unread")).data.latest.handover.to[0].id, users.bo.id);
+  });
+
+  test("a handover can go to several shift leaders, each once", async () => {
+    const sent = await admin.post("/api/chat/messages", { handover: { fromShiftId: blue.id, to: [users.lisa.id, users.bo.id, users.lisa.id], departments: departments() } });
+    assert.equal(sent.status, 201, JSON.stringify(sent.data));
+    assert.deepEqual(sent.data.message.handover.to.map(item => item.name), ["Lisa Ledare", "Bo Blå"]);
+    assert.equal(sent.data.message.handover.fromShiftName, blue.name);
+  });
+
+  test("only admins, shift leaders and right hands make handovers; senior operators still write in the chat", async () => {
+    const handover = { to: [users.bo.id], departments: departments() };
+    assert.equal((await senior.post("/api/chat/messages", { handover })).status, 403);
+    assert.equal((await operator.post("/api/chat/messages", { handover })).status, 403);
+    assert.equal((await senior.post("/api/chat/messages", { text: "Jag har läst överlämningen" })).status, 201);
+    assert.equal((await redLeader.post("/api/chat/messages", { handover })).status, 201);
+  });
+
+  test("a handover needs shift leaders as recipients and a status for every department", async () => {
+    const send = async (client, handover) => {
+      const result = await client.post("/api/chat/messages", { handover });
+      assert.equal(result.status, 400, JSON.stringify(result.data));
+      return result.data.error;
+    };
+    assert.match(await send(rightHand, { to: [], departments: departments() }), /minst en skiftledare/);
+    assert.match(await send(rightHand, { to: [users.sara.id], departments: departments() }), /andra skiftledare/);
+    assert.match(await send(rightHand, { to: [users.admin.id], departments: departments() }), /andra skiftledare/);
+    assert.match(await send(redLeader, { to: [users.lisa.id], departments: departments() }), /andra skiftledare/);
+    assert.match(await send(rightHand, { to: [users.bo.id], departments: departments({ GD: { status: "" }, Packning: { status: "bra" } }) }), /för GD, Packning/);
+    assert.match(await send(rightHand, { to: [users.bo.id], departments: departments({ GD: { status: "problem", comment: "  " } }) }), /hände på GD/);
+    assert.match(await send(admin, { to: [users.bo.id], departments: departments() }), /vilket skift/);
+    assert.match(await send(admin, { fromShiftId: "finns-inte", to: [users.bo.id], departments: departments() }), /vilket skift/);
+    assert.match(await send(rightHand, "Bo, allt gick bra"), /kunde inte läsas/);
+  });
+
+  test("the author deletes their own handover", async () => {
+    const { message } = (await rightHand.post("/api/chat/messages", { handover: { to: [users.bo.id], departments: departments() } })).data;
+    assert.equal((await senior.delete(`/api/chat/messages/${message.id}`)).status, 403);
+    assert.equal((await rightHand.delete(`/api/chat/messages/${message.id}`)).status, 200);
+    const ids = (await admin.get("/api/chat/messages")).data.messages.map(item => item.id);
+    assert.ok(!ids.includes(message.id));
+  });
+});

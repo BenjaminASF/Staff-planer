@@ -1,7 +1,8 @@
 const { ACCOUNT_ACTIVE_SQL } = require("../auth");
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
-const { CHAT_ROLES, canUseChat, canDeleteChatMessage } = require("../permissions");
+const { CHAT_ROLES, canUseChat, canMakeHandover, HANDOVER_RECIPIENT_ROLE, canDeleteChatMessage } = require("../permissions");
+const { parseHandover } = require("../handover");
 const { cleanText } = require("../validation");
 const { queueChatMessage } = require("../push");
 
@@ -32,7 +33,7 @@ function parseImage(image) {
   return { buffer, type };
 }
 
-const MESSAGE_COLUMNS = "id, user_id, author_name, recipient_id, recipient_name, body, image IS NOT NULL AS has_image, created_at";
+const MESSAGE_COLUMNS = "id, user_id, author_name, recipient_id, recipient_name, body, image IS NOT NULL AS has_image, handover, created_at";
 // Messages to everyone, plus private ones the user sent or received. $1 is the user's id.
 const VISIBLE = "(recipient_id IS NULL OR recipient_id = $1 OR user_id = $1)";
 
@@ -46,6 +47,7 @@ function serializeMessage(row) {
     recipientName: row.recipient_name ?? null,
     text: row.body,
     imageUrl: row.has_image ? `/api/chat/images/${id}` : null,
+    handover: row.handover ?? null,
     createdAt: row.created_at
   };
 }
@@ -84,17 +86,45 @@ function chatRoutes({ pool }) {
     res.json({ messages: rows.map(serializeMessage), hasOlder });
   });
 
-  // The people a message can be sent to privately.
+  // The people a message can be sent to privately. Role and shift tell which of them
+  // are shift leaders, who can receive a handover, and of which shift.
   router.get("/members", async (req, res) => {
     const { rows } = await pool.query(
-      `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id
+      `SELECT u.id, p.name, u.role, p.shift_id FROM users u JOIN people p ON p.id = u.person_id
         WHERE u.role = ANY($1) AND u.id <> $2 AND ${CHAT_MEMBER_SQL} ORDER BY lower(p.name)`,
       [CHAT_ROLES, req.user.id]
     );
-    res.json({ members: rows.map(row => ({ id: row.id, name: row.name })) });
+    res.json({ members: rows.map(row => ({ id: row.id, name: row.name, role: row.role, shiftId: row.shift_id ?? null })) });
   });
 
+  // A handover is a message to everyone, shown as a card and marked for the chosen
+  // shift leaders, who also get a notice of their own.
+  async function sendHandover(req, res) {
+    if (!canMakeHandover(req.user)) throw new HttpError(403, "Bara admin, skiftledare och höger hand kan göra överlämningar.");
+    const [leaders, shifts] = await Promise.all([
+      pool.query(
+        `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id
+          WHERE u.role = $1 AND ${CHAT_MEMBER_SQL}`,
+        [HANDOVER_RECIPIENT_ROLE]
+      ),
+      pool.query("SELECT id, name FROM shifts")
+    ]);
+    const handover = parseHandover(req.body.handover, { user: req.user, leaders: leaders.rows, shifts: shifts.rows });
+    const { rows } = await pool.query(
+      `INSERT INTO chat_messages (user_id, author_name, handover) VALUES ($1, $2, $3::jsonb) RETURNING ${MESSAGE_COLUMNS}`,
+      [req.user.id, req.user.name, JSON.stringify(handover)]
+    );
+    await pool.query(
+      `INSERT INTO chat_reads (user_id, last_read_id) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET last_read_id = GREATEST(chat_reads.last_read_id, EXCLUDED.last_read_id)`,
+      [req.user.id, rows[0].id]
+    );
+    await queueChatMessage(pool, { messageId: rows[0].id, authorId: req.user.id, chatRoles: CHAT_ROLES, handoverTo: handover.to.map(item => item.id) });
+    res.status(201).json({ message: serializeMessage(rows[0]) });
+  }
+
   router.post("/messages", async (req, res) => {
+    if (req.body?.handover !== undefined) return sendHandover(req, res);
     const text = cleanText(req.body?.text, MAX_TEXT_LENGTH + 1);
     if (text.length > MAX_TEXT_LENGTH) throw new HttpError(400, `Meddelandet får vara högst ${MAX_TEXT_LENGTH} tecken.`);
     const image = parseImage(req.body?.image);

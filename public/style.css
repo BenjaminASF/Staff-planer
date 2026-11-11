@@ -5908,6 +5908,64 @@ select option:disabled { color: var(--g-muted); }
 .chat-attach { border-color: var(--g-border-control); background: var(--g-control); color: var(--g-muted); transition: color var(--g-fast), border-color var(--g-fast); }
 .chat-attach:hover { border-color: var(--g-accent); color: var(--g-accent-text); }
 .chat-attachment-remove { background: var(--g-toast); }
+/* Handover: the form takes the place of the messages while it is open. */
+/* The app-wide label and input styles are meant for page forms; the chat sets its own. */
+.chat-header .chat-header-actions { display: flex; align-items: center; gap: 6px; }
+.chat-handover label { margin: 0; }
+.chat-handover input[type="checkbox"], .chat-handover input[type="radio"] { flex: none; width: 16px; height: 16px; min-height: 0; margin: 0; padding: 0; border-radius: 4px; box-shadow: none; }
+.chat-handover-open { min-height: 32px; padding: 0 10px; border: 1px solid var(--g-border-control); border-radius: 9px; background: var(--g-control); color: var(--g-text); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.chat-handover-open:hover, .chat-handover-open[aria-expanded="true"] { border-color: var(--g-accent); color: var(--g-accent-text); }
+.chat-panel.is-handover .chat-messages, .chat-panel.is-handover .chat-form { display: none; }
+.chat-handover { display: grid; flex: 1; align-content: start; gap: 10px; padding: 12px 14px 14px; overflow-y: auto; overscroll-behavior: contain; }
+.chat-handover.hidden { display: none; }
+.chat-handover-head { display: grid; gap: 2px; }
+.chat-handover-head strong { font-size: 14px; }
+.chat-handover-head small, .chat-handover-to-pick legend span, .chat-handover-leader small { color: var(--g-muted); font-size: 12px; font-weight: 500; }
+.chat-handover .chat-handover-field { display: grid; gap: 4px; font-size: 12px; font-weight: 700; color: var(--g-muted); }
+.chat-handover textarea, .chat-handover select { width: 100%; min-width: 0; margin: 0; padding: 7px 10px; border: 1px solid var(--g-border-control); border-radius: 10px; background: var(--g-input); color: var(--g-text); font: inherit; font-size: 13px; font-weight: 400; resize: vertical; }
+.chat-handover select { justify-self: start; width: auto; }
+.chat-handover textarea:focus, .chat-handover select:focus { outline: none; border-color: var(--g-accent); box-shadow: 0 0 0 3px var(--g-ring); }
+.chat-handover-to-pick { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
+.chat-handover-to-pick legend { width: 100%; margin-bottom: 4px; padding: 0; font-size: 12px; font-weight: 700; color: var(--g-muted); }
+.chat-handover .chat-handover-leader { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; border: 1px solid var(--g-border-control); border-radius: 10px; background: var(--g-control); font-size: 13px; font-weight: 700; cursor: pointer; }
+.chat-handover-leader:has(input:checked) { border-color: var(--g-accent); background: var(--g-ring); }
+.chat-handover-leader input { accent-color: var(--g-accent); }
+.chat-handover-empty { margin: 0; color: var(--g-muted); font-size: 12px; }
+.chat-handover-dept { display: grid; gap: 6px; padding: 9px 10px; border: 1px solid var(--g-border-inner); border-radius: 12px; background: var(--g-control); }
+.chat-handover-dept.is-problem { border-color: #dc2626; border-color: light-dark(#dc2626, #f87171); }
+.chat-handover-dept-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.chat-handover-dept-top strong { font-size: 13px; }
+.chat-handover-choice { display: inline-flex; overflow: hidden; border: 1px solid var(--g-border-control); border-radius: 9px; }
+.chat-handover-choice label { position: relative; display: block; cursor: pointer; }
+.chat-handover-choice input[type="radio"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }
+.chat-handover-choice span { display: block; padding: 5px 9px; color: var(--g-muted); font-size: 12px; font-weight: 700; }
+.chat-handover-choice input:focus-visible + span { outline: 2px solid var(--g-accent); outline-offset: -2px; }
+.chat-handover-choice input[value="ok"]:checked + span { background: #dcfce7; background: light-dark(#dcfce7, #10301c); color: #15803d; color: light-dark(#15803d, #4ade80); }
+.chat-handover-choice input[value="problem"]:checked + span { background: #fee2e2; background: light-dark(#fee2e2, #3b1414); color: #b91c1c; color: light-dark(#b91c1c, #f87171); }
+.chat-handover-error { margin: 0; }
+.chat-handover-error:empty { display: none; }
+.chat-handover-actions { display: flex; justify-content: flex-end; gap: 8px; }
+/* The card in the conversation. */
+.chat-message.is-handover { width: min(100%, 340px); max-width: 100%; }
+.chat-message.is-handover.is-mine { background: var(--g-control-hover); border: 1px solid var(--g-border-inner); color: var(--g-text); }
+.chat-message.is-handover.is-mine :is(time, .chat-delete) { color: var(--g-muted); opacity: 1; }
+.chat-handover-card { display: grid; gap: 7px; }
+.chat-handover-title { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.chat-handover-for-me { margin-left: auto; padding: 1px 8px; border-radius: 999px; background: var(--g-ring); color: var(--g-accent-text); font-size: 11px; font-weight: 800; white-space: nowrap; }
+.chat-message.is-handover:has(.is-for-me) { border-color: var(--g-accent); box-shadow: 0 0 0 1px var(--g-accent); }
+.chat-handover-to { color: var(--g-muted); font-size: 11px; }
+.chat-handover-prio { padding: 6px 9px; border-radius: 8px; background: #fef9c3; background: light-dark(#fef9c3, #3a3410); font-size: 13px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-handover-prio b, .chat-handover-other b { display: block; color: #a16207; color: light-dark(#a16207, #fde047); font-size: 10px; letter-spacing: .06em; text-transform: uppercase; }
+.chat-handover-depts { display: grid; gap: 5px; margin: 0; }
+.chat-handover-depts > div { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 8px; font-size: 12px; }
+.chat-handover-depts dt { font-weight: 800; }
+.chat-handover-depts dd { display: grid; gap: 1px; margin: 0; }
+.chat-handover-depts dd > span:not(.chat-handover-status) { color: var(--g-muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-handover-status { font-weight: 800; }
+.chat-handover-status.is-ok { color: #15803d; color: light-dark(#15803d, #4ade80); }
+.chat-handover-status.is-problem { color: #b91c1c; color: light-dark(#b91c1c, #f87171); }
+.chat-handover-other { margin: 0; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-handover-other b { display: inline; margin-right: 4px; }
 @media (max-width: 600px) {
   .chat-widget.is-open { background: var(--g-overlay); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
 }

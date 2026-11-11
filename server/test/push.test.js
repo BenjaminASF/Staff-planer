@@ -121,6 +121,22 @@ describe("pushnotiser", () => {
     assert.equal(sentTo("admin").length, 1);
   });
 
+  test("a handover is pushed at once to the chosen shift leaders, without its text", async () => {
+    const kalle = (await rightHand.get("/api/chat/members")).data.members.find(member => member.name === "Kalle Kväll");
+    const result = await rightHand.post("/api/chat/messages", { handover: {
+      to: [kalle.id], prio: "Olle är sjuk", departments: ["GD", "ETIKETTO", "Packning"].map(name => ({ name, status: "ok" }))
+    } });
+    assert.equal(result.status, 201, JSON.stringify(result.data));
+    await server.app.locals.push.flush();
+    assert.equal(sentTo("kalle").length, 1);
+    const { payload, options } = sentTo("kalle")[0];
+    assert.equal(payload.body, "Du har fått en överlämning i chatten.");
+    assert.ok(!JSON.stringify(payload).includes("Olle"), "no names or text on the lock screen");
+    assert.equal(options.urgency, "high");
+    assert.deepEqual(await pending(kalle.id), [], "no second push for the same message");
+    assert.ok(!sentTo("hand").length, "the author gets nothing");
+  });
+
   test("schedule changes reach only the people whose placement changed, once the week is theirs to see", async () => {
     await save(leader, dayShift.id, `schedule:${week}`, { "Linje 1": { mon: operatorPerson.id, tue: rightHandPerson.id }, "Linje 2": { mon: leaderPerson.id } });
     assert.deepEqual((await pending(rightHandUser.id)).map(row => row.kind), ["schedule"]);

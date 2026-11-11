@@ -217,7 +217,7 @@ Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan r
 Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De är ett komplement till notiserna i appen, som finns kvar precis som förut. En pushnotis skickas bara till dem det gäller, aldrig till den som själv gjorde ändringen:
 
 - **Schema och placering:** när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
-- **Chatt** (admin, skiftledare, höger hand och senior operatörer): privata meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
+- **Chatt** (admin, skiftledare, höger hand och senior operatörer): privata meddelanden och överlämningar till en själv direkt; meddelanden till alla samlas i högst en notis var femte minut.
 - **Anteckningar:** när en lapp delas med en, och när någon kommenterar en lapp man är med på (högst en notis per lapp varannan minut).
 - **Viktiga uppdateringar** (skiftledare): samma som notiserna i appen om admins ändringar, högst en var femte minut.
 
@@ -239,6 +239,8 @@ Utan nycklarna är pushnotiser avstängda, och allt annat fungerar som vanligt. 
 ### Chatt
 
 Admin, skiftledare, höger hand och senior operatörer har en gemensam chatt bakom knappen i nedre högra hörnet, för alla skift. Man skriver till alla eller väljer en person under **Till** för ett privat meddelande. Vanliga operatörer har ingen chatt. Där kan man skicka text och bilder, och man kan också klistra in en bild direkt. Nya meddelanden visas med en röd siffra på knappen och en kort förhandsvisning. Nya meddelanden syns direkt; som reserv kollar appen också var 15:e sekund, och var 4:e sekund när chatten är öppen.
+
+**Överlämning.** Admin, skiftledare och höger hand har knappen **Överlämning** högst upp i chatten. Där väljer man en eller flera skiftledare att lämna över till (nästa skifts skiftledare är förvald), skriver vad som är **prio** för nästa skift och väljer för **GD**, **ETIKETTO** och **Packning** om det **rullade bra** eller om det blev **problem**. Vid problem måste man skriva vad som hände; en kommentar och **Övrigt** är annars valfria. Admin väljer också vilket skift överlämningen gäller, alla andra lämnar över sitt eget skift. Överlämningen visas som ett kort för alla i chatten, och de valda skiftledarna ser den märkt **Till dig** och får en pushnotis direkt. Senior operatörer läser överlämningarna och skriver i chatten som vanligt, men gör inga överlämningar. Servern kontrollerar mottagare och avdelningar ([`server/handover.js`](server/handover.js)).
 
 Bilder förminskas i webbläsaren till högst 1600 pixlar innan de skickas, och sparas sedan i databasen. Man kan ta bort sina egna meddelanden, och admin kan ta bort alla. Meddelanden tas aldrig bort automatiskt, och chatten ingår inte i appens backupfil.
 

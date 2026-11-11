@@ -21,6 +21,7 @@ const KINDS = Object.freeze({
   share: { url: "index.html", text: ref => `Schemat för vecka ${isoWeekNumber(ref.week)} finns nu.` },
   placement: { url: "index.html", text: () => "Din placering har ändrats." },
   chat: { url: "index.html?chat=1", urgency: "high", text: () => "Du har fått ett privat meddelande." },
+  handover: { url: "index.html?chat=1", urgency: "high", text: () => "Du har fått en överlämning i chatten." },
   chatAll: { interval: 300, url: "index.html?chat=1", text: () => "Det finns nya meddelanden i chatten." },
   note: { url: "anteckningar.html", text: () => "En anteckning har delats med dig." },
   noteComment: { interval: 120, url: "anteckningar.html", text: () => "Det finns en ny kommentar på en anteckning." },
@@ -227,11 +228,14 @@ async function queueScheduleShared(db, { scope, week, actorId }) {
 
 // A chat message: a private one is pushed right away, messages to everyone at most
 // every five minutes. chatRoles are the roles that use the chat.
-async function queueChatMessage(db, { messageId, recipientId, authorId, chatRoles }) {
+// A handover's recipients get a notice of their own at once; everyone else hears of it
+// as of any message to everyone.
+async function queueChatMessage(db, { messageId, recipientId, authorId, chatRoles, handoverTo = [] }) {
   return withoutFailing(db, "chat", async () => {
     if (recipientId) return queuePush(db, [{ userId: recipientId, messageId }], { kind: "chat", key: `chat:${messageId}`, exceptUserId: authorId });
     const { rows } = await db.query("SELECT id FROM users WHERE role = ANY($1::text[]) AND id <> $2", [chatRoles, authorId]);
-    return queuePush(db, rows.map(row => row.id), { kind: "chatAll", exceptUserId: authorId });
+    const handed = await queuePush(db, handoverTo.map(userId => ({ userId, messageId })), { kind: "handover", key: `handover:${messageId}`, exceptUserId: authorId });
+    return handed + await queuePush(db, rows.map(row => row.id).filter(id => !handoverTo.includes(id)), { kind: "chatAll", exceptUserId: authorId });
   });
 }
 
@@ -259,6 +263,15 @@ async function stillRelevant(db, user, row) {
       if (!canUseChat(user) || !row.message_id) return false;
       const { rows } = await db.query(
         `SELECT 1 FROM chat_messages m WHERE m.id = $2 AND m.recipient_id = $1 AND m.id > ${LAST_READ_CHAT}`,
+        [user.id, row.message_id]
+      );
+      return rows.length > 0;
+    }
+    case "handover": {
+      if (!canUseChat(user) || !row.message_id) return false;
+      const { rows } = await db.query(
+        `SELECT 1 FROM chat_messages m WHERE m.id = $2 AND m.handover -> 'to' @> jsonb_build_array(jsonb_build_object('id', $1::text))
+            AND m.id > ${LAST_READ_CHAT}`,
         [user.id, row.message_id]
       );
       return rows.length > 0;
