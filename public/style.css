@@ -5945,6 +5945,18 @@ select option:disabled { color: var(--g-muted); }
 .chat-handover-error { margin: 0; }
 .chat-handover-error:empty { display: none; }
 .chat-handover-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.chat-handover-open { position: relative; }
+.chat-handover-open.has-draft::after { content: ""; position: absolute; top: -4px; right: -4px; width: 10px; height: 10px; border: 2px solid var(--g-surface-float); border-radius: 50%; background: #ea580c; }
+.chat-handover-optional { margin-left: 4px; color: var(--g-muted); font-size: 11px; font-weight: 500; }
+.chat-handover .chat-handover-production-pick { display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--g-border-inner); border-radius: 10px; background: var(--g-control); color: var(--g-muted); font-size: 12px; font-weight: 500; cursor: pointer; }
+.chat-handover-production-pick input { margin-top: 2px !important; accent-color: var(--g-accent); }
+.chat-handover-production-pick b { color: var(--g-text); }
+.chat-handover-quick { display: flex; flex-wrap: wrap; gap: 5px; }
+.chat-handover-quick[hidden] { display: none; }
+.chat-handover-quick button { padding: 4px 9px; border: 1px solid var(--g-border-control); border-radius: 999px; background: var(--g-control-hover); color: var(--g-muted); font: inherit; font-size: 12px; font-weight: 700; cursor: pointer; }
+.chat-handover-quick button:hover { border-color: var(--g-accent); color: var(--g-accent-text); }
+.chat-handover-clear { margin-right: auto; padding: 0; border: 0; background: none; color: var(--g-muted); font: inherit; font-size: 12px; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.chat-handover-production { padding: 5px 9px; border-radius: 8px; background: var(--g-control); color: var(--g-muted); font-size: 12px; overflow-wrap: anywhere; }
 /* The card in the conversation. */
 .chat-message.is-handover { width: min(100%, 340px); max-width: 100%; }
 .chat-message.is-handover.is-mine { background: var(--g-control-hover); border: 1px solid var(--g-border-inner); color: var(--g-text); }

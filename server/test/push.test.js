@@ -135,6 +135,7 @@ describe("pushnotiser", () => {
     assert.equal(options.urgency, "high");
     assert.deepEqual(await pending(kalle.id), [], "no second push for the same message");
     assert.ok(!sentTo("hand").length, "the author gets nothing");
+    assert.ok(!sentTo("admin").length && !sentTo("leader").length, "nobody else is told, as nobody else sees it");
   });
 
   test("schedule changes reach only the people whose placement changed, once the week is theirs to see", async () => {

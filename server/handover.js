@@ -1,5 +1,6 @@
 // Handovers in the chat: the shift that ends tells chosen shift leaders what is the
-// priority and how GD, ETIKETTO and Packning went. Who may send one is decided in
+// priority and how GD, ETIKETTO and Packning went. Only the author, those shift leaders
+// and admins see it (routes/chat.js). Who may send one is decided in
 // permissions.js (canMakeHandover); this file checks what is sent.
 const { HttpError } = require("./auth");
 const { cleanText } = require("./validation");
@@ -8,6 +9,7 @@ const HANDOVER_DEPARTMENTS = Object.freeze(["GD", "ETIKETTO", "Packning"]);
 const HANDOVER_STATUSES = Object.freeze(["ok", "problem"]);
 const MAX_PRIO_LENGTH = 1000;
 const MAX_COMMENT_LENGTH = 500;
+const MAX_PRODUCTION_LENGTH = 500;
 
 // Returns the handover to store, or throws. `leaders` are the shift leaders who can
 // receive it ({ id, name }), `shifts` all shifts ({ id, name }). Admins belong to no
@@ -41,6 +43,8 @@ function parseHandover(input, { user, leaders, shifts }) {
     fromShiftName: fromShift.name,
     to,
     prio: cleanText(input.prio, MAX_PRIO_LENGTH),
+    // The day's production as the sender's page summed it up, if they chose to include it.
+    production: cleanText(input.production, MAX_PRODUCTION_LENGTH),
     departments,
     other: cleanText(input.other, MAX_PRIO_LENGTH)
   };

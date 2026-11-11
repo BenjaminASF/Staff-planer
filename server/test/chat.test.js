@@ -179,9 +179,9 @@ describe("handovers in the chat", () => {
     assert.deepEqual(bo, { id: users.bo.id, name: "Bo Blå", role: "shift_leader", shiftId: blue.id });
   });
 
-  test("a right hand hands over their own shift to a chosen shift leader; everyone in the chat sees it", async () => {
+  test("a right hand hands over their own shift to a chosen shift leader; only they, the author and admins see it", async () => {
     const sent = await rightHand.post("/api/chat/messages", { handover: {
-      to: [users.bo.id], prio: "  Kör GD-3 först  ", other: "",
+      to: [users.bo.id], prio: "  Kör GD-3 först  ", other: "", production: " 412 box av mål 400 ",
       departments: departments({ ETIKETTO: { status: "problem", comment: "Rullen fastnade två gånger" } })
     } });
     assert.equal(sent.status, 201, JSON.stringify(sent.data));
@@ -190,6 +190,7 @@ describe("handovers in the chat", () => {
     assert.equal(message.recipientId, null);
     assert.deepEqual(message.handover, {
       fromShiftId: red.id, fromShiftName: red.name, to: [{ id: users.bo.id, name: "Bo Blå" }], prio: "Kör GD-3 först",
+      production: "412 box av mål 400",
       departments: [
         { name: "GD", status: "ok", comment: "" },
         { name: "ETIKETTO", status: "problem", comment: "Rullen fastnade två gånger" },
@@ -197,17 +198,21 @@ describe("handovers in the chat", () => {
       ],
       other: ""
     });
-    for (const client of [admin, redLeader, blueLeader, senior]) {
-      const { data } = await client.get("/api/chat/messages");
-      assert.deepEqual(data.messages.at(-1).handover, message.handover);
-    }
+    const ids = async client => (await client.get("/api/chat/messages")).data.messages.map(item => item.id);
+    for (const client of [rightHand, blueLeader, admin]) assert.ok((await ids(client)).includes(message.id));
+    for (const client of [redLeader, senior]) assert.ok(!(await ids(client)).includes(message.id), "others in the chat do not see it");
     assert.equal((await blueLeader.get("/api/chat/unread")).data.latest.handover.to[0].id, users.bo.id);
+    assert.notEqual((await redLeader.get("/api/chat/unread")).data.latest?.id, message.id, "nor count it as unread");
+    assert.equal((await redLeader.delete(`/api/chat/messages/${message.id}`)).status, 404);
   });
 
   test("a handover can go to several shift leaders, each once", async () => {
     const sent = await admin.post("/api/chat/messages", { handover: { fromShiftId: blue.id, to: [users.lisa.id, users.bo.id, users.lisa.id], departments: departments() } });
     assert.equal(sent.status, 201, JSON.stringify(sent.data));
     assert.deepEqual(sent.data.message.handover.to.map(item => item.name), ["Lisa Ledare", "Bo Blå"]);
+    for (const client of [redLeader, blueLeader]) {
+      assert.ok((await client.get("/api/chat/messages")).data.messages.some(item => item.id === sent.data.message.id), "every recipient sees it");
+    }
     assert.equal(sent.data.message.handover.fromShiftName, blue.name);
   });
 
@@ -238,7 +243,8 @@ describe("handovers in the chat", () => {
 
   test("the author deletes their own handover", async () => {
     const { message } = (await rightHand.post("/api/chat/messages", { handover: { to: [users.bo.id], departments: departments() } })).data;
-    assert.equal((await senior.delete(`/api/chat/messages/${message.id}`)).status, 403);
+    assert.equal((await senior.delete(`/api/chat/messages/${message.id}`)).status, 404, "she does not see it");
+    assert.equal((await blueLeader.delete(`/api/chat/messages/${message.id}`)).status, 403, "the recipient sees it but cannot delete it");
     assert.equal((await rightHand.delete(`/api/chat/messages/${message.id}`)).status, 200);
     const ids = (await admin.get("/api/chat/messages")).data.messages.map(item => item.id);
     assert.ok(!ids.includes(message.id));

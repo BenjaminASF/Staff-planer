@@ -34,8 +34,14 @@ function parseImage(image) {
 }
 
 const MESSAGE_COLUMNS = "id, user_id, author_name, recipient_id, recipient_name, body, image IS NOT NULL AS has_image, handover, created_at";
-// Messages to everyone, plus private ones the user sent or received. $1 is the user's id.
-const VISIBLE = "(recipient_id IS NULL OR recipient_id = $1 OR user_id = $1)";
+// A handover is seen only by its author, the shift leaders it went to and admins.
+// $1 is the user's id; `m` is the table alias.
+const handoverVisible = m => `(${m}handover IS NULL OR ${m}user_id = $1
+  OR ${m}handover -> 'to' @> jsonb_build_array(jsonb_build_object('id', $1::text))
+  OR EXISTS (SELECT 1 FROM users a WHERE a.id = $1 AND a.role = 'admin'))`;
+// Messages to everyone, plus private ones the user sent or received, and the handovers
+// the user may see. $1 is the user's id.
+const VISIBLE = `((recipient_id IS NULL OR recipient_id = $1 OR user_id = $1) AND ${handoverVisible("")})`;
 
 function serializeMessage(row) {
   const id = String(row.id);
@@ -97,8 +103,8 @@ function chatRoutes({ pool }) {
     res.json({ members: rows.map(row => ({ id: row.id, name: row.name, role: row.role, shiftId: row.shift_id ?? null })) });
   });
 
-  // A handover is a message to everyone, shown as a card and marked for the chosen
-  // shift leaders, who also get a notice of their own.
+  // A handover is shown as a card to its author, the chosen shift leaders and admins.
+  // The shift leaders get a notice of their own.
   async function sendHandover(req, res) {
     if (!canMakeHandover(req.user)) throw new HttpError(403, "Bara admin, skiftledare och höger hand kan göra överlämningar.");
     const [leaders, shifts] = await Promise.all([
@@ -184,7 +190,8 @@ function chatRoutes({ pool }) {
        )
        SELECT count(*)::int AS count, max(m.id) AS latest_id
          FROM chat_messages m, seen
-        WHERE m.id > seen.id AND m.user_id IS DISTINCT FROM $1 AND (m.recipient_id IS NULL OR m.recipient_id = $1)`,
+        WHERE m.id > seen.id AND m.user_id IS DISTINCT FROM $1 AND (m.recipient_id IS NULL OR m.recipient_id = $1)
+          AND ${handoverVisible("m.")}`,
       [req.user.id]
     );
     let latest = null;

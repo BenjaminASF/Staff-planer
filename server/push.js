@@ -228,14 +228,14 @@ async function queueScheduleShared(db, { scope, week, actorId }) {
 
 // A chat message: a private one is pushed right away, messages to everyone at most
 // every five minutes. chatRoles are the roles that use the chat.
-// A handover's recipients get a notice of their own at once; everyone else hears of it
-// as of any message to everyone.
+// A handover's recipients get a notice of their own at once. Nobody else sees it, so
+// nobody else is told.
 async function queueChatMessage(db, { messageId, recipientId, authorId, chatRoles, handoverTo = [] }) {
   return withoutFailing(db, "chat", async () => {
     if (recipientId) return queuePush(db, [{ userId: recipientId, messageId }], { kind: "chat", key: `chat:${messageId}`, exceptUserId: authorId });
+    if (handoverTo.length) return queuePush(db, handoverTo.map(userId => ({ userId, messageId })), { kind: "handover", key: `handover:${messageId}`, exceptUserId: authorId });
     const { rows } = await db.query("SELECT id FROM users WHERE role = ANY($1::text[]) AND id <> $2", [chatRoles, authorId]);
-    const handed = await queuePush(db, handoverTo.map(userId => ({ userId, messageId })), { kind: "handover", key: `handover:${messageId}`, exceptUserId: authorId });
-    return handed + await queuePush(db, rows.map(row => row.id).filter(id => !handoverTo.includes(id)), { kind: "chatAll", exceptUserId: authorId });
+    return queuePush(db, rows.map(row => row.id), { kind: "chatAll", exceptUserId: authorId });
   });
 }
 
@@ -279,7 +279,7 @@ async function stillRelevant(db, user, row) {
     case "chatAll": {
       if (!canUseChat(user)) return false;
       const { rows } = await db.query(
-        `SELECT 1 FROM chat_messages m WHERE m.recipient_id IS NULL AND m.user_id IS DISTINCT FROM $1
+        `SELECT 1 FROM chat_messages m WHERE m.recipient_id IS NULL AND m.handover IS NULL AND m.user_id IS DISTINCT FROM $1
             AND m.id > ${LAST_READ_CHAT} LIMIT 1`,
         [user.id]
       );

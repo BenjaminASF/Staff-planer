@@ -8536,7 +8536,7 @@ const CHAT_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const CHAT_NOTIFIED_KEY = "staff_chat_notified_id";
 const CHAT_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false };
+const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "" };
 
 const chatMessageId = message => BigInt(message?.id || 0);
 
@@ -8613,14 +8613,34 @@ function setupChat() {
   });
   elements.widget.querySelector(".chat-handover-open")?.addEventListener("click", () => setChatHandoverOpen(!chatState.handoverOpen));
   elements.handover.addEventListener("click", event => {
-    if (event.target.closest("[data-handover-cancel]")) setChatHandoverOpen(false);
+    if (event.target.closest("[data-handover-cancel]")) { setChatHandoverOpen(false); return; }
+    const quick = event.target.closest("[data-handover-quick]");
+    if (quick) { pickChatHandoverQuick(quick); return; }
+    if (event.target.closest("[data-handover-clear]")) {
+      writeStored(sessionStorage, handoverDraftKey(), null);
+      renderChatHandoverForm();
+      updateChatHandoverButton();
+    }
   });
   elements.handover.addEventListener("change", event => {
-    // Another shift: what was typed stays, the recipients follow the new shift.
-    if (event.target.name === "fromShiftId") { renderChatHandoverForm({ ...collectChatHandover(), to: null }); return; }
+    // Another shift: what was typed stays, the recipients and production follow the new shift.
+    if (event.target.name === "fromShiftId") {
+      const draft = { ...collectChatHandover(), to: null };
+      chatState.handoverProduction = "";
+      renderChatHandoverForm(draft);
+      void summarizeTodaysProduction(draft.fromShiftId).then(production => {
+        chatState.handoverProduction = production;
+        if (chatState.handoverOpen) renderChatHandoverForm(collectChatHandover());
+      });
+      saveChatHandoverDraft();
+      return;
+    }
     if (event.target.type === "radio") updateChatHandoverDepartment(event.target.closest(".chat-handover-dept"));
+    saveChatHandoverDraft();
   });
+  elements.handover.addEventListener("input", () => saveChatHandoverDraft());
   elements.handover.addEventListener("submit", event => { event.preventDefault(); void sendChatHandover(); });
+  updateChatHandoverButton();
   elements.input.addEventListener("keydown", event => {
     if (handleChatMentionKey(event)) return;
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); elements.form.requestSubmit(); }
@@ -10200,6 +10220,28 @@ function pickChatMention(userId) {
 // and how GD, ETIKETTO and Packning went. The server checks everything again
 // (server/handover.js) and shows the handover to everyone in the chat.
 const CHAT_HANDOVER_DEPARTMENTS = ["GD", "ETIKETTO", "Packning"];
+// Tapping one of these when something went wrong starts the comment with it.
+const CHAT_HANDOVER_QUICK = ["Maskinstopp", "Materialbrist", "Personalbrist", "Kvalitet"];
+// The recipients last chosen (this device) and an unsent handover (this browser tab), per user.
+const handoverRecipientsKey = () => `staff_handover_to:${currentUser?.id || ""}`;
+const handoverDraftKey = () => `staff_handover_draft:${currentUser?.id || ""}`;
+
+function readStored(storage, key) {
+  try {
+    return JSON.parse(storage.getItem(key) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(storage, key, value) {
+  try {
+    if (value === null) storage.removeItem(key);
+    else storage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Without storage the form simply starts over next time.
+  }
+}
 
 function chatHandoverCardHtml(handover) {
   const forMe = handover.to.some(item => item.id === currentUser?.id);
@@ -10209,6 +10251,7 @@ function chatHandoverCardHtml(handover) {
   return `<div class="chat-handover-card${forMe ? " is-for-me" : ""}">
     <div class="chat-handover-title"><strong>Överlämning från ${escapeHtml(handover.fromShiftName)}</strong>${forMe ? '<span class="chat-handover-for-me">Till dig</span>' : ""}</div>
     <small class="chat-handover-to">Till ${escapeHtml(handover.to.map(item => item.name).join(" och "))}</small>
+    ${handover.production ? `<div class="chat-handover-production">Produktion: ${escapeHtml(handover.production)}</div>` : ""}
     ${handover.prio ? `<div class="chat-handover-prio"><b>Prio</b>${escapeHtml(handover.prio)}</div>` : ""}
     <dl class="chat-handover-depts">${handover.departments.map(item => `<div><dt>${escapeHtml(item.name)}</dt><dd>${status(item)}${item.comment ? `<span>${escapeHtml(item.comment)}</span>` : ""}</dd></div>`).join("")}</dl>
     ${handover.other ? `<p class="chat-handover-other"><b>Övrigt</b> ${escapeHtml(handover.other)}</p>` : ""}
@@ -10222,73 +10265,135 @@ function chatHandoverFromShift(draft = {}) {
   return shifts.find(shift => shift.id === draft.fromShiftId) || shifts.find(shift => shift.id === getShiftScope()) || shifts[0] || null;
 }
 
+// The day's production of a shift in one line: "412 box av mål 400 · GD2: kniven byttes".
+// Empty when nothing is registered yet or the production cannot be read.
+async function summarizeTodaysProduction(shiftId) {
+  try {
+    const date = formatDateKey(new Date());
+    const [records, settings] = await Promise.all([getProductionRecords(shiftId), getProductionSettings()]);
+    const record = records[date];
+    if (!record?.machines) return "";
+    const entries = Object.entries(record.machines);
+    const total = entries.reduce((sum, [, item]) => sum + (Number(item?.result) || 0), 0);
+    const target = getProductionTarget(settings, shiftId, date, record);
+    const comments = entries.filter(([, item]) => item?.comment).map(([machine, item]) => `${machine}: ${item.comment}`);
+    if (!total && !comments.length) return "";
+    return [`${total} box av mål ${target}${total >= target ? " ✓" : ""}`, ...comments].join(" · ");
+  } catch {
+    return "";
+  }
+}
+
 function collectChatHandover() {
   const form = getChatElements().handover;
   const value = name => form.elements[name]?.value ?? "";
   return {
     fromShiftId: value("fromShiftId"),
     to: [...form.querySelectorAll('input[name="to"]:checked')].map(box => box.value),
+    // Unknown until the day's production has been read and the box is shown.
+    includeProduction: form.elements.includeProduction ? form.elements.includeProduction.checked : undefined,
     prio: value("prio"),
     departments: CHAT_HANDOVER_DEPARTMENTS.map((name, index) => ({
-      name, status: form.querySelector(`input[name="dept${index}"]:checked`)?.value || "", comment: value(`comment${index}`)
+      name, status: form.querySelector(`input[name="dept${index}"]:checked`)?.value || "ok", comment: value(`comment${index}`)
     })),
     other: value("other")
   };
 }
 
-// Drawn when opened and when an admin picks another shift. A draft keeps what was typed;
-// the next shift's leaders are ticked from the start.
+// Only something typed or a problem counts as a draft; recipients alone do not.
+function saveChatHandoverDraft() {
+  if (!chatState.handoverOpen) return;
+  const draft = collectChatHandover();
+  const started = draft.prio.trim() || draft.other.trim() || draft.departments.some(item => item.status === "problem" || item.comment.trim());
+  writeStored(sessionStorage, handoverDraftKey(), started ? draft : null);
+  updateChatHandoverButton();
+}
+
+// A dot on the button tells that an unsent handover is waiting.
+function updateChatHandoverButton() {
+  const button = getChatElements()?.widget.querySelector(".chat-handover-open");
+  if (button) button.classList.toggle("has-draft", Boolean(readStored(sessionStorage, handoverDraftKey())));
+}
+
+// Drawn when opened and when an admin picks another shift. Every department starts as
+// "Rullade bra", so only what went wrong needs a tap. The recipients chosen last time are
+// ticked, else the next shift's leaders.
 function renderChatHandoverForm(draft = null) {
   const form = getChatElements().handover;
   const from = chatHandoverFromShift(draft || {});
   const leaders = chatState.members.filter(member => member.role === ROLES.LEADER);
   const fromIndex = shifts.findIndex(shift => shift.id === from?.id);
   const nextShift = shifts.length > 1 ? shifts[(fromIndex + 1) % shifts.length] : null;
-  const ticked = new Set(draft?.to ?? leaders.filter(member => member.shiftId === nextShift?.id).map(member => member.id));
+  const remembered = (readStored(localStorage, handoverRecipientsKey()) || []).filter(id => leaders.some(member => member.id === id));
+  const ticked = new Set(draft?.to ?? (remembered.length ? remembered : leaders.filter(member => member.shiftId === nextShift?.id).map(member => member.id)));
   const departments = draft?.departments || [];
+  const production = chatState.handoverProduction;
   const shiftOptions = isAdmin() ? `<label class="chat-handover-field">Från skift<select name="fromShiftId">${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === from?.id ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}</select></label>` : "";
   form.innerHTML = `
-    <div class="chat-handover-head"><strong>Överlämning${from ? ` från ${escapeHtml(from.name)}` : ""}</strong><small>Visas för alla i chatten och märks för de skiftledare du väljer.</small></div>
+    <div class="chat-handover-head"><strong>Överlämning${from ? ` från ${escapeHtml(from.name)}` : ""}</strong><small>Bara skiftledarna du väljer och admin ser den. Utkastet sparas medan du skriver.</small></div>
     ${shiftOptions}
-    <fieldset class="chat-handover-to-pick"><legend>Till skiftledare <span>(en eller flera)</span></legend>
+    <fieldset class="chat-handover-to-pick"><legend>Till skiftledare <span>(en eller flera, sparas till nästa gång)</span></legend>
       ${leaders.length ? leaders.map(member => `<label class="chat-handover-leader"><input type="checkbox" name="to" value="${escapeHtml(member.id)}"${ticked.has(member.id) ? " checked" : ""} />${shiftColorDot(member.shiftId)}${escapeHtml(member.name)}${getShiftName(member.shiftId) ? ` <small>${escapeHtml(getShiftName(member.shiftId))}</small>` : ""}</label>`).join("") : '<p class="chat-handover-empty">Det finns ingen annan skiftledare i chatten.</p>'}
     </fieldset>
-    <label class="chat-handover-field">Prio för nästa skift<textarea name="prio" rows="2" maxlength="1000" placeholder="Till exempel: kör GD-3 först, ordern ska ut kl 10">${escapeHtml(draft?.prio || "")}</textarea></label>
+    ${production ? `<label class="chat-handover-production-pick"><input type="checkbox" name="includeProduction"${draft?.includeProduction === false ? "" : " checked"} /><span><b>Från Produktion idag:</b> ${escapeHtml(production)}</span></label>` : ""}
+    <label class="chat-handover-field"><span>Prio för nästa skift <span class="chat-handover-optional">valfritt</span></span><textarea name="prio" rows="2" maxlength="1000" placeholder="Till exempel: kör GD-3 först, ordern ska ut kl 10">${escapeHtml(draft?.prio || "")}</textarea></label>
+    <div class="chat-handover-field"><span>Hur gick det? <span class="chat-handover-optional">allt är Rullade bra tills du ändrar</span></span></div>
     ${CHAT_HANDOVER_DEPARTMENTS.map((name, index) => {
       const saved = departments[index] || {};
-      return `<div class="chat-handover-dept${saved.status === "problem" ? " is-problem" : ""}">
+      const problem = saved.status === "problem";
+      return `<div class="chat-handover-dept${problem ? " is-problem" : ""}">
         <div class="chat-handover-dept-top"><strong id="chatHandoverDept${index}">${escapeHtml(name)}</strong><div class="chat-handover-choice" role="radiogroup" aria-labelledby="chatHandoverDept${index}">
-          <label><input type="radio" name="dept${index}" value="ok"${saved.status === "ok" ? " checked" : ""} /><span>✓ Rullade bra</span></label>
-          <label><input type="radio" name="dept${index}" value="problem"${saved.status === "problem" ? " checked" : ""} /><span>⚠ Problem</span></label>
+          <label><input type="radio" name="dept${index}" value="ok"${problem ? "" : " checked"} /><span>✓ Rullade bra</span></label>
+          <label><input type="radio" name="dept${index}" value="problem"${problem ? " checked" : ""} /><span>⚠ Problem</span></label>
         </div></div>
-        <textarea name="comment${index}" rows="1" maxlength="500" aria-label="Kommentar för ${escapeHtml(name)}" placeholder="${saved.status === "problem" ? "Vad hände? (krävs)" : "Kommentar (valfri)"}">${escapeHtml(saved.comment || "")}</textarea>
+        <div class="chat-handover-quick"${problem ? "" : " hidden"}>${CHAT_HANDOVER_QUICK.map(text => `<button type="button" data-handover-quick="${index}" data-text="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div>
+        <textarea name="comment${index}" rows="1" maxlength="500" aria-label="Kommentar för ${escapeHtml(name)}" placeholder="${problem ? "Vad hände? (krävs)" : "Kommentar (valfri)"}">${escapeHtml(saved.comment || "")}</textarea>
       </div>`;
     }).join("")}
-    <label class="chat-handover-field">Övrigt<textarea name="other" rows="1" maxlength="1000" placeholder="Valfritt">${escapeHtml(draft?.other || "")}</textarea></label>
+    <label class="chat-handover-field"><span>Övrigt <span class="chat-handover-optional">valfritt</span></span><textarea name="other" rows="1" maxlength="1000">${escapeHtml(draft?.other || "")}</textarea></label>
     <p class="chat-handover-error inline-message error" role="alert"></p>
-    <div class="chat-handover-actions"><button type="button" class="btn" data-handover-cancel>Avbryt</button><button type="submit" class="btn primary"${leaders.length ? "" : " disabled"}>Skicka överlämning</button></div>`;
+    <div class="chat-handover-actions"><button type="button" class="chat-handover-clear" data-handover-clear>Börja om</button><button type="button" class="btn" data-handover-cancel>Stäng</button><button type="submit" class="btn primary"${leaders.length ? "" : " disabled"}>Skicka överlämning</button></div>`;
 }
 
 function updateChatHandoverDepartment(dept) {
   if (!dept) return;
   const problem = dept.querySelector('input[value="problem"]').checked;
   dept.classList.toggle("is-problem", problem);
-  dept.querySelector("textarea").placeholder = problem ? "Vad hände? (krävs)" : "Kommentar (valfri)";
+  dept.querySelector(".chat-handover-quick").hidden = !problem;
+  const comment = dept.querySelector("textarea");
+  comment.placeholder = problem ? "Vad hände? (krävs)" : "Kommentar (valfri)";
+  if (problem && !comment.value.trim()) comment.focus();
+}
+
+// "Maskinstopp" + the comment typed so far; tapping another one replaces it.
+function pickChatHandoverQuick(button) {
+  const comment = getChatElements().handover.elements[`comment${button.dataset.handoverQuick}`];
+  const rest = comment.value.replace(new RegExp(`^(${CHAT_HANDOVER_QUICK.join("|")}): ?`), "");
+  comment.value = `${button.dataset.text}: ${rest}`;
+  comment.focus();
+  comment.setSelectionRange(comment.value.length, comment.value.length);
+  saveChatHandoverDraft();
 }
 
 function setChatHandoverOpen(open) {
   const elements = getChatElements();
   if (open && !canMakeHandover()) return;
+  if (!open) saveChatHandoverDraft();
   chatState.handoverOpen = open;
   elements.panel.classList.toggle("is-handover", open);
   elements.handover.classList.toggle("hidden", !open);
   elements.widget.querySelector(".chat-handover-open")?.setAttribute("aria-expanded", String(open));
   if (open) {
-    renderChatHandoverForm();
+    const draft = readStored(sessionStorage, handoverDraftKey());
+    renderChatHandoverForm(draft);
     elements.handover.scrollTop = 0;
     elements.handover.querySelector("input, textarea, select")?.focus();
-    // The list of shift leaders may be newer on the server.
-    void loadChatMembers().then(() => { if (chatState.handoverOpen) renderChatHandoverForm(collectChatHandover()); });
+    // The shift leaders may be newer on the server, and the day's production is read now.
+    const from = chatHandoverFromShift(draft || {});
+    void Promise.all([loadChatMembers(), from ? summarizeTodaysProduction(from.id) : ""]).then(([, production]) => {
+      chatState.handoverProduction = production;
+      if (chatState.handoverOpen) renderChatHandoverForm(collectChatHandover());
+    });
   } else {
     elements.handover.innerHTML = "";
     if (chatState.open) elements.input.focus();
@@ -10300,21 +10405,32 @@ async function sendChatHandover() {
   const error = form.querySelector(".chat-handover-error");
   const draft = collectChatHandover();
   // The same rules as the server, so mistakes show before anything is sent.
-  const missing = draft.departments.filter(item => !item.status).map(item => item.name);
   const unexplained = draft.departments.filter(item => item.status === "problem" && !item.comment.trim()).map(item => item.name);
   const problem = !draft.to.length ? "Välj minst en skiftledare att lämna över till."
-    : missing.length ? `Välj Rullade bra eller Problem för ${missing.join(", ")}.`
     : unexplained.length ? `Skriv vad som hände på ${unexplained.join(", ")}.` : "";
   if (problem) { error.textContent = problem; return; }
   const submit = form.querySelector('button[type="submit"]');
   submit.disabled = true;
   try {
-    const { message } = await apiRequest("POST", "/chat/messages", { handover: { ...draft, fromShiftId: isAdmin() ? draft.fromShiftId : undefined } });
+    const { includeProduction, ...handover } = draft;
+    const { message } = await apiRequest("POST", "/chat/messages", { handover: {
+      ...handover,
+      production: includeProduction === false ? "" : chatState.handoverProduction,
+      fromShiftId: isAdmin() ? draft.fromShiftId : undefined
+    } });
+    writeStored(localStorage, handoverRecipientsKey(), draft.to);
+    writeStored(sessionStorage, handoverDraftKey(), null);
     if (!chatState.messages.some(item => item.id === message.id)) chatState.messages.push(message);
-    setChatHandoverOpen(false);
+    chatState.handoverOpen = false;
+    getChatElements().panel.classList.remove("is-handover");
+    form.classList.add("hidden");
+    form.innerHTML = "";
+    getChatElements().widget.querySelector(".chat-handover-open")?.setAttribute("aria-expanded", "false");
+    updateChatHandoverButton();
     renderChatMessages({ scrollToEnd: true });
-    showChatStatus("Överlämningen är skickad.", "success");
-    setTimeout(() => { if (getChatElements().status.textContent === "Överlämningen är skickad.") showChatStatus(""); }, 4000);
+    const names = message.handover.to.map(item => item.name.split(" ")[0]).join(" och ");
+    showChatStatus(`Överlämningen är skickad till ${names}.`, "success");
+    setTimeout(() => { if (getChatElements().status.textContent.startsWith("Överlämningen är skickad")) showChatStatus(""); }, 5000);
   } catch (sendError) {
     error.textContent = sendError.message || "Överlämningen kunde inte skickas.";
     submit.disabled = false;
