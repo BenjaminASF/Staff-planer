@@ -9323,10 +9323,27 @@ function drawOpenNote() {
   big.style.setProperty("--sn-paper", noteColorVar(note.color));
   const focused = document.activeElement;
   const typing = ["notesText", "notesCommentText"].includes(focused?.id) ? [focused.id, focused.selectionStart, focused.selectionEnd] : null;
+  // A redraw (Ta bort, Klar, a new comment…) keeps the note scrolled where it was.
+  const scrollTop = big.querySelector(".sn-big-scroll")?.scrollTop || 0;
   big.innerHTML = openNoteHtml();
   notesState.open.animateCheck = false;
+  sizeNoteText();
+  const scroller = big.querySelector(".sn-big-scroll");
+  if (scroller) scroller.scrollTop = scrollTop;
   const restored = typing && document.getElementById(typing[0]);
-  if (restored) { restored.focus(); restored.setSelectionRange(typing[1], typing[2]); }
+  if (restored) { restored.focus({ preventScroll: true }); restored.setSelectionRange(typing[1], typing[2]); }
+}
+
+// The note's text box is as tall as its text, so the whole note scrolls as one piece
+// instead of a small box inside it catching the finger on a phone.
+function sizeNoteText() {
+  const textarea = document.getElementById("notesText");
+  if (!textarea) return;
+  const scroller = textarea.closest(".sn-big-scroll");
+  const scrollTop = scroller?.scrollTop || 0;
+  textarea.style.height = "auto";
+  textarea.style.height = `${textarea.scrollHeight}px`;
+  if (scroller) scroller.scrollTop = scrollTop;
 }
 
 // Zooms the opened note out of (or back into) the small one it came from.
@@ -9343,6 +9360,8 @@ function flipNote(element, from, reverse) {
 
 function showOpenNote(fromElement) {
   const layer = document.getElementById("notesLayer");
+  // The board behind stays put, so a swipe on the open note never scrolls the page instead.
+  document.documentElement.classList.add("sn-locked");
   layer.innerHTML = '<div class="sn-scrim fade-in" id="notesScrim"><div class="sn-big" id="notesBig" role="dialog" aria-modal="true" aria-label="Anteckning"></div></div>';
   drawOpenNote();
   const big = document.getElementById("notesBig");
@@ -9379,6 +9398,7 @@ async function closeOpenNote(keepNote = true) {
   if (big && target) await flipNote(big, target.getBoundingClientRect(), true);
   else if (!notesReducedMotion()) await new Promise(resolve => setTimeout(resolve, 200));
   document.getElementById("notesLayer").innerHTML = "";
+  document.documentElement.classList.remove("sn-locked");
   renderNotesPage();
   if (id) notesBoard().querySelector(`.sn-note[data-note-id="${CSS.escape(id)}"]`)?.focus({ preventScroll: true });
   if (notesState.pendingReload) void reloadNotesPage();
@@ -9423,6 +9443,7 @@ function handleOpenNoteInput(event) {
   if (event.target.id !== "notesText" || !notesState.open) return;
   const { note, isNew } = notesState.open;
   note.text = event.target.value;
+  sizeNoteText();
   if (isNew) {
     const button = document.querySelector('[data-note-act="create"]');
     if (button) button.disabled = !(note.text.trim() && (note.kind === "personal" || draftRecipients(note).length));
