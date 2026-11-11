@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Maskinbehörighet</title>
-  <script src="theme.js?v=20261103-chatclose2"></script><link rel="manifest" href="manifest.webmanifest" /><link rel="apple-touch-icon" href="app-icon-180.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700&family=Inter:wght@400;500;600;700&display=swap" /><link rel="stylesheet" href="style.css?v=20261103-chatclose2" />
+  <script src="theme.js?v=20261111-kompetens"></script><link rel="manifest" href="manifest.webmanifest" /><link rel="apple-touch-icon" href="app-icon-180.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700&family=Inter:wght@400;500;600;700&display=swap" /><link rel="stylesheet" href="style.css?v=20261111-kompetens" />
 </head>
 <body class="app-booting">
   <div id="authScreen" class="auth-screen">
@@ -53,11 +53,24 @@
           </div>
         </section>
 
+        <section class="card department-manager">
+          <div>
+            <h3>Kompetenser</h3>
+            <p>Lägg till en ny kompetens eller ta bort en som inte används. Gäller alla skift.</p>
+          </div>
+          <form id="departmentForm" class="department-form">
+            <input id="departmentNameInput" type="text" maxlength="40" placeholder="Ny kompetens" aria-label="Ny kompetens" />
+            <button class="btn primary" type="submit">Lägg till</button>
+          </form>
+          <p id="departmentMessage" class="inline-message" aria-live="polite"></p>
+          <div id="departmentList" class="department-list"></div>
+        </section>
+
         <div class="filter-bar card"><input id="machineSearch" type="search" placeholder="Sök personal" /><select id="machineFilter"><option value="">Alla kompetenser</option><option value="complete">Full kompetens</option><option value="incomplete">Behöver utbildning</option><option value="restricted">Får inte GD</option></select></div>
         <section id="machineSkillsGrid" class="competency-grid"></section>
       </main>
     </div>
   </div>
-<script src="app.js?v=20261103-chatclose2"></script>
+<script src="app.js?v=20261111-kompetens"></script>
 </body>
 </html>

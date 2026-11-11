@@ -2189,6 +2189,11 @@ input:focus {
   cursor: pointer;
 }
 
+.department-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .department-remove:hover {
   background: #fecdca;
   background: light-dark(#fecdca, #511f1f);
