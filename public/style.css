@@ -5941,6 +5941,11 @@ select option:disabled { color: var(--g-muted); }
 .chat-message.is-private.is-mine :is(time, .chat-delete, .chat-role) { color: var(--g-muted); opacity: 1; }
 .chat-message.is-private .chat-private, .chat-message.is-private.is-mine .chat-private { justify-self: start; padding: 2px 8px; background: rgba(180,83,9,.14); color: #b45309; color: light-dark(#b45309, #fbbf24); font-size: 12px; font-weight: 800; }
 .chat-input-row textarea { font-size: 15px; }
+/* The list Till above the message field. */
+.chat-form .chat-to { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--g-muted); font-size: 13px; font-weight: 700; }
+.chat-to select { flex: 1; min-width: 0; min-height: 36px; margin: 0; padding: 0 10px; border: 1px solid var(--g-border-control); border-radius: 10px; background: var(--g-input); color: var(--g-text); font: inherit; font-size: 14px; font-weight: 600; }
+.chat-to select:focus { outline: none; border-color: var(--g-accent); box-shadow: 0 0 0 3px var(--g-ring); }
+.chat-to.is-private select { border-color: #fdba74; border-color: light-dark(#fdba74, #9a3412); background: #fff7ed; background: light-dark(#fff7ed, #2a1608); color: #b45309; color: light-dark(#b45309, #fbbf24); }
 /* Handover: the form takes the place of the messages while it is open. */
 /* The app-wide label and input styles are meant for page forms; the chat sets its own. */
 .chat-header .chat-header-actions { display: flex; align-items: center; gap: 6px; }

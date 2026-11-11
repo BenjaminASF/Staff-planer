@@ -8555,6 +8555,7 @@ function getChatElements() {
     file: widget.querySelector(".chat-form input[type=file]"),
     attachment: widget.querySelector(".chat-attachment"),
     recipient: widget.querySelector(".chat-recipient"),
+    to: widget.querySelector(".chat-to-select"),
     mentions: widget.querySelector(".chat-mentions"),
     send: widget.querySelector(".chat-send"),
     status: widget.querySelector(".chat-status")
@@ -8569,13 +8570,14 @@ function setupChat() {
   widget.innerHTML = `
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
-      <header class="chat-header"><div><strong>Chatt</strong><small>Skriv @ och ett namn för att skriva privat</small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
+      <header class="chat-header"><div><strong>Chatt</strong><small>Välj i listan Till vem du skriver till</small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
       <div class="chat-tabs" role="tablist" aria-label="Visa"><button type="button" role="tab" data-chat-tab="all" aria-selected="true">Alla</button><button type="button" role="tab" data-chat-tab="private" aria-selected="false" tabindex="-1">Privat<span class="chat-tab-count hidden"></span></button></div>
       <form class="chat-handover hidden" aria-label="Överlämning" novalidate></form>
       <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
       <form class="chat-form">
         <div class="chat-attachment hidden"><img alt="Vald bild" /><button type="button" class="chat-attachment-remove" aria-label="Ta bort bilden">×</button></div>
         <p class="chat-status inline-message" role="status"></p>
+        <label class="chat-to"><span>Till</span><select class="chat-to-select" aria-label="Skicka till"><option value="">Alla i chatten</option></select></label>
         <div class="chat-recipient hidden"><span class="chat-recipient-text"></span><button type="button" class="chat-recipient-remove" aria-label="Skicka till alla i stället">×</button></div>
         <ul class="chat-mentions hidden" role="listbox" aria-label="Välj mottagare"></ul>
         <div class="chat-input-row">
@@ -8663,6 +8665,7 @@ function setupChat() {
     if (option) pickChatMention(option.dataset.mention);
   });
   elements.recipient.querySelector(".chat-recipient-remove").addEventListener("click", () => { setChatRecipient(null); elements.input.focus(); });
+  elements.to.addEventListener("change", () => { setChatRecipient(elements.to.value || null); showChatStatus(""); elements.input.focus(); });
   elements.input.addEventListener("paste", event => {
     const file = [...(event.clipboardData?.files || [])].find(item => item.type.startsWith("image/"));
     if (file) { event.preventDefault(); void attachChatImage(file); }
@@ -10064,7 +10067,7 @@ function renderChatMessages({ scrollToEnd = false } = {}) {
   const shown = privateOnly ? chatState.messages.filter(message => message.recipientId) : chatState.messages;
   if (!shown.length) {
     list.innerHTML = privateOnly
-      ? '<p class="chat-empty">Inga privata meddelanden ännu. Skriv @ och ett namn för att skriva till en person.</p>'
+      ? '<p class="chat-empty">Inga privata meddelanden ännu. Välj en person i listan Till för att skriva privat.</p>'
       : '<p class="chat-empty">Inga meddelanden ännu. Skriv det första!</p>';
     return;
   }
@@ -10170,7 +10173,7 @@ async function sendChatMessage() {
   const text = input.value.trim();
   if (!text && !chatState.image) return;
   // Under Privat nothing goes to everyone by mistake.
-  if (chatState.tab === "private" && !chatState.recipient) { showChatStatus("Välj vem du skriver till: skriv @ och ett namn, eller tryck på ett privat meddelande."); return; }
+  if (chatState.tab === "private" && !chatState.recipient) { showChatStatus("Välj vem du skriver till i listan Till."); return; }
   const sendButton = form.querySelector(".chat-send");
   sendButton.disabled = true;
   try {
@@ -10200,7 +10203,8 @@ async function loadChatMembers() {
     console.warn("Chat members could not be loaded:", error);
     return;
   }
-  // Roles and shifts next to the names come from the members.
+  // Roles and shifts next to the names come from the members, and so does the list Till.
+  renderChatRecipientOptions();
   if (chatState.loaded && !chatState.handoverOpen) renderChatMessages();
   // Someone who left the chat can no longer be written to.
   if (chatState.recipient && !chatState.members.some(member => member.id === chatState.recipient.id)) setChatRecipient(null);
@@ -10212,6 +10216,7 @@ function setChatRecipient(userId) {
   const member = userId ? chatState.members.find(item => item.id === userId) : null;
   if (userId && !member) return;
   chatState.recipient = member || null;
+  if (member) showChatStatus("");
   updateChatRecipientHint();
 }
 
@@ -10220,9 +10225,28 @@ function updateChatRecipientHint() {
   const member = chatState.recipient;
   form.classList.toggle("is-private", Boolean(member));
   recipient.classList.toggle("hidden", !member);
-  recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Privat till <strong>${escapeHtml(member.name)}</strong> – bara ni två ser det` : "";
+  recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Bara du och <strong>${escapeHtml(member.name)}</strong> ser meddelandet` : "";
   send.textContent = member ? "Skicka privat" : "Skicka";
-  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : chatState.tab === "private" ? "Skriv @ och ett namn…" : "Skriv till alla…";
+  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : chatState.tab === "private" ? "Välj först en person i listan Till…" : "Skriv till alla…";
+  renderChatRecipientOptions();
+}
+
+// The list Till: everyone in the chat, or one person, grouped by shift. Under Privat there
+// is no "everyone", so a person has to be picked.
+function renderChatRecipientOptions() {
+  const { to } = getChatElements();
+  const groups = new Map();
+  chatState.members.forEach(member => {
+    const shiftName = getShiftName(member.shiftId) || "Utan skift";
+    if (!groups.has(shiftName)) groups.set(shiftName, []);
+    groups.get(shiftName).push(member);
+  });
+  const ordered = [...shifts.map(shift => shift.name), "Utan skift"].filter(name => groups.has(name));
+  const everyone = chatState.tab === "private" ? '<option value="">Välj person…</option>' : '<option value="">Alla i chatten</option>';
+  to.innerHTML = everyone + ordered.map(name => `<optgroup label="${escapeHtml(name)}">${groups.get(name).map(member =>
+    `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}${ROLE_LABELS[member.role] ? ` · ${escapeHtml(ROLE_LABELS[member.role])}` : ""}</option>`).join("")}</optgroup>`).join("");
+  to.value = chatState.recipient?.id || "";
+  to.closest(".chat-to").classList.toggle("is-private", Boolean(chatState.recipient));
 }
 
 // The @word just before the cursor, if any: "@" at the start or after a space.
