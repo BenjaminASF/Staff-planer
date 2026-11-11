@@ -5908,6 +5908,39 @@ select option:disabled { color: var(--g-muted); }
 .chat-attach { border-color: var(--g-border-control); background: var(--g-control); color: var(--g-muted); transition: color var(--g-fast), border-color var(--g-fast); }
 .chat-attach:hover { border-color: var(--g-accent); color: var(--g-accent-text); }
 .chat-attachment-remove { background: var(--g-toast); }
+/* Clearer conversation: tabs, who writes, days, grouping, private messages, larger text. */
+.chat-panel { width: min(420px, calc(100vw - 32px)); }
+.chat-tabs { display: flex; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--g-grid-line); }
+.chat-tabs button { display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 0 10px; border: 0; border-radius: 9px; background: transparent; color: var(--g-muted); font: inherit; font-size: 14px; font-weight: 700; cursor: pointer; }
+.chat-tabs button[aria-selected="true"] { background: var(--g-control-hover); color: var(--g-text); box-shadow: inset 0 0 0 1px var(--g-border-inner); }
+.chat-tabs button[data-chat-tab="private"][aria-selected="true"] { color: #b45309; color: light-dark(#b45309, #fbbf24); }
+.chat-tab-count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: 999px; background: #dc2626; color: #fff; font-size: 11px; line-height: 20px; }
+.chat-tab-count.hidden { display: none; }
+.chat-panel.is-handover .chat-tabs { display: none; }
+.chat-messages { gap: 4px; }
+.chat-day { display: flex; align-items: center; gap: 10px; margin: 12px 0 6px; color: var(--g-muted); font-size: 12px; font-weight: 700; }
+.chat-day::before, .chat-day::after { content: ""; flex: 1; height: 1px; background: var(--g-grid-line); }
+.chat-day span::first-letter { text-transform: uppercase; }
+.chat-row { display: flex; align-items: flex-end; gap: 8px; align-self: flex-start; max-width: 92%; margin-top: 8px; }
+.chat-row.is-grouped { margin-top: 0; }
+.chat-row.is-mine { align-self: flex-end; flex-direction: row-reverse; }
+.chat-row > .chat-message { position: relative; max-width: 100%; min-width: 0; align-self: auto; padding-right: 26px; }
+.chat-row.is-grouped > .chat-message { padding-top: 6px; padding-bottom: 6px; }
+.chat-avatar { display: grid; flex: none; width: 32px; height: 32px; place-items: center; border-radius: 50%; background: var(--shift-color, #71717a); color: #fff; font-size: 12px; font-weight: 800; letter-spacing: .02em; }
+.chat-row.is-grouped .chat-avatar { height: 0; visibility: hidden; }
+.chat-meta { flex-wrap: wrap; gap: 4px 8px; font-size: 12px; }
+.chat-meta strong { font-size: 13px; }
+.chat-role { color: var(--g-muted); font-size: 11px; font-weight: 600; }
+.chat-message.is-mine .chat-role { color: inherit; opacity: .8; }
+.chat-message p { font-size: 15px; line-height: 1.5; }
+.chat-message p a { color: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.chat-row .chat-delete { position: absolute; top: 4px; right: 4px; margin: 0; padding: 2px 5px; }
+@media (hover: none) { .chat-row .chat-delete { opacity: .55; } }
+/* Private messages stand out in amber, also your own, with who they are between. */
+.chat-message.is-private, .chat-message.is-private.is-mine { outline: none; border: 1px solid #fdba74; border-color: light-dark(#fdba74, #9a3412); background: #fff7ed; background: light-dark(#fff7ed, #2a1608); color: var(--g-text); }
+.chat-message.is-private.is-mine :is(time, .chat-delete, .chat-role) { color: var(--g-muted); opacity: 1; }
+.chat-message.is-private .chat-private, .chat-message.is-private.is-mine .chat-private { justify-self: start; padding: 2px 8px; background: rgba(180,83,9,.14); color: #b45309; color: light-dark(#b45309, #fbbf24); font-size: 12px; font-weight: 800; }
+.chat-input-row textarea { font-size: 15px; }
 /* Handover: the form takes the place of the messages while it is open. */
 /* The app-wide label and input styles are meant for page forms; the chat sets its own. */
 .chat-header .chat-header-actions { display: flex; align-items: center; gap: 6px; }

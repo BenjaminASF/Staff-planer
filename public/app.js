@@ -8536,7 +8536,7 @@ const CHAT_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const CHAT_NOTIFIED_KEY = "staff_chat_notified_id";
 const CHAT_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "" };
+const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "", tab: "all" };
 
 const chatMessageId = message => BigInt(message?.id || 0);
 
@@ -8570,6 +8570,7 @@ function setupChat() {
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
       <header class="chat-header"><div><strong>Chatt</strong><small>Skriv @ och ett namn för att skriva privat</small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
+      <div class="chat-tabs" role="tablist" aria-label="Visa"><button type="button" role="tab" data-chat-tab="all" aria-selected="true">Alla</button><button type="button" role="tab" data-chat-tab="private" aria-selected="false" tabindex="-1">Privat<span class="chat-tab-count hidden"></span></button></div>
       <form class="chat-handover hidden" aria-label="Överlämning" novalidate></form>
       <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
       <form class="chat-form">
@@ -8579,7 +8580,7 @@ function setupChat() {
         <ul class="chat-mentions hidden" role="listbox" aria-label="Välj mottagare"></ul>
         <div class="chat-input-row">
           <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
-          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande…" aria-label="Meddelande"></textarea>
+          <textarea rows="1" maxlength="2000" placeholder="Skriv till alla…" aria-label="Meddelande"></textarea>
           <button class="btn primary chat-send" type="submit">Skicka</button>
         </div>
       </form>
@@ -8610,6 +8611,13 @@ function setupChat() {
     if (chatState.handoverOpen) { setChatHandoverOpen(false); return; }
     void setChatOpen(false);
     elements.toggle.focus();
+  });
+  elements.widget.querySelectorAll("[data-chat-tab]").forEach(tab => tab.addEventListener("click", () => setChatTab(tab.dataset.chatTab)));
+  elements.widget.querySelector(".chat-tabs").addEventListener("keydown", event => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    setChatTab(chatState.tab === "all" ? "private" : "all");
+    elements.widget.querySelector(`[data-chat-tab="${chatState.tab}"]`).focus();
   });
   elements.widget.querySelector(".chat-handover-open")?.addEventListener("click", () => setChatHandoverOpen(!chatState.handoverOpen));
   elements.handover.addEventListener("click", event => {
@@ -9990,26 +9998,109 @@ function formatChatTime(value) {
   return formatDateKey(date) === formatDateKey(new Date()) ? time : `${date.toLocaleDateString("sv-SE", { day: "numeric", month: "short" })} ${time}`;
 }
 
+// Web addresses in a message become links. The text is escaped first.
+function linkifyChatText(text) {
+  return escapeHtml(text).replace(/\b(?:https?:\/\/|www\.)[^\s<]+[^\s<.,;:!?)"'\]]/g, url => {
+    const href = url.startsWith("www.") ? `https://${url}` : url;
+    return `<a href="${href}" target="_blank" rel="noopener">${url}</a>`;
+  });
+}
+
+// "Idag", "Igår" or "måndag 9 november", above the first message of each day.
+function chatDayLabel(value) {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (formatDateKey(date) === formatDateKey(today)) return "Idag";
+  if (formatDateKey(date) === formatDateKey(yesterday)) return "Igår";
+  return date.toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long", ...(date.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }) });
+}
+
+// Role and shift of whoever wrote a message, from the chat members (yourself from your own login).
+function chatAuthorInfo(userId) {
+  if (userId && userId === currentUser?.id) return { role: currentUser.role, shiftId: getOwnShiftId() };
+  const member = chatState.members.find(item => item.id === userId);
+  return member ? { role: member.role, shiftId: member.shiftId } : { role: "", shiftId: "" };
+}
+
+const chatInitials = name => String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toLocaleUpperCase("sv-SE");
+
+// The newest private message to you that you have looked at under Privat (this device).
+const chatPrivateSeenKey = () => `staff_chat_private_seen:${currentUser?.id || ""}`;
+
+function updateChatTabs() {
+  const { widget } = getChatElements();
+  widget.querySelectorAll("[data-chat-tab]").forEach(tab => {
+    const active = tab.dataset.chatTab === chatState.tab;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  let seen = 0n;
+  try { seen = BigInt(localStorage.getItem(chatPrivateSeenKey()) || 0); } catch { /* no storage: count all */ }
+  const fresh = chatState.messages.filter(message => message.recipientId === currentUser?.id && chatMessageId(message) > seen).length;
+  const count = widget.querySelector(".chat-tab-count");
+  count.textContent = String(fresh);
+  count.classList.toggle("hidden", !fresh || chatState.tab === "private");
+}
+
+function setChatTab(tab) {
+  chatState.tab = tab;
+  const { input } = getChatElements();
+  if (tab === "private") {
+    const last = chatState.messages.filter(message => message.recipientId === currentUser?.id).at(-1);
+    try { if (last) localStorage.setItem(chatPrivateSeenKey(), last.id); } catch { /* the count simply stays */ }
+  }
+  showChatStatus("");
+  updateChatRecipientHint();
+  renderChatMessages({ scrollToEnd: true });
+  input.focus();
+}
+
 function renderChatMessages({ scrollToEnd = false } = {}) {
   const { list } = getChatElements();
-  if (!chatState.messages.length) {
-    list.innerHTML = '<p class="chat-empty">Inga meddelanden ännu. Skriv det första!</p>';
+  updateChatTabs();
+  const privateOnly = chatState.tab === "private";
+  const shown = privateOnly ? chatState.messages.filter(message => message.recipientId) : chatState.messages;
+  if (!shown.length) {
+    list.innerHTML = privateOnly
+      ? '<p class="chat-empty">Inga privata meddelanden ännu. Skriv @ och ett namn för att skriva till en person.</p>'
+      : '<p class="chat-empty">Inga meddelanden ännu. Skriv det första!</p>';
     return;
   }
-  list.innerHTML = `${chatState.hasOlder ? '<button type="button" class="chat-older">Visa äldre meddelanden</button>' : ""}${chatState.messages.map(message => {
+  let lastDay = "";
+  let previous = null;
+  const rows = shown.map(message => {
     const mine = message.userId === currentUser?.id;
+    const day = chatDayLabel(message.createdAt);
+    const dayHtml = day !== lastDay ? `<div class="chat-day"><span>${escapeHtml(day)}</span></div>` : "";
+    if (day !== lastDay) { lastDay = day; previous = null; }
+    // Messages in a row from the same person, to the same people, within five minutes share one name.
+    const grouped = previous && previous.userId === message.userId && (previous.recipientId || "") === (message.recipientId || "")
+      && !previous.handover && !message.handover && new Date(message.createdAt) - new Date(previous.createdAt) < 5 * 60 * 1000;
+    previous = message;
+    const author = chatAuthorInfo(message.userId);
+    const roleText = [ROLE_LABELS[author.role], getShiftName(author.shiftId)].filter(Boolean).join(" · ");
+    const color = getShiftColor(author.shiftId);
     const canDelete = mine || isAdmin();
     const partner = mine ? message.recipientId : message.userId;
-    const privateLabel = message.recipientId
-      ? `<button type="button" class="chat-private" data-reply-to="${escapeHtml(partner || "")}" title="Skriv privat till ${escapeHtml(mine ? message.recipientName : message.authorName)}">${escapeHtml(mine ? `Privat till ${message.recipientName}` : "Privat till dig")}</button>`
+    const time = new Date(message.createdAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+    const privateLine = message.recipientId
+      ? `<button type="button" class="chat-private" data-reply-to="${escapeHtml(partner || "")}" title="Svara privat till ${escapeHtml(mine ? message.recipientName : message.authorName)}"><span aria-hidden="true">🔒</span> Privat · ${escapeHtml(mine ? `Du → ${message.recipientName}` : `${message.authorName} → dig`)}</button>`
       : "";
-    return `<article class="chat-message${mine ? " is-mine" : ""}${message.recipientId ? " is-private" : ""}${message.handover ? " is-handover" : ""}">
-      <div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong>${privateLabel}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatChatTime(message.createdAt))}</time>${canDelete ? `<button type="button" class="chat-delete" data-delete-message="${escapeHtml(message.id)}" aria-label="Ta bort meddelandet">×</button>` : ""}</div>
-      ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
-      ${message.handover ? chatHandoverCardHtml(message.handover) : ""}
-      ${message.imageUrl ? `<a class="chat-image" href="${escapeHtml(message.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(message.imageUrl)}" alt="Bild från ${escapeHtml(message.authorName)}" loading="lazy" /></a>` : ""}
-    </article>`;
-  }).join("")}`;
+    return `${dayHtml}<div class="chat-row${mine ? " is-mine" : ""}${grouped ? " is-grouped" : ""}">
+      ${mine ? "" : `<span class="chat-avatar${color ? ` shift-color-${color}` : ""}" aria-hidden="true">${grouped ? "" : escapeHtml(chatInitials(message.authorName))}</span>`}
+      <article class="chat-message${mine ? " is-mine" : ""}${message.recipientId ? " is-private" : ""}${message.handover ? " is-handover" : ""}"${grouped ? ` aria-label="${escapeHtml(`${mine ? "Du" : message.authorName} ${time}`)}"` : ""}>
+        ${grouped ? "" : `<div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong>${roleText && !mine ? `<span class="chat-role">${escapeHtml(roleText)}</span>` : ""}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(time)}</time></div>`}
+        ${grouped ? "" : privateLine}
+        ${message.text ? `<p>${linkifyChatText(message.text)}</p>` : ""}
+        ${message.handover ? chatHandoverCardHtml(message.handover) : ""}
+        ${message.imageUrl ? `<a class="chat-image" href="${escapeHtml(message.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(message.imageUrl)}" alt="Bild från ${escapeHtml(message.authorName)}" loading="lazy" /></a>` : ""}
+        ${canDelete ? `<button type="button" class="chat-delete" data-delete-message="${escapeHtml(message.id)}" aria-label="Ta bort meddelandet">×</button>` : ""}
+      </article>
+    </div>`;
+  }).join("");
+  list.innerHTML = `${chatState.hasOlder ? '<button type="button" class="chat-older">Visa äldre meddelanden</button>' : ""}${rows}`;
   if (scrollToEnd) {
     list.scrollTop = list.scrollHeight;
     // Images change the height once they load.
@@ -10078,6 +10169,8 @@ async function sendChatMessage() {
   const { input, form } = getChatElements();
   const text = input.value.trim();
   if (!text && !chatState.image) return;
+  // Under Privat nothing goes to everyone by mistake.
+  if (chatState.tab === "private" && !chatState.recipient) { showChatStatus("Välj vem du skriver till: skriv @ och ett namn, eller tryck på ett privat meddelande."); return; }
   const sendButton = form.querySelector(".chat-send");
   sendButton.disabled = true;
   try {
@@ -10107,6 +10200,8 @@ async function loadChatMembers() {
     console.warn("Chat members could not be loaded:", error);
     return;
   }
+  // Roles and shifts next to the names come from the members.
+  if (chatState.loaded && !chatState.handoverOpen) renderChatMessages();
   // Someone who left the chat can no longer be written to.
   if (chatState.recipient && !chatState.members.some(member => member.id === chatState.recipient.id)) setChatRecipient(null);
   else updateChatMentions();
@@ -10127,7 +10222,7 @@ function updateChatRecipientHint() {
   recipient.classList.toggle("hidden", !member);
   recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Privat till <strong>${escapeHtml(member.name)}</strong> – bara ni två ser det` : "";
   send.textContent = member ? "Skicka privat" : "Skicka";
-  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande…";
+  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : chatState.tab === "private" ? "Skriv @ och ett namn…" : "Skriv till alla…";
 }
 
 // The @word just before the cursor, if any: "@" at the start or after a space.
