@@ -108,7 +108,7 @@ Servern sparar vem som senast ändrade varje fält (box, antal dosor, operatör,
 
 **Höger hand** är skiftledarens assistent och tar över ansvaret när skiftledaren inte är på plats. Höger hand arbetar bara i sitt eget skift: ändrar schemat, lägger till operatörer, läser och skriver i chatten och registrerar dagens produktion, men kan inte ändra det dagliga målet eller maskiner och inställningar som gäller alla skift. Höger hand kan ändra operatörernas uppgifter i skiftet, men inte skiftledarens eller adminens.
 
-Skiftledare genomför tester och bedömer kompetens för operatörerna i sitt eget skift, och för skiftets Höger hand och personal utan inloggning. De ser bara testresultat och bedömningar för de personerna, och kan inte ändra något för andra skift, andra skiftledare eller admin. Att lägga till eller ta bort avdelningar på sidan Testresultat är fortfarande bara för admin, eftersom det ändrar resultaten i alla skift.
+Skiftledare genomför tester och bedömer kompetens för operatörerna i sitt eget skift, och för skiftets Höger hand och personal utan inloggning. De ser bara testresultat och bedömningar för de personerna, och kan inte ändra något för andra skift, andra skiftledare eller admin. Att lägga till eller ta bort avdelningar (kompetenser) på sidorna Testresultat och Kompetens är fortfarande bara för admin, eftersom det ändrar resultaten och kompetensen i alla skift. En kompetens som tas bort försvinner från båda sidorna, och maskinbehörighet och testresultat för den rensas.
 
 Skiftledare och höger hand kan läsa kompetens för alla eftersom autoschemat och schemats varningar bygger på den.
 

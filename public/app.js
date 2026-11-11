@@ -4553,6 +4553,131 @@ async function renderPeople() {
   }
 }
 
+// Adding and removing a department (a competence column) on the Testresultat and Kompetens
+// pages. The list is shared by every shift and removing one clears it for everybody, so
+// only admins see the manager. `shown` is the list the page shows, `noun` names one item
+// ("Kompetensen") and `page` names the page in the safety snapshot.
+function renderDepartmentManager(shown, { noun, page }) {
+  if (!isAdmin()) {
+    document.querySelector(".department-manager")?.remove();
+    return;
+  }
+  const form = document.getElementById("departmentForm");
+  const input = document.getElementById("departmentNameInput");
+  const message = document.getElementById("departmentMessage");
+  const departmentList = document.getElementById("departmentList");
+  const showMessage = (text, type) => {
+    if (!message) return;
+    message.textContent = text;
+    message.className = `inline-message ${type}`;
+  };
+  const rerender = async () => {
+    await renderTestResults();
+    await renderMachineSkills();
+    await renderTrainingReminders();
+  };
+
+  if (form && input && form.dataset.bound !== "true") {
+    form.dataset.bound = "true";
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const name = input.value.trim();
+      if (!name) return;
+      const currentDepartments = await getDepartments();
+      const lowerName = name.toLocaleLowerCase();
+      if (currentDepartments.some(item => item.toLocaleLowerCase() === lowerName)) {
+        showMessage(`${noun} finns redan.`, "error");
+        return;
+      }
+      // A machine or work place with the same name decides itself where it is shown.
+      if (customWorkItems.some(item => item.name.toLocaleLowerCase() === lowerName)) {
+        showMessage(`${name} finns redan som maskin eller plats. Ändra den under Maskinhantering.`, "error");
+        return;
+      }
+      currentDepartments.push(name);
+      await saveDepartments(currentDepartments);
+      await addAuditEvent("department", `${name} tillagd`, "Ny avdelning");
+      input.value = "";
+      showMessage(`${name} har lagts till.`, "success");
+      await rerender();
+    });
+  }
+
+  if (!departmentList) return;
+  departmentList.innerHTML = "";
+  shown.forEach(department => {
+    const chip = document.createElement("div");
+    const name = document.createElement("span");
+    const removeButton = document.createElement("button");
+    chip.className = "department-chip";
+    name.textContent = department;
+    removeButton.type = "button";
+    removeButton.className = "department-remove";
+    removeButton.textContent = "×";
+    removeButton.setAttribute("aria-label", `Ta bort ${department}`);
+    removeButton.title = `Ta bort ${department}`;
+    removeButton.addEventListener("click", async () => {
+      const workItem = customWorkItems.find(item => item.name.toLocaleLowerCase() === department.toLocaleLowerCase());
+      const shouldRemove = confirm(
+        `Vill du ta bort ${department}? Maskinbehörighet och testresultat för ${department} tas bort för alla skift.` +
+        (workItem ? ` ${workItem.name} flyttas även till papperskorgen och försvinner från Schema.` : "")
+      );
+      if (!shouldRemove) return;
+      await removeDepartment(department, workItem, page);
+      showMessage(`${department} har tagits bort.`, "success");
+      await rerender();
+    });
+    chip.append(name, removeButton);
+    departmentList.appendChild(chip);
+  });
+  if (!shown.length) departmentList.innerHTML = `<span class="department-empty">Inga ännu. Lägg till den första ovan.</span>`;
+}
+
+// Removes a department and everything registered for it: test results, competence,
+// restrictions and competence details. A machine with the same name goes to the trash.
+async function removeDepartment(department, workItem, page) {
+  if (workItem) {
+    await createWorkItemSafetySnapshot(`${workItem.name} togs bort från ${page}`);
+    const trashItems = await getWorkItemTrash();
+    await saveWorkItemTrash([{ ...workItem, deletedAt: new Date().toISOString() }, ...trashItems]);
+    await saveCustomWorkItems(customWorkItems.filter(entry => entry.id !== workItem.id));
+  }
+
+  const [currentDepartments, currentResults, currentSkills, currentRestrictions, currentDetails] = await Promise.all([
+    getDepartments(),
+    getTestResults(),
+    getMachineSkills(),
+    getMachineRestrictions(),
+    getMachineSkillDetails()
+  ]);
+  const updatedDepartments = currentDepartments.filter(item => item.toLocaleLowerCase() !== department.toLocaleLowerCase());
+  Object.values(currentResults).forEach(personResults => {
+    if (personResults && typeof personResults === "object") delete personResults[department];
+  });
+  Object.keys(currentSkills).forEach(personId => {
+    if (Array.isArray(currentSkills[personId])) {
+      currentSkills[personId] = currentSkills[personId].filter(item => item !== department);
+    }
+  });
+  Object.keys(currentRestrictions).forEach(personId => {
+    if (Array.isArray(currentRestrictions[personId])) {
+      currentRestrictions[personId] = currentRestrictions[personId].filter(item => item !== department);
+    }
+  });
+  Object.values(currentDetails).forEach(personDetails => {
+    if (personDetails && typeof personDetails === "object") delete personDetails[department];
+  });
+
+  await Promise.all([
+    saveDepartments(updatedDepartments),
+    saveTestResults(currentResults),
+    saveMachineSkills(currentSkills),
+    saveMachineRestrictions(currentRestrictions),
+    saveMachineSkillDetails(currentDetails)
+  ]);
+  await addAuditEvent("department", `${department} borttagen`, "Resultat och kompetenser rensades");
+}
+
 const MAX_TEST_RESULT_SCORE = 3;
 
 function getTestResultClass(score) {
@@ -4574,116 +4699,7 @@ async function renderTestResults() {
   ]);
   const testQuery = (document.getElementById("testSearch")?.value || "").trim().toLocaleLowerCase();
   const people = allPeople.filter(person => !testQuery || `${person.name} ${person.company || ""}`.toLocaleLowerCase().includes(testQuery));
-  // Adding or removing a department changes every shift's results, so only admins do it.
-  if (!isAdmin()) document.querySelector(".department-manager")?.remove();
-  const form = document.getElementById("departmentForm");
-  const input = document.getElementById("departmentNameInput");
-  const message = document.getElementById("departmentMessage");
-  const departmentList = document.getElementById("departmentList");
-
-  if (form && input && form.dataset.bound !== "true") {
-    form.dataset.bound = "true";
-    form.addEventListener("submit", async event => {
-      event.preventDefault();
-      const name = input.value.trim();
-      const currentDepartments = await getDepartments();
-
-      if (!name) return;
-      if (currentDepartments.some(item => item.toLocaleLowerCase() === name.toLocaleLowerCase())) {
-        if (message) {
-          message.textContent = "Avdelningen finns redan.";
-          message.className = "inline-message error";
-        }
-        return;
-      }
-
-      currentDepartments.push(name);
-      await saveDepartments(currentDepartments);
-      await addAuditEvent("department", `${name} tillagd`, "Ny avdelning");
-      input.value = "";
-      if (message) {
-        message.textContent = `${name} har lagts till.`;
-        message.className = "inline-message success";
-      }
-      await renderTestResults();
-      await renderMachineSkills();
-      await renderTrainingReminders();
-    });
-  }
-
-  if (departmentList) {
-    departmentList.innerHTML = "";
-    departments.forEach(department => {
-      const chip = document.createElement("div");
-      const name = document.createElement("span");
-      const removeButton = document.createElement("button");
-      chip.className = "department-chip";
-      name.textContent = department;
-      removeButton.type = "button";
-      removeButton.className = "department-remove";
-      removeButton.textContent = "×";
-      removeButton.setAttribute("aria-label", `Ta bort ${department}`);
-      removeButton.title = `Ta bort ${department}`;
-      removeButton.addEventListener("click", async () => {
-        const workItem = customWorkItems.find(item => item.name.toLocaleLowerCase() === department.toLocaleLowerCase());
-        const shouldRemove = confirm(
-          `Vill du ta bort ${department}? Testresultat och maskinbehörighet för avdelningen tas också bort.` +
-          (workItem ? ` ${workItem.name} flyttas även till papperskorgen och försvinner från Schema.` : "")
-        );
-        if (!shouldRemove) return;
-        if (workItem) {
-          await createWorkItemSafetySnapshot(`${workItem.name} togs bort från Testresultat`);
-          const trashItems = await getWorkItemTrash();
-          await saveWorkItemTrash([{ ...workItem, deletedAt: new Date().toISOString() }, ...trashItems]);
-          await saveCustomWorkItems(customWorkItems.filter(entry => entry.id !== workItem.id));
-        }
-
-        const [currentDepartments, currentResults, currentSkills, currentRestrictions, currentDetails] = await Promise.all([
-          getDepartments(),
-          getTestResults(),
-          getMachineSkills(),
-          getMachineRestrictions(),
-          getMachineSkillDetails()
-        ]);
-        const updatedDepartments = currentDepartments.filter(item => item.toLocaleLowerCase() !== department.toLocaleLowerCase());
-        Object.values(currentResults).forEach(personResults => {
-          if (personResults && typeof personResults === "object") {
-            delete personResults[department];
-          }
-        });
-        Object.keys(currentSkills).forEach(personId => {
-          if (Array.isArray(currentSkills[personId])) {
-            currentSkills[personId] = currentSkills[personId].filter(item => item !== department);
-          }
-        });
-        Object.keys(currentRestrictions).forEach(personId => {
-          if (Array.isArray(currentRestrictions[personId])) {
-            currentRestrictions[personId] =
-              currentRestrictions[personId].filter(item => item !== department);
-          }
-        });
-        Object.values(currentDetails).forEach(personDetails => { if (personDetails && typeof personDetails === "object") delete personDetails[department]; });
-
-        await Promise.all([
-          saveDepartments(updatedDepartments),
-          saveTestResults(currentResults),
-          saveMachineSkills(currentSkills),
-          saveMachineRestrictions(currentRestrictions),
-          saveMachineSkillDetails(currentDetails)
-        ]);
-        await addAuditEvent("department", `${department} borttagen`, "Resultat och kompetenser rensades");
-        if (message) {
-          message.textContent = `${department} har tagits bort.`;
-          message.className = "inline-message success";
-        }
-        await renderTestResults();
-        await renderMachineSkills();
-        await renderTrainingReminders();
-      });
-      chip.append(name, removeButton);
-      departmentList.appendChild(chip);
-    });
-  }
+  renderDepartmentManager(departments, { noun: "Avdelningen", page: "Testresultat" });
 
   root.innerHTML = "";
   root.className = "assessment-layout test-results-layout";
@@ -4930,6 +4946,7 @@ async function renderMachineSkills() {
     getMachineRestrictions(),
     getMachineSkillDetails()
   ]);
+  renderDepartmentManager(departments, { noun: "Kompetensen", page: "Kompetens" });
   const machineQuery = (document.getElementById("machineSearch")?.value || "").trim().toLocaleLowerCase();
   const machineFilter = document.getElementById("machineFilter")?.value || "";
   const people = allPeople.filter(person => {
