@@ -10103,6 +10103,15 @@ function setChatTab(tab) {
   input.focus();
 }
 
+// Redrawn in place when roles or priority marks arrive: whoever was reading the newest
+// messages stays at the bottom, anyone reading older ones stays where they were.
+function rerenderChatMessages() {
+  if (chatState.handoverOpen) return;
+  const { list } = getChatElements();
+  const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
+  renderChatMessages({ scrollToEnd: nearEnd });
+}
+
 function renderChatMessages({ scrollToEnd = false } = {}) {
   const { list } = getChatElements();
   updateChatTabs();
@@ -10252,7 +10261,7 @@ async function loadChatMembers() {
   }
   // Roles and shifts next to the names come from the members, and so does the list Till.
   renderChatRecipientOptions();
-  if (chatState.loaded && !chatState.handoverOpen) renderChatMessages();
+  if (chatState.loaded) rerenderChatMessages();
   // Someone who left the chat can no longer be written to.
   if (chatState.recipient && !chatState.members.some(member => member.id === chatState.recipient.id)) setChatRecipient(null);
   else updateChatMentions();
@@ -10623,8 +10632,12 @@ async function loadChatPriority() {
     const changed = chatState.messages.some(message => JSON.stringify(message.priority || null) !== JSON.stringify(marks.get(message.id) || null));
     chatState.messages.forEach(message => { message.priority = marks.get(message.id) || null; });
     chatState.priorityMessages = messages;
+    // The bar takes room from the list, so measure first and keep the newest in view.
+    const { list } = getChatElements();
+    const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
     renderChatPriorityBar();
-    if (changed && !chatState.handoverOpen) renderChatMessages();
+    if (changed && !chatState.handoverOpen) renderChatMessages({ scrollToEnd: nearEnd });
+    else if (nearEnd) list.scrollTop = list.scrollHeight;
   } catch (error) {
     console.warn("Chat priority could not be loaded:", error);
   }
