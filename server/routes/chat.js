@@ -1,9 +1,10 @@
 const { ACCOUNT_ACTIVE_SQL } = require("../auth");
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
-const { CHAT_ROLES, canUseChat, canDeleteChatMessage } = require("../permissions");
+const { CHAT_ROLES, canUseChat, canMakeHandover, canSetChatPriority, HANDOVER_RECIPIENT_ROLE, canDeleteChatMessage } = require("../permissions");
+const { parseHandover } = require("../handover");
 const { cleanText } = require("../validation");
-const { queueChatMessage } = require("../push");
+const { queueChatMessage, queueChatPriority } = require("../push");
 
 const MAX_TEXT_LENGTH = 2000;
 const MAX_IMAGE_BYTES = 3 * 1024 * 1024;
@@ -32,9 +33,15 @@ function parseImage(image) {
   return { buffer, type };
 }
 
-const MESSAGE_COLUMNS = "id, user_id, author_name, recipient_id, recipient_name, body, image IS NOT NULL AS has_image, created_at";
-// Messages to everyone, plus private ones the user sent or received. $1 is the user's id.
-const VISIBLE = "(recipient_id IS NULL OR recipient_id = $1 OR user_id = $1)";
+const MESSAGE_COLUMNS = "id, user_id, author_name, recipient_id, recipient_name, body, image IS NOT NULL AS has_image, handover, priority_at, priority_by, created_at";
+// A handover is seen only by its author, the shift leaders it went to and admins.
+// $1 is the user's id; `m` is the table alias.
+const handoverVisible = m => `(${m}handover IS NULL OR ${m}user_id = $1
+  OR ${m}handover -> 'to' @> jsonb_build_array(jsonb_build_object('id', $1::text))
+  OR EXISTS (SELECT 1 FROM users a WHERE a.id = $1 AND a.role = 'admin'))`;
+// Messages to everyone, plus private ones the user sent or received, and the handovers
+// the user may see. $1 is the user's id.
+const VISIBLE = `((recipient_id IS NULL OR recipient_id = $1 OR user_id = $1) AND ${handoverVisible("")})`;
 
 function serializeMessage(row) {
   const id = String(row.id);
@@ -46,6 +53,8 @@ function serializeMessage(row) {
     recipientName: row.recipient_name ?? null,
     text: row.body,
     imageUrl: row.has_image ? `/api/chat/images/${id}` : null,
+    handover: row.handover ?? null,
+    priority: row.priority_at ? { at: row.priority_at, by: row.priority_by } : null,
     createdAt: row.created_at
   };
 }
@@ -84,21 +93,52 @@ function chatRoutes({ pool }) {
     res.json({ messages: rows.map(serializeMessage), hasOlder });
   });
 
-  // The people a message can be sent to privately.
+  // The people a message can be sent to privately. Role and shift tell which of them
+  // are shift leaders, who can receive a handover, and of which shift.
   router.get("/members", async (req, res) => {
     const { rows } = await pool.query(
-      `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id
+      `SELECT u.id, p.name, u.role, p.shift_id FROM users u JOIN people p ON p.id = u.person_id
         WHERE u.role = ANY($1) AND u.id <> $2 AND ${CHAT_MEMBER_SQL} ORDER BY lower(p.name)`,
       [CHAT_ROLES, req.user.id]
     );
-    res.json({ members: rows.map(row => ({ id: row.id, name: row.name })) });
+    res.json({ members: rows.map(row => ({ id: row.id, name: row.name, role: row.role, shiftId: row.shift_id ?? null })) });
   });
 
+  // A handover is shown as a card to its author, the chosen shift leaders and admins.
+  // The shift leaders get a notice of their own.
+  async function sendHandover(req, res) {
+    if (!canMakeHandover(req.user)) throw new HttpError(403, "Bara admin, skiftledare och höger hand kan göra överlämningar.");
+    const [leaders, shifts] = await Promise.all([
+      pool.query(
+        `SELECT u.id, p.name FROM users u JOIN people p ON p.id = u.person_id
+          WHERE u.role = $1 AND ${CHAT_MEMBER_SQL}`,
+        [HANDOVER_RECIPIENT_ROLE]
+      ),
+      pool.query("SELECT id, name FROM shifts")
+    ]);
+    const handover = parseHandover(req.body.handover, { user: req.user, leaders: leaders.rows, shifts: shifts.rows });
+    const { rows } = await pool.query(
+      `INSERT INTO chat_messages (user_id, author_name, handover) VALUES ($1, $2, $3::jsonb) RETURNING ${MESSAGE_COLUMNS}`,
+      [req.user.id, req.user.name, JSON.stringify(handover)]
+    );
+    await pool.query(
+      `INSERT INTO chat_reads (user_id, last_read_id) VALUES ($1, $2)
+       ON CONFLICT (user_id) DO UPDATE SET last_read_id = GREATEST(chat_reads.last_read_id, EXCLUDED.last_read_id)`,
+      [req.user.id, rows[0].id]
+    );
+    await queueChatMessage(pool, { messageId: rows[0].id, authorId: req.user.id, chatRoles: CHAT_ROLES, handoverTo: handover.to.map(item => item.id) });
+    res.status(201).json({ message: serializeMessage(rows[0]) });
+  }
+
   router.post("/messages", async (req, res) => {
+    if (req.body?.handover !== undefined) return sendHandover(req, res);
     const text = cleanText(req.body?.text, MAX_TEXT_LENGTH + 1);
     if (text.length > MAX_TEXT_LENGTH) throw new HttpError(400, `Meddelandet får vara högst ${MAX_TEXT_LENGTH} tecken.`);
     const image = parseImage(req.body?.image);
     if (!text && !image) throw new HttpError(400, "Skriv ett meddelande eller välj en bild.");
+    const priority = req.body?.priority === true;
+    if (priority && !canSetChatPriority(req.user)) throw new HttpError(403, "Bara admin och skiftledare kan markera prio.");
+    if (priority && req.body?.recipientId) throw new HttpError(400, "Prio gäller meddelanden till alla, inte privata.");
     let recipient = null;
     if (req.body?.recipientId) {
       const result = await pool.query(
@@ -109,10 +149,10 @@ function chatRoutes({ pool }) {
       if (!recipient || recipient.id === req.user.id) throw new HttpError(400, "Mottagaren finns inte i chatten.");
     }
     const { rows } = await pool.query(
-      `INSERT INTO chat_messages (user_id, author_name, recipient_id, recipient_name, body, image, image_type)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO chat_messages (user_id, author_name, recipient_id, recipient_name, body, image, image_type, priority_at, priority_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, CASE WHEN $8 THEN now() END, CASE WHEN $8 THEN $2 END)
        RETURNING ${MESSAGE_COLUMNS}`,
-      [req.user.id, req.user.name, recipient?.id ?? null, recipient?.name ?? null, text, image?.buffer ?? null, image?.type ?? null]
+      [req.user.id, req.user.name, recipient?.id ?? null, recipient?.name ?? null, text, image?.buffer ?? null, image?.type ?? null, priority]
     );
     // Your own message is never unread.
     await pool.query(
@@ -121,7 +161,34 @@ function chatRoutes({ pool }) {
       [req.user.id, rows[0].id]
     );
     await queueChatMessage(pool, { messageId: rows[0].id, recipientId: recipient?.id, authorId: req.user.id, chatRoles: CHAT_ROLES });
+    if (priority) await queueChatPriority(pool, { messageId: rows[0].id, authorId: req.user.id, chatRoles: CHAT_ROLES });
     res.status(201).json({ message: serializeMessage(rows[0]) });
+  });
+
+  // The messages marked as priority, newest mark first. Everyone in the chat sees them.
+  router.get("/priority", async (req, res) => {
+    const { rows } = await pool.query(
+      `SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE priority_at IS NOT NULL AND ${VISIBLE} ORDER BY priority_at DESC LIMIT 20`,
+      [req.user.id]
+    );
+    res.json({ messages: rows.map(serializeMessage) });
+  });
+
+  // Admins and shift leaders mark a message to everyone as priority, or take the mark away.
+  router.put("/messages/:id/priority", async (req, res) => {
+    if (!canSetChatPriority(req.user)) throw new HttpError(403, "Bara admin och skiftledare kan markera prio.");
+    const id = parseMessageId(req.params.id);
+    const { rows: found } = id ? await pool.query(`SELECT id, recipient_id, handover, priority_at FROM chat_messages WHERE ${VISIBLE} AND id = $2`, [req.user.id, id]) : { rows: [] };
+    if (!found[0]) throw new HttpError(404, "Meddelandet finns inte.");
+    if (found[0].recipient_id || found[0].handover) throw new HttpError(400, "Prio gäller meddelanden till alla, inte privata meddelanden eller överlämningar.");
+    const priority = req.body?.priority === true;
+    const { rows } = await pool.query(
+      `UPDATE chat_messages SET priority_at = CASE WHEN $2 THEN COALESCE(priority_at, now()) END, priority_by = CASE WHEN $2 THEN COALESCE(priority_by, $3) END
+        WHERE id = $1 RETURNING ${MESSAGE_COLUMNS}`,
+      [id, priority, req.user.name]
+    );
+    if (priority && !found[0].priority_at) await queueChatPriority(pool, { messageId: id, authorId: req.user.id, chatRoles: CHAT_ROLES });
+    res.json({ message: serializeMessage(rows[0]) });
   });
 
   router.get("/images/:id", async (req, res) => {
@@ -154,7 +221,8 @@ function chatRoutes({ pool }) {
        )
        SELECT count(*)::int AS count, max(m.id) AS latest_id
          FROM chat_messages m, seen
-        WHERE m.id > seen.id AND m.user_id IS DISTINCT FROM $1 AND (m.recipient_id IS NULL OR m.recipient_id = $1)`,
+        WHERE m.id > seen.id AND m.user_id IS DISTINCT FROM $1 AND (m.recipient_id IS NULL OR m.recipient_id = $1)
+          AND ${handoverVisible("m.")}`,
       [req.user.id]
     );
     let latest = null;

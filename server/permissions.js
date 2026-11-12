@@ -355,6 +355,20 @@ function canUseChat(user) {
   return CHAT_ROLES.includes(user?.role) && hasFeature(user, FEATURES.CHAT);
 }
 
+// Handovers between shifts are made by the people who run a shift: admins, shift leaders
+// and right hands. They go to shift leaders; everyone in the chat sees them.
+const HANDOVER_ROLES = Object.freeze([ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND]);
+const HANDOVER_RECIPIENT_ROLE = ROLES.LEADER;
+
+function canMakeHandover(user) {
+  return canUseChat(user) && HANDOVER_ROLES.includes(user.role);
+}
+
+// Admins and shift leaders mark messages to everyone as priority, pinned for everyone.
+function canSetChatPriority(user) {
+  return canUseChat(user) && (isAdmin(user) || isLeader(user));
+}
+
 // Authors remove their own chat messages; admins can remove any.
 function canDeleteChatMessage(user, message) {
   return isAdmin(user) || (Boolean(message.user_id) && message.user_id === user?.id);
@@ -451,6 +465,9 @@ module.exports = {
   temporaryMayCall,
   CHAT_ROLES,
   canUseChat,
+  canMakeHandover,
+  canSetChatPriority,
+  HANDOVER_RECIPIENT_ROLE,
   canDeleteChatMessage,
   ROLES,
   ROLE_VALUES,

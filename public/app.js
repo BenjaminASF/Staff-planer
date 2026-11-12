@@ -400,6 +400,10 @@ const isSeniorOperator = () => hasRole(ROLES.SENIOR_OPERATOR);
 const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND);
 // The chat: everyone who plans a shift, and senior operators. The server checks the same.
 const canUseChat = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR) && hasFeature("chat");
+// Handovers are made by the people who run a shift (server/permissions.js, canMakeHandover).
+const canMakeHandover = () => canUseChat() && hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND);
+// Admins and shift leaders mark messages to everyone as priority (server/permissions.js).
+const canSetChatPriority = () => canUseChat() && hasRole(ROLES.ADMIN, ROLES.LEADER);
 // Machines, departments and settings are shared by all shifts.
 const canChangeSharedSettings = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
 const canChangeProductionTarget = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
@@ -497,7 +501,7 @@ function recordsWasteIn(shiftId) {
 }
 
 // The fields a senior operator records on the production page.
-const WASTE_FIELDS = ["waste", "plusMinus", "comment"];
+const WASTE_FIELDS = ["waste", "plusMinus", "comment", "handover"];
 
 // The days a senior operator may change: today and yesterday. The server checks the same.
 function wasteEditableDates(today = new Date()) {
@@ -5390,7 +5394,7 @@ async function renderProduction() {
     <section class="production-month card" aria-live="polite"><div><small>SKIFTETS PRODUKTION · <span class="production-month-name">${escapeHtml(monthName)}</span></small><strong><span id="productionMonthTotal">${otherMonthTotal + total}</span> box</strong></div><span id="productionMonthDays" class="production-month-days">${monthDaysText(otherMonthDays.length + (stored ? 1 : 0))}</span></section>
     <div class="production-toolbar card"><label>Datum<input id="productionDate" type="date" min="${retentionStart}" value="${selectedProductionDate}" /></label><div class="production-settings"><label><span>Skiftets dagliga mål <small>· gäller från valt datum</small></span><input id="productionTarget" type="number" min="0" value="${target}" title="${canChangeProductionTarget() ? "Gäller bara det här skiftet, från valt datum och framåt. Tidigare dagar och andra skift behåller sitt mål." : "Endast skiftledare och admin kan ändra det dagliga målet."}"${canChangeProductionTarget() ? "" : " disabled"} /></label></div>${managerTools ? '<button id="syncScheduleBtn" class="btn" type="button">Hämta från Schema</button>' : ""}<span id="productionSaveStatus" class="production-save-status" role="status" aria-live="polite">${savedText}</span></div>
     <div class="production-kpis"><article id="productionTotalCard" class="${total >= target ? "goal-card-met" : "goal-card-missed"}"><span>Dagens produktion</span><strong id="productionTotal">${total}</strong><small>box totalt</small></article><article><span>Dagligt mål</span><strong id="productionGoalValue">${target}</strong><small>box</small></article><article class="factory-record-card"><span>Fabriksrekord</span><strong id="factoryRecordValue">${settings.factoryRecord}</strong><small>officiellt rekord · uppdateras vid nytt rekord</small>${managerTools ? '<button id="editFactoryRecordBtn" type="button">Ändra manuellt</button>' : ""}</article></div>
-    <section class="production-entry card${wasteOnly ? " waste-only" : ""}"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p>${roleNote}<div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Maskinsvinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label>Plus-/minuslåda (KG)<input data-machine="${escapeHtml(machine)}" data-field="plusMinus" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.plusMinus ?? "")}" placeholder="0" /></label><label>Totalt svinn (KG)<output class="production-waste production-waste-total" data-machine="${escapeHtml(machine)}" data-field="wasteTotal">${formatWaste(getMachineWaste(item))}</output></label><label class="production-comment">Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" />${commentAuthor(item)}</label>${fieldEdits(item)}</article>`; }).join("")}</div></section>
+    <section class="production-entry card${wasteOnly ? " waste-only" : ""}"><div class="production-heading"><div><small>DAGLIG PRODUKTION</small><h3>${new Date(selectedProductionDate + "T12:00:00").toLocaleDateString("sv-SE", { weekday:"long", year:"numeric", month:"long", day:"numeric" })}</h3></div><span id="productionStatus" class="production-status ${total >= target ? "goal-met" : "goal-missed"}">${total >= target ? "Målet uppnått" : "Under målet"}</span></div><p class="production-conversion-note">${PRODUCTION_CANS_PER_BOX} dosor = 1 box. Ange antal dosor för automatisk omräkning, eller skriv BOX direkt. BOX avrundas uppåt från 0,6 och nedåt under 0,6.</p>${roleNote}<div class="production-machine-list">${machines.map(machine => { const item = record.machines?.[machine] || {}; const trainee = traineeName(machine); return `<article class="production-machine-row"><strong>${escapeHtml(machine.replace("GD", "GD-"))}</strong><label>Operatör<select data-machine="${escapeHtml(machine)}" data-field="personId">${personOptions(item.personId, item.personName)}</select>${trainee ? `<span class="production-training-badge" title="${escapeHtml(trainee)} har utbildning på ${escapeHtml(machine)} enligt schemat. Kompetensen följer personens registrerade nivå.">${escapeHtml(trainee)} (Utbildning)</span>` : ""}</label><label>Antal dosor<input data-machine="${escapeHtml(machine)}" data-field="cans" class="production-cans" type="number" min="0" max="9007199254740991" step="1" inputmode="numeric" value="${escapeHtml(item.cans ?? "")}" placeholder="0" /></label><label>Resultat (BOX)<input data-machine="${escapeHtml(machine)}" data-field="result" class="production-result" type="number" min="0" step="any" inputmode="decimal" value="${escapeHtml(item.result ?? "")}" placeholder="0" /></label><label>Maskinsvinn (KG)<input data-machine="${escapeHtml(machine)}" data-field="waste" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.waste ?? "")}" placeholder="0" /></label><label>Plus-/minuslåda (KG)<input data-machine="${escapeHtml(machine)}" data-field="plusMinus" class="production-waste" type="number" min="0" step="0.01" inputmode="decimal" value="${escapeHtml(item.plusMinus ?? "")}" placeholder="0" /></label><label>Totalt svinn (KG)<output class="production-waste production-waste-total" data-machine="${escapeHtml(machine)}" data-field="wasteTotal">${formatWaste(getMachineWaste(item))}</output></label><div class="production-comment"><label>Kommentar<input data-machine="${escapeHtml(machine)}" data-field="comment" value="${escapeHtml(item.comment || "")}" placeholder="Kommentar, stopp eller material" />${commentAuthor(item)}</label><label class="production-handover-pick" title="Kommentaren följer med när skiftet gör sin överlämning i chatten"><input type="checkbox" data-machine="${escapeHtml(machine)}" data-field="handover"${item.handover ? " checked" : ""} />Med i överlämningen</label></div>${fieldEdits(item)}</article>`; }).join("")}</div></section>
     <section class="production-history card"></section>
   `;
   placeBesideTitle(root.querySelector(".production-month"));
@@ -5439,6 +5443,7 @@ async function renderProduction() {
   };
   const field = (machine, name) => root.querySelector(`[data-machine="${CSS.escape(machine)}"][data-field="${name}"]`);
   const fieldValue = (machine, name) => {
+    if (name === "handover") return field(machine, name).checked;
     const value = field(machine, name).value;
     if (name === "personId") return value;
     if (name === "comment") return value.trim();
@@ -8534,9 +8539,10 @@ const CHAT_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const CHAT_NOTIFIED_KEY = "staff_chat_notified_id";
 const CHAT_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null };
+const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "", tab: "all", priorityMessages: [], priorityDraft: false };
 
 const chatMessageId = message => BigInt(message?.id || 0);
+const CHAT_SEND_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>';
 
 function getChatElements() {
   const widget = document.getElementById("chatWidget");
@@ -8546,12 +8552,16 @@ function getChatElements() {
     badge: widget.querySelector(".chat-badge"),
     preview: widget.querySelector(".chat-preview"),
     panel: widget.querySelector(".chat-panel"),
+    handover: widget.querySelector(".chat-handover"),
     list: widget.querySelector(".chat-messages"),
     form: widget.querySelector(".chat-form"),
     input: widget.querySelector(".chat-form textarea"),
     file: widget.querySelector(".chat-form input[type=file]"),
     attachment: widget.querySelector(".chat-attachment"),
     recipient: widget.querySelector(".chat-recipient"),
+    to: widget.querySelector(".chat-to-select"),
+    priorityBar: widget.querySelector(".chat-priority-bar"),
+    priorityToggle: widget.querySelector(".chat-priority-toggle"),
     mentions: widget.querySelector(".chat-mentions"),
     send: widget.querySelector(".chat-send"),
     status: widget.querySelector(".chat-status")
@@ -8566,17 +8576,22 @@ function setupChat() {
   widget.innerHTML = `
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
-      <header class="chat-header"><div><strong>Chatt</strong><small>Skriv @ och ett namn för att skriva privat</small></div><button type="button" class="chat-close" aria-label="Stäng chatten">×</button></header>
+      <header class="chat-header"><div class="chat-title"><strong>Chatt</strong><small class="chat-people"><span class="chat-people-faces" aria-hidden="true"></span><span class="chat-people-count">Välj i listan Till vem du skriver till</span></small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
+      <div class="chat-tabs" role="tablist" aria-label="Visa"><button type="button" role="tab" data-chat-tab="all" aria-selected="true">Alla</button><button type="button" role="tab" data-chat-tab="private" aria-selected="false" tabindex="-1">Privat<span class="chat-tab-count hidden"></span></button></div>
+      <section class="chat-priority-bar hidden" aria-label="Prio"></section>
+      <form class="chat-handover hidden" aria-label="Överlämning" novalidate></form>
       <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
       <form class="chat-form">
         <div class="chat-attachment hidden"><img alt="Vald bild" /><button type="button" class="chat-attachment-remove" aria-label="Ta bort bilden">×</button></div>
         <p class="chat-status inline-message" role="status"></p>
+        <label class="chat-to"><span>Till</span><select class="chat-to-select" aria-label="Skicka till"><option value="">Alla i chatten</option></select></label>
         <div class="chat-recipient hidden"><span class="chat-recipient-text"></span><button type="button" class="chat-recipient-remove" aria-label="Skicka till alla i stället">×</button></div>
         <ul class="chat-mentions hidden" role="listbox" aria-label="Välj mottagare"></ul>
         <div class="chat-input-row">
           <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
-          <textarea rows="1" maxlength="2000" placeholder="Skriv ett meddelande…" aria-label="Meddelande"></textarea>
-          <button class="btn primary chat-send" type="submit">Skicka</button>
+          <textarea rows="1" maxlength="2000" placeholder="Skriv till alla…" aria-label="Meddelande"></textarea>
+          ${canSetChatPriority() ? '<button type="button" class="chat-priority-toggle" aria-pressed="false" title="Skicka som prio: fästs överst i chatten för alla">⚠ Prio</button>' : ""}
+          <button class="btn primary chat-send" type="submit" aria-label="Skicka till alla" title="Skicka till alla">${CHAT_SEND_ICON}</button>
         </div>
       </form>
     </section>
@@ -8600,8 +8615,50 @@ function setupChat() {
   }, true);
   if (takeLinkParam("chat")) void setChatOpen(true);
   elements.panel.addEventListener("keydown", event => {
-    if (event.key === "Escape") { event.preventDefault(); void setChatOpen(false); elements.toggle.focus(); }
+    if (event.key !== "Escape") return;
+    event.preventDefault();
+    // Escape closes an open handover first, then the chat.
+    if (chatState.handoverOpen) { setChatHandoverOpen(false); return; }
+    void setChatOpen(false);
+    elements.toggle.focus();
   });
+  elements.widget.querySelectorAll("[data-chat-tab]").forEach(tab => tab.addEventListener("click", () => setChatTab(tab.dataset.chatTab)));
+  elements.widget.querySelector(".chat-tabs").addEventListener("keydown", event => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    setChatTab(chatState.tab === "all" ? "private" : "all");
+    elements.widget.querySelector(`[data-chat-tab="${chatState.tab}"]`).focus();
+  });
+  elements.widget.querySelector(".chat-handover-open")?.addEventListener("click", () => setChatHandoverOpen(!chatState.handoverOpen));
+  elements.handover.addEventListener("click", event => {
+    if (event.target.closest("[data-handover-cancel]")) { setChatHandoverOpen(false); return; }
+    const quick = event.target.closest("[data-handover-quick]");
+    if (quick) { pickChatHandoverQuick(quick); return; }
+    if (event.target.closest("[data-handover-clear]")) {
+      writeStored(sessionStorage, handoverDraftKey(), null);
+      renderChatHandoverForm();
+      updateChatHandoverButton();
+    }
+  });
+  elements.handover.addEventListener("change", event => {
+    // Another shift: what was typed stays, the recipients and production follow the new shift.
+    if (event.target.name === "fromShiftId") {
+      const draft = { ...collectChatHandover(), to: null };
+      chatState.handoverProduction = "";
+      renderChatHandoverForm(draft);
+      void summarizeTodaysProduction(draft.fromShiftId).then(production => {
+        chatState.handoverProduction = production;
+        if (chatState.handoverOpen) renderChatHandoverForm(collectChatHandover());
+      });
+      saveChatHandoverDraft();
+      return;
+    }
+    if (event.target.type === "radio") updateChatHandoverDepartment(event.target.closest(".chat-handover-dept"));
+    saveChatHandoverDraft();
+  });
+  elements.handover.addEventListener("input", () => saveChatHandoverDraft());
+  elements.handover.addEventListener("submit", event => { event.preventDefault(); void sendChatHandover(); });
+  updateChatHandoverButton();
   elements.input.addEventListener("keydown", event => {
     if (handleChatMentionKey(event)) return;
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); elements.form.requestSubmit(); }
@@ -8616,6 +8673,18 @@ function setupChat() {
     if (option) pickChatMention(option.dataset.mention);
   });
   elements.recipient.querySelector(".chat-recipient-remove").addEventListener("click", () => { setChatRecipient(null); elements.input.focus(); });
+  elements.priorityToggle?.addEventListener("click", () => {
+    chatState.priorityDraft = !chatState.priorityDraft;
+    updateChatRecipientHint();
+    elements.input.focus();
+  });
+  elements.priorityBar.addEventListener("click", event => {
+    const remove = event.target.closest("[data-priority-remove]");
+    if (remove) { void setChatMessagePriority(remove.dataset.priorityRemove, false); return; }
+    const jump = event.target.closest("[data-priority-jump]");
+    if (jump) showChatMessage(jump.dataset.priorityJump);
+  });
+  elements.to.addEventListener("change", () => { setChatRecipient(elements.to.value || null); showChatStatus(""); elements.input.focus(); });
   elements.input.addEventListener("paste", event => {
     const file = [...(event.clipboardData?.files || [])].find(item => item.type.startsWith("image/"));
     if (file) { event.preventDefault(); void attachChatImage(file); }
@@ -8634,6 +8703,8 @@ function setupChat() {
     if (reply) { setChatRecipient(reply.dataset.replyTo); elements.input.focus(); return; }
     const remove = event.target.closest("[data-delete-message]");
     if (remove) { void deleteChatMessage(remove.dataset.deleteMessage); return; }
+    const priority = event.target.closest("[data-priority-set]");
+    if (priority) { void setChatMessagePriority(priority.dataset.prioritySet, priority.dataset.priority === "on"); return; }
     const image = event.target.closest(".chat-image");
     // Ctrl/Cmd-click still opens the image in a new tab.
     if (image && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
@@ -9891,7 +9962,8 @@ async function checkChatUnread() {
   sessionStorage.setItem(CHAT_NOTIFIED_KEY, latest.id);
   playChatMessageSound(latest);
   const { preview } = getChatElements();
-  const text = latest.text || (latest.imageUrl ? "Skickade en bild" : "");
+  const handoverToMe = latest.handover?.to.some(item => item.id === currentUser?.id);
+  const text = latest.text || (latest.handover ? `Överlämning från ${latest.handover.fromShiftName}${handoverToMe ? " till dig" : ""}` : latest.imageUrl ? "Skickade en bild" : "");
   preview.innerHTML = `<strong>${escapeHtml(latest.authorName)}${latest.recipientId ? " (privat)" : ""}</strong><span>${escapeHtml(text.length > 90 ? `${text.slice(0, 90)}…` : text)}</span>${count > 1 ? `<small>${count} olästa meddelanden</small>` : ""}`;
   preview.classList.remove("hidden");
   clearTimeout(chatState.previewTimer);
@@ -9905,7 +9977,7 @@ async function setChatOpen(open) {
   elements.preview.classList.add("hidden");
   elements.toggle.setAttribute("aria-expanded", String(open));
   elements.widget.classList.toggle("is-open", open);
-  if (!open) { scheduleChatPoll(); return; }
+  if (!open) { if (chatState.handoverOpen) setChatHandoverOpen(false); scheduleChatPoll(); return; }
   elements.input.focus();
   void loadChatMembers();
   if (!chatState.loaded) {
@@ -9920,6 +9992,7 @@ async function setChatOpen(open) {
       return;
     }
     renderChatMessages({ scrollToEnd: true });
+    void loadChatPriority();
   } else {
     renderChatMessages({ scrollToEnd: true });
     await loadNewChatMessages();
@@ -9939,6 +10012,7 @@ async function markChatRead() {
 
 async function loadNewChatMessages() {
   if (!chatState.loaded) return;
+  void loadChatPriority();
   const last = chatState.messages.at(-1);
   const data = await apiRequest("GET", `/chat/messages${last ? `?after=${encodeURIComponent(last.id)}` : ""}`);
   const known = new Set(chatState.messages.map(message => message.id));
@@ -9971,25 +10045,120 @@ function formatChatTime(value) {
   return formatDateKey(date) === formatDateKey(new Date()) ? time : `${date.toLocaleDateString("sv-SE", { day: "numeric", month: "short" })} ${time}`;
 }
 
+// Web addresses in a message become links. The text is escaped first.
+function linkifyChatText(text) {
+  return escapeHtml(text).replace(/\b(?:https?:\/\/|www\.)[^\s<]+[^\s<.,;:!?)"'\]]/g, url => {
+    const href = url.startsWith("www.") ? `https://${url}` : url;
+    return `<a href="${href}" target="_blank" rel="noopener">${url}</a>`;
+  });
+}
+
+// "Idag", "Igår" or "måndag 9 november", above the first message of each day.
+function chatDayLabel(value) {
+  const date = new Date(value);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(today.getDate() - 1);
+  if (formatDateKey(date) === formatDateKey(today)) return "Idag";
+  if (formatDateKey(date) === formatDateKey(yesterday)) return "Igår";
+  return date.toLocaleDateString("sv-SE", { weekday: "long", day: "numeric", month: "long", ...(date.getFullYear() === today.getFullYear() ? {} : { year: "numeric" }) });
+}
+
+// Role and shift of whoever wrote a message, from the chat members (yourself from your own login).
+function chatAuthorInfo(userId) {
+  if (userId && userId === currentUser?.id) return { role: currentUser.role, shiftId: getOwnShiftId() };
+  const member = chatState.members.find(item => item.id === userId);
+  return member ? { role: member.role, shiftId: member.shiftId } : { role: "", shiftId: "" };
+}
+
+const chatInitials = name => String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toLocaleUpperCase("sv-SE");
+
+// The newest private message to you that you have looked at under Privat (this device).
+const chatPrivateSeenKey = () => `staff_chat_private_seen:${currentUser?.id || ""}`;
+
+function updateChatTabs() {
+  const { widget } = getChatElements();
+  widget.querySelectorAll("[data-chat-tab]").forEach(tab => {
+    const active = tab.dataset.chatTab === chatState.tab;
+    tab.setAttribute("aria-selected", String(active));
+    tab.tabIndex = active ? 0 : -1;
+  });
+  let seen = 0n;
+  try { seen = BigInt(localStorage.getItem(chatPrivateSeenKey()) || 0); } catch { /* no storage: count all */ }
+  const fresh = chatState.messages.filter(message => message.recipientId === currentUser?.id && chatMessageId(message) > seen).length;
+  const count = widget.querySelector(".chat-tab-count");
+  count.textContent = String(fresh);
+  count.classList.toggle("hidden", !fresh || chatState.tab === "private");
+}
+
+function setChatTab(tab) {
+  chatState.tab = tab;
+  const { input } = getChatElements();
+  if (tab === "private") {
+    const last = chatState.messages.filter(message => message.recipientId === currentUser?.id).at(-1);
+    try { if (last) localStorage.setItem(chatPrivateSeenKey(), last.id); } catch { /* the count simply stays */ }
+  }
+  showChatStatus("");
+  updateChatRecipientHint();
+  renderChatMessages({ scrollToEnd: true });
+  input.focus();
+}
+
+// Redrawn in place when roles or priority marks arrive: whoever was reading the newest
+// messages stays at the bottom, anyone reading older ones stays where they were.
+function rerenderChatMessages() {
+  if (chatState.handoverOpen) return;
+  const { list } = getChatElements();
+  const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
+  renderChatMessages({ scrollToEnd: nearEnd });
+}
+
 function renderChatMessages({ scrollToEnd = false } = {}) {
   const { list } = getChatElements();
-  if (!chatState.messages.length) {
-    list.innerHTML = '<p class="chat-empty">Inga meddelanden ännu. Skriv det första!</p>';
+  updateChatTabs();
+  const privateOnly = chatState.tab === "private";
+  const shown = privateOnly ? chatState.messages.filter(message => message.recipientId) : chatState.messages;
+  if (!shown.length) {
+    list.innerHTML = privateOnly
+      ? '<p class="chat-empty">Inga privata meddelanden ännu. Välj en person i listan Till för att skriva privat.</p>'
+      : '<p class="chat-empty">Inga meddelanden ännu. Skriv det första!</p>';
     return;
   }
-  list.innerHTML = `${chatState.hasOlder ? '<button type="button" class="chat-older">Visa äldre meddelanden</button>' : ""}${chatState.messages.map(message => {
+  let lastDay = "";
+  let previous = null;
+  const rows = shown.map(message => {
     const mine = message.userId === currentUser?.id;
+    const day = chatDayLabel(message.createdAt);
+    const dayHtml = day !== lastDay ? `<div class="chat-day"><span>${escapeHtml(day)}</span></div>` : "";
+    if (day !== lastDay) { lastDay = day; previous = null; }
+    // Messages in a row from the same person, to the same people, within five minutes share one name.
+    const grouped = previous && previous.userId === message.userId && (previous.recipientId || "") === (message.recipientId || "")
+      && !previous.handover && !message.handover && new Date(message.createdAt) - new Date(previous.createdAt) < 5 * 60 * 1000;
+    previous = message;
+    const author = chatAuthorInfo(message.userId);
+    const roleText = [ROLE_LABELS[author.role], getShiftName(author.shiftId)].filter(Boolean).join(" · ");
+    const color = getShiftColor(author.shiftId);
     const canDelete = mine || isAdmin();
     const partner = mine ? message.recipientId : message.userId;
-    const privateLabel = message.recipientId
-      ? `<button type="button" class="chat-private" data-reply-to="${escapeHtml(partner || "")}" title="Skriv privat till ${escapeHtml(mine ? message.recipientName : message.authorName)}">${escapeHtml(mine ? `Privat till ${message.recipientName}` : "Privat till dig")}</button>`
+    const time = new Date(message.createdAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
+    const privateLine = message.recipientId
+      ? `<button type="button" class="chat-private" data-reply-to="${escapeHtml(partner || "")}" title="Svara privat till ${escapeHtml(mine ? message.recipientName : message.authorName)}"><span aria-hidden="true">🔒</span> Privat · ${escapeHtml(mine ? `Du → ${message.recipientName}` : `${message.authorName} → dig`)}</button>`
       : "";
-    return `<article class="chat-message${mine ? " is-mine" : ""}${message.recipientId ? " is-private" : ""}">
-      <div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong>${privateLabel}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(formatChatTime(message.createdAt))}</time>${canDelete ? `<button type="button" class="chat-delete" data-delete-message="${escapeHtml(message.id)}" aria-label="Ta bort meddelandet">×</button>` : ""}</div>
-      ${message.text ? `<p>${escapeHtml(message.text)}</p>` : ""}
-      ${message.imageUrl ? `<a class="chat-image" href="${escapeHtml(message.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(message.imageUrl)}" alt="Bild från ${escapeHtml(message.authorName)}" loading="lazy" /></a>` : ""}
-    </article>`;
-  }).join("")}`;
+    return `${dayHtml}<div class="chat-row${mine ? " is-mine" : ""}${grouped ? " is-grouped" : ""}">
+      ${mine ? "" : `<span class="chat-avatar${color ? ` shift-color-${color}` : ""}" aria-hidden="true">${grouped ? "" : escapeHtml(chatInitials(message.authorName))}</span>`}
+      <article data-message-id="${escapeHtml(message.id)}" class="chat-message${mine ? " is-mine" : ""}${message.recipientId ? " is-private" : ""}${message.handover ? " is-handover" : ""}${message.priority ? " is-priority" : ""}"${grouped ? ` aria-label="${escapeHtml(`${mine ? "Du" : message.authorName} ${time}`)}"` : ""}>
+        ${grouped ? "" : `<div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong>${roleText && !mine ? `<span class="chat-role">${escapeHtml(roleText)}</span>` : ""}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(time)}</time></div>`}
+        ${grouped ? "" : privateLine}
+        ${message.priority ? `<span class="chat-priority-tag">⚠ Prio · ${escapeHtml(message.priority.by || "")}</span>` : ""}
+        ${message.text ? `<p>${linkifyChatText(message.text)}</p>` : ""}
+        ${message.handover ? chatHandoverCardHtml(message.handover) : ""}
+        ${message.imageUrl ? `<a class="chat-image" href="${escapeHtml(message.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(message.imageUrl)}" alt="Bild från ${escapeHtml(message.authorName)}" loading="lazy" /></a>` : ""}
+        ${canDelete ? `<button type="button" class="chat-delete" data-delete-message="${escapeHtml(message.id)}" aria-label="Ta bort meddelandet">×</button>` : ""}
+        ${canSetChatPriority() && !message.recipientId && !message.handover ? `<button type="button" class="chat-priority-set" data-priority-set="${escapeHtml(message.id)}" data-priority="${message.priority ? "off" : "on"}">${message.priority ? "Ta bort prio" : "⚠ Prio"}</button>` : ""}
+      </article>
+    </div>`;
+  }).join("");
+  list.innerHTML = `${chatState.hasOlder ? '<button type="button" class="chat-older">Visa äldre meddelanden</button>' : ""}${rows}`;
   if (scrollToEnd) {
     list.scrollTop = list.scrollHeight;
     // Images change the height once they load.
@@ -10058,12 +10227,16 @@ async function sendChatMessage() {
   const { input, form } = getChatElements();
   const text = input.value.trim();
   if (!text && !chatState.image) return;
+  // Under Privat nothing goes to everyone by mistake.
+  if (chatState.tab === "private" && !chatState.recipient) { showChatStatus("Välj vem du skriver till i listan Till."); return; }
   const sendButton = form.querySelector(".chat-send");
   sendButton.disabled = true;
   try {
     const image = chatState.image ? { type: chatState.image.type, data: chatState.image.dataUrl } : undefined;
     const recipientId = chatState.recipient?.id;
-    const { message } = await apiRequest("POST", "/chat/messages", { text, image, recipientId });
+    const priority = chatState.priorityDraft && !recipientId ? true : undefined;
+    const { message } = await apiRequest("POST", "/chat/messages", { text, image, recipientId, priority });
+    if (priority) { chatState.priorityDraft = false; updateChatRecipientHint(); void loadChatPriority(); }
     input.value = "";
     resizeChatInput(input);
     setChatImage(null);
@@ -10087,6 +10260,9 @@ async function loadChatMembers() {
     console.warn("Chat members could not be loaded:", error);
     return;
   }
+  // Roles and shifts next to the names come from the members, and so does the list Till.
+  renderChatRecipientOptions();
+  if (chatState.loaded) rerenderChatMessages();
   // Someone who left the chat can no longer be written to.
   if (chatState.recipient && !chatState.members.some(member => member.id === chatState.recipient.id)) setChatRecipient(null);
   else updateChatMentions();
@@ -10097,6 +10273,7 @@ function setChatRecipient(userId) {
   const member = userId ? chatState.members.find(item => item.id === userId) : null;
   if (userId && !member) return;
   chatState.recipient = member || null;
+  if (member) showChatStatus("");
   updateChatRecipientHint();
 }
 
@@ -10105,9 +10282,53 @@ function updateChatRecipientHint() {
   const member = chatState.recipient;
   form.classList.toggle("is-private", Boolean(member));
   recipient.classList.toggle("hidden", !member);
-  recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Privat till <strong>${escapeHtml(member.name)}</strong> – bara ni två ser det` : "";
-  send.textContent = member ? "Skicka privat" : "Skicka";
-  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : "Skriv ett meddelande…";
+  recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Bara du och <strong>${escapeHtml(member.name)}</strong> ser meddelandet` : "";
+  // Priority is for messages to everyone.
+  if (member) chatState.priorityDraft = false;
+  const toggle = getChatElements().priorityToggle;
+  if (toggle) {
+    toggle.disabled = Boolean(member);
+    toggle.setAttribute("aria-pressed", String(chatState.priorityDraft));
+    toggle.title = member ? "Prio gäller meddelanden till alla" : "Skicka som prio: fästs överst i chatten för alla";
+  }
+  form.classList.toggle("is-priority", chatState.priorityDraft);
+  // The send button is a round arrow; its name says what kind of message goes out.
+  const sendLabel = member ? `Skicka privat till ${member.name}` : chatState.priorityDraft ? "Skicka som prio till alla" : "Skicka till alla";
+  send.setAttribute("aria-label", sendLabel);
+  send.title = sendLabel;
+  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : chatState.tab === "private" ? "Välj först en person i listan Till…" : "Skriv till alla…";
+  renderChatRecipientOptions();
+}
+
+// The list Till: everyone in the chat, or one person, grouped by shift. Under Privat there
+// is no "everyone", so a person has to be picked.
+function renderChatRecipientOptions() {
+  const { to } = getChatElements();
+  const groups = new Map();
+  chatState.members.forEach(member => {
+    const shiftName = getShiftName(member.shiftId) || "Utan skift";
+    if (!groups.has(shiftName)) groups.set(shiftName, []);
+    groups.get(shiftName).push(member);
+  });
+  const ordered = [...shifts.map(shift => shift.name), "Utan skift"].filter(name => groups.has(name));
+  const everyone = chatState.tab === "private" ? '<option value="">Välj person…</option>' : '<option value="">Alla i chatten</option>';
+  to.innerHTML = everyone + ordered.map(name => `<optgroup label="${escapeHtml(name)}">${groups.get(name).map(member =>
+    `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}${ROLE_LABELS[member.role] ? ` · ${escapeHtml(ROLE_LABELS[member.role])}` : ""}</option>`).join("")}</optgroup>`).join("");
+  to.value = chatState.recipient?.id || "";
+  to.closest(".chat-to").classList.toggle("is-private", Boolean(chatState.recipient));
+  renderChatPeople();
+}
+
+// The header: a few faces and how many are in the chat, yourself included.
+function renderChatPeople() {
+  const { widget } = getChatElements();
+  if (!chatState.members.length) return;
+  const faces = chatState.members.slice(0, 4).map(member => {
+    const color = getShiftColor(member.shiftId);
+    return `<span class="chat-avatar${color ? ` shift-color-${color}` : ""}">${escapeHtml(chatInitials(member.name))}</span>`;
+  }).join("");
+  widget.querySelector(".chat-people-faces").innerHTML = faces;
+  widget.querySelector(".chat-people-count").textContent = `${chatState.members.length + 1} personer i chatten`;
 }
 
 // The @word just before the cursor, if any: "@" at the start or after a space.
@@ -10194,6 +10415,285 @@ function pickChatMention(userId) {
   setChatRecipient(member.id);
   resizeChatInput(input);
   input.focus();
+}
+
+// Handovers: the shift that ends tells one or more shift leaders what is the priority
+// and how GD, ETIKETTO and Packning went. The server checks everything again
+// (server/handover.js) and shows the handover to everyone in the chat.
+const CHAT_HANDOVER_DEPARTMENTS = ["GD", "ETIKETTO", "Packning"];
+// Tapping one of these when something went wrong starts the comment with it.
+const CHAT_HANDOVER_QUICK = ["Maskinstopp", "Materialbrist", "Personalbrist", "Kvalitet"];
+// The recipients last chosen (this device) and an unsent handover (this browser tab), per user.
+const handoverRecipientsKey = () => `staff_handover_to:${currentUser?.id || ""}`;
+const handoverDraftKey = () => `staff_handover_draft:${currentUser?.id || ""}`;
+
+function readStored(storage, key) {
+  try {
+    return JSON.parse(storage.getItem(key) || "null");
+  } catch {
+    return null;
+  }
+}
+
+function writeStored(storage, key, value) {
+  try {
+    if (value === null) storage.removeItem(key);
+    else storage.setItem(key, JSON.stringify(value));
+  } catch {
+    // Without storage the form simply starts over next time.
+  }
+}
+
+function chatHandoverCardHtml(handover) {
+  const forMe = handover.to.some(item => item.id === currentUser?.id);
+  const status = item => item.status === "ok"
+    ? '<span class="chat-handover-status is-ok">✓ Rullade bra</span>'
+    : '<span class="chat-handover-status is-problem">⚠ Problem</span>';
+  return `<div class="chat-handover-card${forMe ? " is-for-me" : ""}">
+    <div class="chat-handover-title"><strong>Överlämning från ${escapeHtml(handover.fromShiftName)}</strong>${forMe ? '<span class="chat-handover-for-me">Till dig</span>' : ""}</div>
+    <small class="chat-handover-to">Till ${escapeHtml(handover.to.map(item => item.name).join(" och "))}</small>
+    ${handover.production ? `<div class="chat-handover-production">Produktion: ${escapeHtml(handover.production)}</div>` : ""}
+    ${handover.prio ? `<div class="chat-handover-prio"><b>Prio</b>${escapeHtml(handover.prio)}</div>` : ""}
+    <dl class="chat-handover-depts">${handover.departments.map(item => `<div><dt>${escapeHtml(item.name)}</dt><dd>${status(item)}${item.comment ? `<span>${escapeHtml(item.comment)}</span>` : ""}</dd></div>`).join("")}</dl>
+    ${handover.other ? `<p class="chat-handover-other"><b>Övrigt</b> ${escapeHtml(handover.other)}</p>` : ""}
+  </div>`;
+}
+
+// The shift a handover is from: your own, or for an admin the one chosen in the form.
+function chatHandoverFromShift(draft = {}) {
+  const own = shifts.find(shift => shift.id === getOwnShiftId());
+  if (!isAdmin() && own) return own;
+  return shifts.find(shift => shift.id === draft.fromShiftId) || shifts.find(shift => shift.id === getShiftScope()) || shifts[0] || null;
+}
+
+// The day's production of a shift in one line: "412 box av mål 400 · GD2: kniven byttes",
+// with the machine comments that were marked for the handover.
+// Empty when nothing is registered yet or the production cannot be read.
+async function summarizeTodaysProduction(shiftId) {
+  try {
+    const date = formatDateKey(new Date());
+    const [records, settings] = await Promise.all([getProductionRecords(shiftId), getProductionSettings()]);
+    const record = records[date];
+    if (!record?.machines) return "";
+    const entries = Object.entries(record.machines);
+    const total = entries.reduce((sum, [, item]) => sum + (Number(item?.result) || 0), 0);
+    const target = getProductionTarget(settings, shiftId, date, record);
+    // Only comments marked "Med i överlämningen" on the production page come along.
+    const comments = entries.filter(([, item]) => item?.comment && item.handover).map(([machine, item]) => `${machine}: ${item.comment}`);
+    if (!total && !comments.length) return "";
+    return [`${total} box av mål ${target}${total >= target ? " ✓" : ""}`, ...comments].join(" · ");
+  } catch {
+    return "";
+  }
+}
+
+function collectChatHandover() {
+  const form = getChatElements().handover;
+  const value = name => form.elements[name]?.value ?? "";
+  return {
+    fromShiftId: value("fromShiftId"),
+    to: [...form.querySelectorAll('input[name="to"]:checked')].map(box => box.value),
+    // Unknown until the day's production has been read and the box is shown.
+    includeProduction: form.elements.includeProduction ? form.elements.includeProduction.checked : undefined,
+    prio: value("prio"),
+    departments: CHAT_HANDOVER_DEPARTMENTS.map((name, index) => ({
+      name, status: form.querySelector(`input[name="dept${index}"]:checked`)?.value || "ok", comment: value(`comment${index}`)
+    })),
+    other: value("other")
+  };
+}
+
+// Only something typed or a problem counts as a draft; recipients alone do not.
+function saveChatHandoverDraft() {
+  if (!chatState.handoverOpen) return;
+  const draft = collectChatHandover();
+  const started = draft.prio.trim() || draft.other.trim() || draft.departments.some(item => item.status === "problem" || item.comment.trim());
+  writeStored(sessionStorage, handoverDraftKey(), started ? draft : null);
+  updateChatHandoverButton();
+}
+
+// A dot on the button tells that an unsent handover is waiting.
+function updateChatHandoverButton() {
+  const button = getChatElements()?.widget.querySelector(".chat-handover-open");
+  if (button) button.classList.toggle("has-draft", Boolean(readStored(sessionStorage, handoverDraftKey())));
+}
+
+// Drawn when opened and when an admin picks another shift. Every department starts as
+// "Rullade bra", so only what went wrong needs a tap. The recipients chosen last time are
+// ticked, else the next shift's leaders.
+function renderChatHandoverForm(draft = null) {
+  const form = getChatElements().handover;
+  const from = chatHandoverFromShift(draft || {});
+  const leaders = chatState.members.filter(member => member.role === ROLES.LEADER);
+  const fromIndex = shifts.findIndex(shift => shift.id === from?.id);
+  const nextShift = shifts.length > 1 ? shifts[(fromIndex + 1) % shifts.length] : null;
+  const remembered = (readStored(localStorage, handoverRecipientsKey()) || []).filter(id => leaders.some(member => member.id === id));
+  const ticked = new Set(draft?.to ?? (remembered.length ? remembered : leaders.filter(member => member.shiftId === nextShift?.id).map(member => member.id)));
+  const departments = draft?.departments || [];
+  const production = chatState.handoverProduction;
+  const shiftOptions = isAdmin() ? `<label class="chat-handover-field">Från skift<select name="fromShiftId">${shifts.map(shift => `<option value="${escapeHtml(shift.id)}"${shift.id === from?.id ? " selected" : ""}>${escapeHtml(shiftOptionLabel(shift))}</option>`).join("")}</select></label>` : "";
+  form.innerHTML = `
+    <div class="chat-handover-head"><strong>Överlämning${from ? ` från ${escapeHtml(from.name)}` : ""}</strong><small>Bara skiftledarna du väljer och admin ser den. Utkastet sparas medan du skriver.</small></div>
+    ${shiftOptions}
+    <fieldset class="chat-handover-to-pick"><legend>Till skiftledare <span>(en eller flera, sparas till nästa gång)</span></legend>
+      ${leaders.length ? leaders.map(member => `<label class="chat-handover-leader"><input type="checkbox" name="to" value="${escapeHtml(member.id)}"${ticked.has(member.id) ? " checked" : ""} />${shiftColorDot(member.shiftId)}${escapeHtml(member.name)}${getShiftName(member.shiftId) ? ` <small>${escapeHtml(getShiftName(member.shiftId))}</small>` : ""}</label>`).join("") : '<p class="chat-handover-empty">Det finns ingen annan skiftledare i chatten.</p>'}
+    </fieldset>
+    ${production ? `<label class="chat-handover-production-pick"><input type="checkbox" name="includeProduction"${draft?.includeProduction === false ? "" : " checked"} /><span><b>Från Produktion idag:</b> ${escapeHtml(production)}</span></label>` : ""}
+    <label class="chat-handover-field"><span>Prio för nästa skift <span class="chat-handover-optional">valfritt</span></span><textarea name="prio" rows="2" maxlength="1000" placeholder="Till exempel: kör GD-3 först, ordern ska ut kl 10">${escapeHtml(draft?.prio || "")}</textarea></label>
+    <div class="chat-handover-field"><span>Hur gick det? <span class="chat-handover-optional">allt är Rullade bra tills du ändrar</span></span></div>
+    ${CHAT_HANDOVER_DEPARTMENTS.map((name, index) => {
+      const saved = departments[index] || {};
+      const problem = saved.status === "problem";
+      return `<div class="chat-handover-dept${problem ? " is-problem" : ""}">
+        <div class="chat-handover-dept-top"><strong id="chatHandoverDept${index}">${escapeHtml(name)}</strong><div class="chat-handover-choice" role="radiogroup" aria-labelledby="chatHandoverDept${index}">
+          <label><input type="radio" name="dept${index}" value="ok"${problem ? "" : " checked"} /><span>✓ Rullade bra</span></label>
+          <label><input type="radio" name="dept${index}" value="problem"${problem ? " checked" : ""} /><span>⚠ Problem</span></label>
+        </div></div>
+        <div class="chat-handover-quick"${problem ? "" : " hidden"}>${CHAT_HANDOVER_QUICK.map(text => `<button type="button" data-handover-quick="${index}" data-text="${escapeHtml(text)}">${escapeHtml(text)}</button>`).join("")}</div>
+        <textarea name="comment${index}" rows="1" maxlength="500" aria-label="Kommentar för ${escapeHtml(name)}" placeholder="${problem ? "Vad hände? (krävs)" : "Kommentar (valfri)"}">${escapeHtml(saved.comment || "")}</textarea>
+      </div>`;
+    }).join("")}
+    <label class="chat-handover-field"><span>Övrigt <span class="chat-handover-optional">valfritt</span></span><textarea name="other" rows="1" maxlength="1000">${escapeHtml(draft?.other || "")}</textarea></label>
+    <p class="chat-handover-error inline-message error" role="alert"></p>
+    <div class="chat-handover-actions"><button type="button" class="chat-handover-clear" data-handover-clear>Börja om</button><button type="button" class="btn" data-handover-cancel>Stäng</button><button type="submit" class="btn primary"${leaders.length ? "" : " disabled"}>Skicka överlämning</button></div>`;
+}
+
+function updateChatHandoverDepartment(dept) {
+  if (!dept) return;
+  const problem = dept.querySelector('input[value="problem"]').checked;
+  dept.classList.toggle("is-problem", problem);
+  dept.querySelector(".chat-handover-quick").hidden = !problem;
+  const comment = dept.querySelector("textarea");
+  comment.placeholder = problem ? "Vad hände? (krävs)" : "Kommentar (valfri)";
+  if (problem && !comment.value.trim()) comment.focus();
+}
+
+// "Maskinstopp" + the comment typed so far; tapping another one replaces it.
+function pickChatHandoverQuick(button) {
+  const comment = getChatElements().handover.elements[`comment${button.dataset.handoverQuick}`];
+  const rest = comment.value.replace(new RegExp(`^(${CHAT_HANDOVER_QUICK.join("|")}): ?`), "");
+  comment.value = `${button.dataset.text}: ${rest}`;
+  comment.focus();
+  comment.setSelectionRange(comment.value.length, comment.value.length);
+  saveChatHandoverDraft();
+}
+
+function setChatHandoverOpen(open) {
+  const elements = getChatElements();
+  if (open && !canMakeHandover()) return;
+  if (!open) saveChatHandoverDraft();
+  chatState.handoverOpen = open;
+  elements.panel.classList.toggle("is-handover", open);
+  elements.handover.classList.toggle("hidden", !open);
+  elements.widget.querySelector(".chat-handover-open")?.setAttribute("aria-expanded", String(open));
+  if (open) {
+    const draft = readStored(sessionStorage, handoverDraftKey());
+    renderChatHandoverForm(draft);
+    elements.handover.scrollTop = 0;
+    elements.handover.querySelector("input, textarea, select")?.focus();
+    // The shift leaders may be newer on the server, and the day's production is read now.
+    const from = chatHandoverFromShift(draft || {});
+    void Promise.all([loadChatMembers(), from ? summarizeTodaysProduction(from.id) : ""]).then(([, production]) => {
+      chatState.handoverProduction = production;
+      if (chatState.handoverOpen) renderChatHandoverForm(collectChatHandover());
+    });
+  } else {
+    elements.handover.innerHTML = "";
+    if (chatState.open) elements.input.focus();
+  }
+}
+
+async function sendChatHandover() {
+  const form = getChatElements().handover;
+  const error = form.querySelector(".chat-handover-error");
+  const draft = collectChatHandover();
+  // The same rules as the server, so mistakes show before anything is sent.
+  const unexplained = draft.departments.filter(item => item.status === "problem" && !item.comment.trim()).map(item => item.name);
+  const problem = !draft.to.length ? "Välj minst en skiftledare att lämna över till."
+    : unexplained.length ? `Skriv vad som hände på ${unexplained.join(", ")}.` : "";
+  if (problem) { error.textContent = problem; return; }
+  const submit = form.querySelector('button[type="submit"]');
+  submit.disabled = true;
+  try {
+    const { includeProduction, ...handover } = draft;
+    const { message } = await apiRequest("POST", "/chat/messages", { handover: {
+      ...handover,
+      production: includeProduction === false ? "" : chatState.handoverProduction,
+      fromShiftId: isAdmin() ? draft.fromShiftId : undefined
+    } });
+    writeStored(localStorage, handoverRecipientsKey(), draft.to);
+    writeStored(sessionStorage, handoverDraftKey(), null);
+    if (!chatState.messages.some(item => item.id === message.id)) chatState.messages.push(message);
+    chatState.handoverOpen = false;
+    getChatElements().panel.classList.remove("is-handover");
+    form.classList.add("hidden");
+    form.innerHTML = "";
+    getChatElements().widget.querySelector(".chat-handover-open")?.setAttribute("aria-expanded", "false");
+    updateChatHandoverButton();
+    renderChatMessages({ scrollToEnd: true });
+    const names = message.handover.to.map(item => item.name.split(" ")[0]).join(" och ");
+    showChatStatus(`Överlämningen är skickad till ${names}.`, "success");
+    setTimeout(() => { if (getChatElements().status.textContent.startsWith("Överlämningen är skickad")) showChatStatus(""); }, 5000);
+  } catch (sendError) {
+    error.textContent = sendError.message || "Överlämningen kunde inte skickas.";
+    submit.disabled = false;
+  }
+}
+
+// Priority: messages to everyone that an admin or shift leader marked. They are pinned in
+// a bar at the top of the chat for everyone until the mark is taken away.
+async function loadChatPriority() {
+  try {
+    const { messages } = await apiRequest("GET", "/chat/priority");
+    const marks = new Map(messages.map(message => [message.id, message.priority]));
+    const changed = chatState.messages.some(message => JSON.stringify(message.priority || null) !== JSON.stringify(marks.get(message.id) || null));
+    chatState.messages.forEach(message => { message.priority = marks.get(message.id) || null; });
+    chatState.priorityMessages = messages;
+    // The bar takes room from the list, so measure first and keep the newest in view.
+    const { list } = getChatElements();
+    const nearEnd = list.scrollHeight - list.scrollTop - list.clientHeight < 120;
+    renderChatPriorityBar();
+    if (changed && !chatState.handoverOpen) renderChatMessages({ scrollToEnd: nearEnd });
+    else if (nearEnd) list.scrollTop = list.scrollHeight;
+  } catch (error) {
+    console.warn("Chat priority could not be loaded:", error);
+  }
+}
+
+function renderChatPriorityBar() {
+  const { priorityBar } = getChatElements();
+  const items = chatState.priorityMessages;
+  priorityBar.classList.toggle("hidden", !items.length);
+  priorityBar.innerHTML = items.length ? `<div class="chat-priority-title">⚠ Prio <span>${items.length === 1 ? "1 meddelande" : `${items.length} meddelanden`}</span></div>${items.map(message => `
+    <div class="chat-priority-item">
+      <button type="button" class="chat-priority-text" data-priority-jump="${escapeHtml(message.id)}" title="Visa meddelandet"><strong>${escapeHtml(message.authorName)}:</strong> ${escapeHtml(message.text || "Bild")}</button>
+      ${canSetChatPriority() ? `<button type="button" class="chat-priority-remove" data-priority-remove="${escapeHtml(message.id)}" aria-label="Ta bort prio från meddelandet" title="Ta bort prio">×</button>` : ""}
+    </div>`).join("")}` : "";
+}
+
+async function setChatMessagePriority(id, on) {
+  try {
+    const { message } = await apiRequest("PUT", `/chat/messages/${encodeURIComponent(id)}/priority`, { priority: on });
+    const known = chatState.messages.find(item => item.id === id);
+    if (known) known.priority = message.priority;
+    showChatStatus(on ? "Meddelandet är fäst som prio för alla." : "Prio är borttagen.", "success");
+    setTimeout(() => { if (/^(Meddelandet är fäst|Prio är borttagen)/.test(getChatElements().status.textContent)) showChatStatus(""); }, 4000);
+    renderChatMessages();
+    await loadChatPriority();
+  } catch (error) {
+    showChatStatus(error.message || "Prio kunde inte ändras.");
+  }
+}
+
+// Scrolls to a message and lights it up briefly, under Alla if needed.
+function showChatMessage(id) {
+  if (chatState.tab !== "all" && !chatState.messages.find(item => item.id === id)?.recipientId) setChatTab("all");
+  const article = getChatElements().list.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+  if (!article) { showChatStatus("Meddelandet är äldre än det som visas. Tryck Visa äldre meddelanden.", "error"); return; }
+  article.scrollIntoView({ block: "center", behavior: "smooth" });
+  article.classList.remove("is-flash");
+  void article.offsetWidth;
+  article.classList.add("is-flash");
 }
 
 async function deleteChatMessage(id) {
