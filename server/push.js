@@ -22,6 +22,7 @@ const KINDS = Object.freeze({
   placement: { url: "index.html", text: () => "Din placering har ändrats." },
   chat: { url: "index.html?chat=1", urgency: "high", text: () => "Du har fått ett privat meddelande." },
   handover: { url: "index.html?chat=1", urgency: "high", text: () => "Du har fått en överlämning i chatten." },
+  priority: { url: "index.html?chat=1", urgency: "high", text: () => "Det finns ett nytt prioriterat meddelande i chatten." },
   chatAll: { interval: 300, url: "index.html?chat=1", text: () => "Det finns nya meddelanden i chatten." },
   note: { url: "anteckningar.html", text: () => "En anteckning har delats med dig." },
   noteComment: { interval: 120, url: "anteckningar.html", text: () => "Det finns en ny kommentar på en anteckning." },
@@ -239,6 +240,14 @@ async function queueChatMessage(db, { messageId, recipientId, authorId, chatRole
   });
 }
 
+// A message marked as priority reaches everyone in the chat at once.
+async function queueChatPriority(db, { messageId, authorId, chatRoles }) {
+  return withoutFailing(db, "priority", async () => {
+    const { rows } = await db.query("SELECT id FROM users WHERE role = ANY($1::text[]) AND id <> $2", [chatRoles, authorId]);
+    return queuePush(db, rows.map(row => ({ userId: row.id, messageId })), { kind: "priority", key: `priority:${messageId}`, exceptUserId: authorId });
+  });
+}
+
 // Someone was moved to another shift.
 async function queuePlacementChange(db, { personId, actorId }) {
   return withoutFailing(db, "placement", async () => {
@@ -274,6 +283,11 @@ async function stillRelevant(db, user, row) {
             AND m.id > ${LAST_READ_CHAT}`,
         [user.id, row.message_id]
       );
+      return rows.length > 0;
+    }
+    case "priority": {
+      if (!canUseChat(user) || !row.message_id) return false;
+      const { rows } = await db.query("SELECT 1 FROM chat_messages WHERE id = $1 AND priority_at IS NOT NULL", [row.message_id]);
       return rows.length > 0;
     }
     case "chatAll": {
@@ -425,6 +439,6 @@ async function cleanupPush(db) {
 }
 
 module.exports = {
-  KINDS, createPushSender, createPushService, queuePush, scheduleChangeRecipients, queueScheduleChange, queueScheduleShared, queueChatMessage, queuePlacementChange, changedPeople,
+  KINDS, createPushSender, createPushService, queuePush, scheduleChangeRecipients, queueScheduleChange, queueScheduleShared, queueChatMessage, queueChatPriority, queuePlacementChange, changedPeople,
   placementWeek, isAllowedEndpoint, saveSubscription, cleanupPush, MAX_DEVICES_PER_USER
 };

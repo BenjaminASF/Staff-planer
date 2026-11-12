@@ -250,3 +250,63 @@ describe("handovers in the chat", () => {
     assert.ok(!ids.includes(message.id));
   });
 });
+
+describe("priority messages in the chat", () => {
+  let server;
+  let admin, leader, rightHand, senior;
+  let red;
+
+  before(async () => {
+    server = await startTestServer();
+    [admin, leader, rightHand, senior] = Array.from({ length: 4 }, () => server.client());
+    await admin.post("/api/setup", { setupCode: SETUP_CODE, name: "Ada Admin", username: "ada", password: PASSWORD });
+    [red] = (await admin.get("/api/shifts")).data.shifts;
+    const account = (username, role) => ({ username, password: PASSWORD, role, mustChangePassword: false });
+    await admin.post("/api/people", { name: "Lisa Ledare", shiftId: red.id, account: account("lisa", "shift_leader") });
+    await admin.post("/api/people", { name: "Hanna Hand", shiftId: red.id, account: account("hanna", "right_hand") });
+    await admin.post("/api/people", { name: "Sara Senior", shiftId: red.id, account: account("sara", "senior_operator") });
+    await leader.login("lisa", PASSWORD);
+    await rightHand.login("hanna", PASSWORD);
+    await senior.login("sara", PASSWORD);
+  });
+
+  after(async () => {
+    await server?.close();
+  });
+
+  test("a shift leader sends a priority message that everyone in the chat sees pinned", async () => {
+    const sent = await leader.post("/api/chat/messages", { text: "Brandövning kl 10", priority: true });
+    assert.equal(sent.status, 201, JSON.stringify(sent.data));
+    assert.equal(sent.data.message.priority.by, "Lisa Ledare");
+    for (const client of [admin, rightHand, senior]) {
+      const { data } = await client.get("/api/chat/priority");
+      assert.deepEqual(data.messages.map(item => item.text), ["Brandövning kl 10"]);
+    }
+  });
+
+  test("only admins and shift leaders mark priority, and only on messages to everyone", async () => {
+    assert.equal((await rightHand.post("/api/chat/messages", { text: "Viktigt!", priority: true })).status, 403);
+    assert.equal((await senior.post("/api/chat/messages", { text: "Viktigt!", priority: true })).status, 403);
+    const hannaId = (await leader.get("/api/chat/members")).data.members.find(member => member.name === "Hanna Hand").id;
+    assert.equal((await leader.post("/api/chat/messages", { text: "Privat", recipientId: hannaId, priority: true })).status, 400);
+    const plain = (await rightHand.post("/api/chat/messages", { text: "Lastkajen stängd 10–12" })).data.message;
+    assert.equal(plain.priority, null);
+    assert.equal((await rightHand.put(`/api/chat/messages/${plain.id}/priority`, { priority: true })).status, 403);
+    const marked = await admin.put(`/api/chat/messages/${plain.id}/priority`, { priority: true });
+    assert.equal(marked.status, 200);
+    assert.equal(marked.data.message.priority.by, "Ada Admin");
+    assert.deepEqual((await senior.get("/api/chat/priority")).data.messages.map(item => item.text), ["Lastkajen stängd 10–12", "Brandövning kl 10"], "newest mark first");
+    const privateOne = (await leader.post("/api/chat/messages", { text: "Bara till dig", recipientId: hannaId })).data.message;
+    assert.equal((await leader.put(`/api/chat/messages/${privateOne.id}/priority`, { priority: true })).status, 400);
+  });
+
+  test("an admin or shift leader takes the mark away, and the message stays in the chat", async () => {
+    const { messages } = (await admin.get("/api/chat/priority")).data;
+    const fire = messages.find(item => item.text === "Brandövning kl 10");
+    const removed = await admin.put(`/api/chat/messages/${fire.id}/priority`, { priority: false });
+    assert.equal(removed.status, 200);
+    assert.equal(removed.data.message.priority, null);
+    assert.deepEqual((await senior.get("/api/chat/priority")).data.messages.map(item => item.text), ["Lastkajen stängd 10–12"]);
+    assert.ok((await senior.get("/api/chat/messages")).data.messages.some(item => item.id === fire.id));
+  });
+});

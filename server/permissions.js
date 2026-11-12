@@ -364,6 +364,11 @@ function canMakeHandover(user) {
   return canUseChat(user) && HANDOVER_ROLES.includes(user.role);
 }
 
+// Admins and shift leaders mark messages to everyone as priority, pinned for everyone.
+function canSetChatPriority(user) {
+  return canUseChat(user) && (isAdmin(user) || isLeader(user));
+}
+
 // Authors remove their own chat messages; admins can remove any.
 function canDeleteChatMessage(user, message) {
   return isAdmin(user) || (Boolean(message.user_id) && message.user_id === user?.id);
@@ -461,6 +466,7 @@ module.exports = {
   CHAT_ROLES,
   canUseChat,
   canMakeHandover,
+  canSetChatPriority,
   HANDOVER_RECIPIENT_ROLE,
   canDeleteChatMessage,
   ROLES,

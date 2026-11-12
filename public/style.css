@@ -5941,6 +5941,27 @@ select option:disabled { color: var(--g-muted); }
 .chat-message.is-private.is-mine :is(time, .chat-delete, .chat-role) { color: var(--g-muted); opacity: 1; }
 .chat-message.is-private .chat-private, .chat-message.is-private.is-mine .chat-private { justify-self: start; padding: 2px 8px; background: rgba(180,83,9,.14); color: #b45309; color: light-dark(#b45309, #fbbf24); font-size: 12px; font-weight: 800; }
 .chat-input-row textarea { font-size: 15px; }
+/* Priority: pinned at the top for everyone, and marked in the conversation. */
+.chat-priority-bar { display: grid; gap: 4px; max-height: 136px; padding: 8px 12px; overflow-y: auto; border-bottom: 1px solid #fdba74; border-bottom-color: light-dark(#fdba74, #9a3412); background: #fff7ed; background: light-dark(#fff7ed, #2a1608); }
+.chat-priority-bar.hidden, .chat-panel.is-handover .chat-priority-bar { display: none; }
+.chat-priority-title { color: #c2410c; color: light-dark(#c2410c, #fb923c); font-size: 11px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; }
+.chat-priority-title span { margin-left: 4px; color: var(--g-muted); font-weight: 600; letter-spacing: 0; text-transform: none; }
+.chat-priority-item { display: flex; align-items: center; gap: 6px; }
+.chat-priority-text { flex: 1; min-width: 0; padding: 4px 0; border: 0; background: none; color: var(--g-text); font: inherit; font-size: 13px; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.chat-priority-text:hover { text-decoration: underline; }
+.chat-priority-remove { flex: none; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: rgba(194,65,12,.14); color: #c2410c; color: light-dark(#c2410c, #fb923c); font-size: 15px; line-height: 1; cursor: pointer; }
+.chat-message.is-priority { border: 2px solid #ea580c !important; border-color: light-dark(#ea580c, #fb923c) !important; }
+.chat-priority-tag { justify-self: start; padding: 1px 8px; border-radius: 999px; background: #ea580c; color: #fff; font-size: 11px; font-weight: 800; }
+.chat-row .chat-priority-set { position: absolute; right: 6px; bottom: -10px; padding: 2px 8px; border: 1px solid var(--g-border-control); border-radius: 999px; background: var(--g-surface-float); color: var(--g-text); box-shadow: var(--g-shadow-xs); font: inherit; font-size: 11px; font-weight: 800; cursor: pointer; opacity: 0; }
+.chat-message:hover .chat-priority-set, .chat-priority-set:focus-visible { opacity: 1; }
+@media (hover: none) { .chat-row .chat-priority-set { opacity: .7; } }
+.chat-message.is-flash { animation: chat-flash 1.6s ease; }
+@keyframes chat-flash { 0%, 40% { box-shadow: 0 0 0 4px rgba(234,88,12,.45); } }
+@media (prefers-reduced-motion: reduce) { .chat-message.is-flash { animation: none; } }
+.chat-priority-toggle { flex: 0 0 auto; min-height: 40px; padding: 0 10px; border: 1px solid var(--g-border-control); border-radius: 11px; background: var(--g-control); color: var(--g-muted); font: inherit; font-size: 13px; font-weight: 800; cursor: pointer; }
+.chat-priority-toggle[aria-pressed="true"] { border-color: #ea580c; background: #ea580c; color: #fff; }
+.chat-priority-toggle:disabled { opacity: .45; cursor: not-allowed; }
+.chat-form.is-priority .chat-send.btn.primary { border-color: transparent; background: #ea580c; color: #fff; }
 /* The list Till above the message field. */
 .chat-form .chat-to { display: flex; align-items: center; gap: 8px; margin: 0; color: var(--g-muted); font-size: 13px; font-weight: 700; }
 .chat-to select { flex: 1; min-width: 0; min-height: 36px; margin: 0; padding: 0 10px; border: 1px solid var(--g-border-control); border-radius: 10px; background: var(--g-input); color: var(--g-text); font: inherit; font-size: 14px; font-weight: 600; }

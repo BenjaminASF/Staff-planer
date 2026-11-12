@@ -402,6 +402,8 @@ const canManageStaff = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND
 const canUseChat = () => hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND, ROLES.SENIOR_OPERATOR) && hasFeature("chat");
 // Handovers are made by the people who run a shift (server/permissions.js, canMakeHandover).
 const canMakeHandover = () => canUseChat() && hasRole(ROLES.ADMIN, ROLES.LEADER, ROLES.RIGHT_HAND);
+// Admins and shift leaders mark messages to everyone as priority (server/permissions.js).
+const canSetChatPriority = () => canUseChat() && hasRole(ROLES.ADMIN, ROLES.LEADER);
 // Machines, departments and settings are shared by all shifts.
 const canChangeSharedSettings = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
 const canChangeProductionTarget = () => hasRole(ROLES.ADMIN, ROLES.LEADER) && !isTemporaryAccount();
@@ -8536,7 +8538,7 @@ const CHAT_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const CHAT_NOTIFIED_KEY = "staff_chat_notified_id";
 const CHAT_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "", tab: "all" };
+const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "", tab: "all", priorityMessages: [], priorityDraft: false };
 
 const chatMessageId = message => BigInt(message?.id || 0);
 
@@ -8556,6 +8558,8 @@ function getChatElements() {
     attachment: widget.querySelector(".chat-attachment"),
     recipient: widget.querySelector(".chat-recipient"),
     to: widget.querySelector(".chat-to-select"),
+    priorityBar: widget.querySelector(".chat-priority-bar"),
+    priorityToggle: widget.querySelector(".chat-priority-toggle"),
     mentions: widget.querySelector(".chat-mentions"),
     send: widget.querySelector(".chat-send"),
     status: widget.querySelector(".chat-status")
@@ -8572,6 +8576,7 @@ function setupChat() {
     <section class="chat-panel hidden" aria-label="Chatt">
       <header class="chat-header"><div><strong>Chatt</strong><small>Välj i listan Till vem du skriver till</small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
       <div class="chat-tabs" role="tablist" aria-label="Visa"><button type="button" role="tab" data-chat-tab="all" aria-selected="true">Alla</button><button type="button" role="tab" data-chat-tab="private" aria-selected="false" tabindex="-1">Privat<span class="chat-tab-count hidden"></span></button></div>
+      <section class="chat-priority-bar hidden" aria-label="Prio"></section>
       <form class="chat-handover hidden" aria-label="Överlämning" novalidate></form>
       <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
       <form class="chat-form">
@@ -8583,6 +8588,7 @@ function setupChat() {
         <div class="chat-input-row">
           <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
           <textarea rows="1" maxlength="2000" placeholder="Skriv till alla…" aria-label="Meddelande"></textarea>
+          ${canSetChatPriority() ? '<button type="button" class="chat-priority-toggle" aria-pressed="false" title="Skicka som prio: fästs överst i chatten för alla">⚠ Prio</button>' : ""}
           <button class="btn primary chat-send" type="submit">Skicka</button>
         </div>
       </form>
@@ -8665,6 +8671,17 @@ function setupChat() {
     if (option) pickChatMention(option.dataset.mention);
   });
   elements.recipient.querySelector(".chat-recipient-remove").addEventListener("click", () => { setChatRecipient(null); elements.input.focus(); });
+  elements.priorityToggle?.addEventListener("click", () => {
+    chatState.priorityDraft = !chatState.priorityDraft;
+    updateChatRecipientHint();
+    elements.input.focus();
+  });
+  elements.priorityBar.addEventListener("click", event => {
+    const remove = event.target.closest("[data-priority-remove]");
+    if (remove) { void setChatMessagePriority(remove.dataset.priorityRemove, false); return; }
+    const jump = event.target.closest("[data-priority-jump]");
+    if (jump) showChatMessage(jump.dataset.priorityJump);
+  });
   elements.to.addEventListener("change", () => { setChatRecipient(elements.to.value || null); showChatStatus(""); elements.input.focus(); });
   elements.input.addEventListener("paste", event => {
     const file = [...(event.clipboardData?.files || [])].find(item => item.type.startsWith("image/"));
@@ -8684,6 +8701,8 @@ function setupChat() {
     if (reply) { setChatRecipient(reply.dataset.replyTo); elements.input.focus(); return; }
     const remove = event.target.closest("[data-delete-message]");
     if (remove) { void deleteChatMessage(remove.dataset.deleteMessage); return; }
+    const priority = event.target.closest("[data-priority-set]");
+    if (priority) { void setChatMessagePriority(priority.dataset.prioritySet, priority.dataset.priority === "on"); return; }
     const image = event.target.closest(".chat-image");
     // Ctrl/Cmd-click still opens the image in a new tab.
     if (image && !event.ctrlKey && !event.metaKey && !event.shiftKey) {
@@ -9971,6 +9990,7 @@ async function setChatOpen(open) {
       return;
     }
     renderChatMessages({ scrollToEnd: true });
+    void loadChatPriority();
   } else {
     renderChatMessages({ scrollToEnd: true });
     await loadNewChatMessages();
@@ -9990,6 +10010,7 @@ async function markChatRead() {
 
 async function loadNewChatMessages() {
   if (!chatState.loaded) return;
+  void loadChatPriority();
   const last = chatState.messages.at(-1);
   const data = await apiRequest("GET", `/chat/messages${last ? `?after=${encodeURIComponent(last.id)}` : ""}`);
   const known = new Set(chatState.messages.map(message => message.id));
@@ -10114,13 +10135,15 @@ function renderChatMessages({ scrollToEnd = false } = {}) {
       : "";
     return `${dayHtml}<div class="chat-row${mine ? " is-mine" : ""}${grouped ? " is-grouped" : ""}">
       ${mine ? "" : `<span class="chat-avatar${color ? ` shift-color-${color}` : ""}" aria-hidden="true">${grouped ? "" : escapeHtml(chatInitials(message.authorName))}</span>`}
-      <article class="chat-message${mine ? " is-mine" : ""}${message.recipientId ? " is-private" : ""}${message.handover ? " is-handover" : ""}"${grouped ? ` aria-label="${escapeHtml(`${mine ? "Du" : message.authorName} ${time}`)}"` : ""}>
+      <article data-message-id="${escapeHtml(message.id)}" class="chat-message${mine ? " is-mine" : ""}${message.recipientId ? " is-private" : ""}${message.handover ? " is-handover" : ""}${message.priority ? " is-priority" : ""}"${grouped ? ` aria-label="${escapeHtml(`${mine ? "Du" : message.authorName} ${time}`)}"` : ""}>
         ${grouped ? "" : `<div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong>${roleText && !mine ? `<span class="chat-role">${escapeHtml(roleText)}</span>` : ""}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(time)}</time></div>`}
         ${grouped ? "" : privateLine}
+        ${message.priority ? `<span class="chat-priority-tag">⚠ Prio · ${escapeHtml(message.priority.by || "")}</span>` : ""}
         ${message.text ? `<p>${linkifyChatText(message.text)}</p>` : ""}
         ${message.handover ? chatHandoverCardHtml(message.handover) : ""}
         ${message.imageUrl ? `<a class="chat-image" href="${escapeHtml(message.imageUrl)}" target="_blank" rel="noopener"><img src="${escapeHtml(message.imageUrl)}" alt="Bild från ${escapeHtml(message.authorName)}" loading="lazy" /></a>` : ""}
         ${canDelete ? `<button type="button" class="chat-delete" data-delete-message="${escapeHtml(message.id)}" aria-label="Ta bort meddelandet">×</button>` : ""}
+        ${canSetChatPriority() && !message.recipientId && !message.handover ? `<button type="button" class="chat-priority-set" data-priority-set="${escapeHtml(message.id)}" data-priority="${message.priority ? "off" : "on"}">${message.priority ? "Ta bort prio" : "⚠ Prio"}</button>` : ""}
       </article>
     </div>`;
   }).join("");
@@ -10200,7 +10223,9 @@ async function sendChatMessage() {
   try {
     const image = chatState.image ? { type: chatState.image.type, data: chatState.image.dataUrl } : undefined;
     const recipientId = chatState.recipient?.id;
-    const { message } = await apiRequest("POST", "/chat/messages", { text, image, recipientId });
+    const priority = chatState.priorityDraft && !recipientId ? true : undefined;
+    const { message } = await apiRequest("POST", "/chat/messages", { text, image, recipientId, priority });
+    if (priority) { chatState.priorityDraft = false; updateChatRecipientHint(); void loadChatPriority(); }
     input.value = "";
     resizeChatInput(input);
     setChatImage(null);
@@ -10247,7 +10272,16 @@ function updateChatRecipientHint() {
   form.classList.toggle("is-private", Boolean(member));
   recipient.classList.toggle("hidden", !member);
   recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Bara du och <strong>${escapeHtml(member.name)}</strong> ser meddelandet` : "";
-  send.textContent = member ? "Skicka privat" : "Skicka";
+  // Priority is for messages to everyone.
+  if (member) chatState.priorityDraft = false;
+  const toggle = getChatElements().priorityToggle;
+  if (toggle) {
+    toggle.disabled = Boolean(member);
+    toggle.setAttribute("aria-pressed", String(chatState.priorityDraft));
+    toggle.title = member ? "Prio gäller meddelanden till alla" : "Skicka som prio: fästs överst i chatten för alla";
+  }
+  form.classList.toggle("is-priority", chatState.priorityDraft);
+  send.textContent = member ? "Skicka privat" : chatState.priorityDraft ? "Skicka prio" : "Skicka";
   if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : chatState.tab === "private" ? "Välj först en person i listan Till…" : "Skriv till alla…";
   renderChatRecipientOptions();
 }
@@ -10575,6 +10609,58 @@ async function sendChatHandover() {
     error.textContent = sendError.message || "Överlämningen kunde inte skickas.";
     submit.disabled = false;
   }
+}
+
+// Priority: messages to everyone that an admin or shift leader marked. They are pinned in
+// a bar at the top of the chat for everyone until the mark is taken away.
+async function loadChatPriority() {
+  try {
+    const { messages } = await apiRequest("GET", "/chat/priority");
+    const marks = new Map(messages.map(message => [message.id, message.priority]));
+    const changed = chatState.messages.some(message => JSON.stringify(message.priority || null) !== JSON.stringify(marks.get(message.id) || null));
+    chatState.messages.forEach(message => { message.priority = marks.get(message.id) || null; });
+    chatState.priorityMessages = messages;
+    renderChatPriorityBar();
+    if (changed && !chatState.handoverOpen) renderChatMessages();
+  } catch (error) {
+    console.warn("Chat priority could not be loaded:", error);
+  }
+}
+
+function renderChatPriorityBar() {
+  const { priorityBar } = getChatElements();
+  const items = chatState.priorityMessages;
+  priorityBar.classList.toggle("hidden", !items.length);
+  priorityBar.innerHTML = items.length ? `<div class="chat-priority-title">⚠ Prio <span>${items.length === 1 ? "1 meddelande" : `${items.length} meddelanden`}</span></div>${items.map(message => `
+    <div class="chat-priority-item">
+      <button type="button" class="chat-priority-text" data-priority-jump="${escapeHtml(message.id)}" title="Visa meddelandet"><strong>${escapeHtml(message.authorName)}:</strong> ${escapeHtml(message.text || "Bild")}</button>
+      ${canSetChatPriority() ? `<button type="button" class="chat-priority-remove" data-priority-remove="${escapeHtml(message.id)}" aria-label="Ta bort prio från meddelandet" title="Ta bort prio">×</button>` : ""}
+    </div>`).join("")}` : "";
+}
+
+async function setChatMessagePriority(id, on) {
+  try {
+    const { message } = await apiRequest("PUT", `/chat/messages/${encodeURIComponent(id)}/priority`, { priority: on });
+    const known = chatState.messages.find(item => item.id === id);
+    if (known) known.priority = message.priority;
+    showChatStatus(on ? "Meddelandet är fäst som prio för alla." : "Prio är borttagen.", "success");
+    setTimeout(() => { if (/^(Meddelandet är fäst|Prio är borttagen)/.test(getChatElements().status.textContent)) showChatStatus(""); }, 4000);
+    renderChatMessages();
+    await loadChatPriority();
+  } catch (error) {
+    showChatStatus(error.message || "Prio kunde inte ändras.");
+  }
+}
+
+// Scrolls to a message and lights it up briefly, under Alla if needed.
+function showChatMessage(id) {
+  if (chatState.tab !== "all" && !chatState.messages.find(item => item.id === id)?.recipientId) setChatTab("all");
+  const article = getChatElements().list.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
+  if (!article) { showChatStatus("Meddelandet är äldre än det som visas. Tryck Visa äldre meddelanden.", "error"); return; }
+  article.scrollIntoView({ block: "center", behavior: "smooth" });
+  article.classList.remove("is-flash");
+  void article.offsetWidth;
+  article.classList.add("is-flash");
 }
 
 async function deleteChatMessage(id) {
