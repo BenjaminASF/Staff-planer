@@ -2508,7 +2508,7 @@ function renderHelpPage() {
       ["Anteckningar", isAdmin()
         ? "Under Anteckningar delar du lappar med admin, skiftledare, höger hand och senior operatörer i alla skift, en och en eller hela gruppen. Operatörer har inte Anteckningar. Alla på en delad lapp kan kommentera den."
         : "Under Anteckningar delar du lappar med personer i ditt skift: admin, skiftledare, höger hand och senior operatörer, en och en eller hela gruppen. Operatörer har inte Anteckningar. Alla på en delad lapp kan kommentera den."],
-      ["Arbetsorder", "Under Anteckningar → Arbetsorder delar du upp ett jobb i uppgifter: skriv rubrik och beskrivning, välj vilka som ska arbeta med den och vem som ansvarar för varje uppgift. Alla som är med ser hela arbetsordern. Var och en bockar av sin egen uppgift, och när alla är klara kan arbetsordern markeras som slutförd."],
+      ["Arbetsorder", "Under Anteckningar → Arbetsorder delar du upp ett jobb i uppgifter: skriv rubrik och beskrivning, välj vilka som ska arbeta med den och vem som ansvarar för varje uppgift. Alla som är med ser hela arbetsordern. Var och en bockar av sin egen uppgift, och när alla är klara kan arbetsordern markeras som slutförd. Alla som är med kan skriva kommentarer."],
       ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas egna anteckningar är privata."],
       ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen. På iPhone: Dela → Lägg till på hemskärmen i Safari."],
       ["Pushnotiser", "Slå på pushnotiser under Min profil för notiser i telefonen om schemaändringar, chatt, anteckningar och viktiga uppdateringar. Admin kan stänga av dem för en användare under Hantera."]
@@ -9842,6 +9842,7 @@ function workOrderCardHtml(order) {
   const done = order.tasks.filter(task => task.done).length;
   const total = order.tasks.length;
   const mine = woMyOpenTasks(order).length;
+  const comments = (order.comments || []).length;
   const everyone = woEveryone(order);
   const shown = everyone.slice(0, 5);
   const label = `Arbetsorder: ${order.title}. ${WORK_STATUS[order.status]}. ${total ? `${done} av ${total} uppgifter klara` : "Inga uppgifter"}${mine ? `. ${woTaskCount(mine)} till dig` : ""}`;
@@ -9850,7 +9851,7 @@ function workOrderCardHtml(order) {
     <h3 class="wo-card-title">${escapeHtml(order.title)}</h3>
     ${order.description ? `<p class="wo-card-desc">${escapeHtml(order.description)}</p>` : ""}
     ${total ? `<div class="wo-progress" aria-hidden="true"><span style="width:${Math.round(done / total * 100)}%"></span></div>` : ""}
-    <div class="wo-card-foot"><span>${total ? `${done} av ${total} klara` : "Inga uppgifter"}</span><span class="sn-stack">${shown.map(person => noteAvatar(person.name, "sm")).join("")}${everyone.length > 5 ? `<span class="sn-av sm sn-more">+${everyone.length - 5}</span>` : ""}</span></div>
+    <div class="wo-card-foot"><span>${total ? `${done} av ${total} klara` : "Inga uppgifter"}</span>${comments ? `<span class="sn-comment-count wo-card-comments" title="${comments} ${comments === 1 ? "kommentar" : "kommentarer"}">${NOTE_COMMENT_ICON}${comments}</span>` : ""}<span class="sn-stack">${shown.map(person => noteAvatar(person.name, "sm")).join("")}${everyone.length > 5 ? `<span class="sn-av sm sn-more">+${everyone.length - 5}</span>` : ""}</span></div>
     <div class="wo-card-by">Skapad av ${escapeHtml(order.authorId === currentUser.id ? "dig" : order.authorName)} · ${noteAge(order.createdAt)}</div>
   </article>`;
 }
@@ -9996,6 +9997,14 @@ function workOrderHtml() {
       ${total ? `<ul class="wo-tasks">${order.tasks.map(task => workOrderTaskHtml(order, task, { isNew, editable })).join("")}</ul>` : `<span class="sn-hint">${editable ? "Dela upp arbetet i uppgifter och välj vem som ansvarar för varje." : "Arbetsordern har inga uppgifter."}</span>`}
       ${addTask}
     </section>`;
+  const comments = isNew ? "" : `<section class="wo-section wo-comments" aria-label="Kommentarer">
+      <div class="wo-section-head"><span class="sn-label">Kommentarer${order.comments.length ? ` · ${order.comments.length}` : ""}</span></div>
+      <div id="woComments">${workOrderCommentsHtml(order)}</div>
+      <form class="wo-comment-form" id="woCommentForm">
+        <textarea id="woCommentText" rows="2" maxlength="1000" placeholder="Skriv en kommentar om du vill…" aria-label="Kommentar">${escapeHtml(woState.open.commentDraft || "")}</textarea>
+        <button type="submit" class="sn-btn" id="woCommentSend"${(woState.open.commentDraft || "").trim() ? "" : " disabled"}>Skicka</button>
+      </form>
+    </section>`;
   let foot;
   if (confirm === "delete") {
     foot = `<div class="sn-confirm"><span>Ta bort arbetsordern för alla ${everyone.length}? Det går inte att ångra.</span><button type="button" class="sn-btn del" data-wo-act="yes-delete">Ta bort</button><button type="button" class="sn-btn" data-wo-act="no">Avbryt</button></div>`;
@@ -10014,7 +10023,33 @@ function workOrderHtml() {
       ${order.canReopen ? '<button type="button" class="sn-btn" data-wo-act="reopen">Öppna igen</button>' : ""}
       <button type="button" class="sn-btn" data-wo-act="close">Stäng</button>`;
   }
-  return `${head}<div class="wo-scroll">${title}${meta}${description}${people}${tasks}</div><div class="wo-foot">${foot}</div>`;
+  return `${head}<div class="wo-scroll">${title}${meta}${description}${people}${tasks}${comments}</div><div class="wo-foot">${foot}</div>`;
+}
+
+function workOrderCommentsHtml(order) {
+  const list = order.comments || [];
+  if (!list.length) return '<span class="sn-hint">Inga kommentarer än.</span>';
+  return `<ol class="sn-comment-list">${list.map(comment => `<li class="sn-comment">
+      ${noteAvatar(comment.authorName, "sm")}
+      <div class="sn-comment-body"><div class="sn-comment-head"><b>${escapeHtml(comment.authorId === currentUser.id ? `${comment.authorName} (du)` : comment.authorName)}</b><span>${escapeHtml(ROLE_LABELS[comment.authorRole] || "")} · <time datetime="${escapeHtml(comment.createdAt)}">${escapeHtml(woTime(comment.createdAt))}</time></span>
+        ${comment.canDelete ? `<button type="button" class="sn-comment-del" data-wo-comment-del="${escapeHtml(comment.id)}" aria-label="Ta bort kommentaren" title="Ta bort kommentaren">×</button>` : ""}</div>
+        <p>${escapeHtml(comment.text)}</p></div>
+    </li>`).join("")}</ol>`;
+}
+
+async function sendWorkOrderComment() {
+  const open = woState.open;
+  const text = (open?.commentDraft || "").trim();
+  if (!open || open.isNew || !text) return;
+  const button = document.getElementById("woCommentSend");
+  if (button) button.disabled = true;
+  const saved = await workOrderRequest("POST", `/${encodeURIComponent(open.order.id)}/comments`, { text }, "Kommentaren kunde inte sparas.");
+  if (!saved || !woState.open) return;
+  woState.open.commentDraft = "";
+  drawWorkOrder();
+  const input = document.getElementById("woCommentText");
+  document.querySelector("#woComments .sn-comment-list")?.lastElementChild?.scrollIntoView({ block: "nearest" });
+  input?.focus();
 }
 
 function drawWorkOrder() {
@@ -10022,7 +10057,7 @@ function drawWorkOrder() {
   if (!dialog || !woState.open) return;
   dialog.className = `wo-dialog ${woState.open.isNew ? "new" : woState.open.order.status}`;
   const focused = document.activeElement;
-  const typing = ["woTitle", "woDesc", "woTaskTitle"].includes(focused?.id) ? [focused.id, focused.selectionStart, focused.selectionEnd] : null;
+  const typing = ["woTitle", "woDesc", "woTaskTitle", "woCommentText"].includes(focused?.id) ? [focused.id, focused.selectionStart, focused.selectionEnd] : null;
   const scrollTop = dialog.querySelector(".wo-scroll")?.scrollTop || 0;
   dialog.innerHTML = workOrderHtml();
   const scroller = dialog.querySelector(".wo-scroll");
@@ -10045,9 +10080,16 @@ function showWorkOrder() {
     layer.addEventListener("input", event => { if (woState.open) handleWorkOrderInput(event); });
     layer.addEventListener("change", event => { if (woState.open) void handleWorkOrderChange(event); });
     layer.addEventListener("submit", event => {
+      if (event.target.id === "woCommentForm") { event.preventDefault(); void sendWorkOrderComment(); return; }
       if (event.target.id !== "woAddTask") return;
       event.preventDefault();
       void addWorkOrderTask();
+    });
+    layer.addEventListener("keydown", event => {
+      // Enter sends a comment; Shift+Enter starts a new line.
+      if (!woState.open || event.target.id !== "woCommentText" || event.key !== "Enter" || event.shiftKey || event.isComposing) return;
+      event.preventDefault();
+      void sendWorkOrderComment();
     });
   }
 }
@@ -10133,6 +10175,10 @@ function handleWorkOrderInput(event) {
     if (isNew) { const button = document.querySelector('[data-wo-act="create"]'); if (button) button.disabled = !(order.title.trim() && order.members.length); }
   } else if (event.target.id === "woDesc") {
     order.description = event.target.value;
+  } else if (event.target.id === "woCommentText") {
+    open.commentDraft = event.target.value;
+    const button = document.getElementById("woCommentSend");
+    if (button) button.disabled = !event.target.value.trim();
   } else if (event.target.id === "woTaskTitle") {
     open.taskDraft.title = event.target.value;
     const button = document.getElementById("woAddTaskBtn");
@@ -10195,6 +10241,12 @@ async function handleWorkOrderClick(event) {
     toggle.disabled = true;
     const saved = await workOrderRequest("PATCH", `/${encodeURIComponent(order.id)}/tasks/${encodeURIComponent(task.id)}`, { done }, "Uppgiften kunde inte sparas.");
     if (saved && done) showAppToast(saved.canComplete ? "Alla uppgifter är klara. Arbetsordern kan markeras som slutförd." : "Uppgiften är markerad som klar.");
+    return;
+  }
+  const commentDelete = event.target.closest("[data-wo-comment-del]");
+  if (commentDelete) {
+    if (!confirm("Vill du ta bort kommentaren?")) return;
+    await workOrderRequest("DELETE", `/${encodeURIComponent(order.id)}/comments/${encodeURIComponent(commentDelete.dataset.woCommentDel)}`, undefined, "Kommentaren kunde inte tas bort.");
     return;
   }
   const remove = event.target.closest("[data-wo-remove]");
@@ -10436,7 +10488,8 @@ const NOTIFICATION_HEADINGS = {
   workOrderAdded: "lade till dig på en arbetsorder",
   workOrderTask: "gav dig en uppgift i arbetsordern",
   workOrderReady: "klarade den sista uppgiften i",
-  workOrderCompleted: "markerade arbetsordern som slutförd"
+  workOrderCompleted: "markerade arbetsordern som slutförd",
+  workOrderComment: "kommenterade arbetsordern"
 };
 // Notes about the user's own schedule; the title says what changed.
 const PERSONAL_NOTIFICATION_KINDS = new Set(["scheduleChange", "placementChange"]);

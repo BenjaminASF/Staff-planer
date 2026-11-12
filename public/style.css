@@ -7770,6 +7770,14 @@ html.sn-locked, html.sn-locked body { overflow: hidden; overscroll-behavior: non
 .wo-dialog .sn-confirm { background: var(--bg); }
 .wo-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding-top: 14px; border-top: 1px solid var(--border); }
 .wo-left { color: var(--muted); font-size: 13px; }
+.wo-card-comments { margin-left: auto; color: var(--muted); }
+.wo-comments .sn-comment-head { color: var(--muted); }
+.wo-comments .sn-comment-head b { color: var(--text); }
+.wo-comments .sn-comment-del { color: var(--muted); }
+.wo-comments .sn-comment-del:hover { background: var(--bg); color: var(--text); }
+.wo-comment-form { display: flex; align-items: flex-end; gap: 8px; }
+.wo-comment-form textarea { flex: 1; min-width: 0; min-height: 44px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px; background: var(--card-bg); color: var(--text); font: inherit; font-size: 15px; font-weight: 400; line-height: 1.4; resize: vertical; }
+.wo-comment-form textarea:focus { border-color: var(--primary); outline: 2px solid color-mix(in srgb, var(--primary) 25%, transparent); outline-offset: 0; }
 .wo-complete { display: inline-flex; align-items: center; gap: 7px; background: #16a34a; }
 .wo-complete svg { width: 15px; height: 15px; }
 @media (max-width: 520px) {

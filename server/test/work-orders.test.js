@@ -185,6 +185,38 @@ describe("arbetsorder", () => {
     assert.equal((await leader.put(`${BASE}/${order.id}/status`, { status: "completed" })).status, 409);
   });
 
+  test("everyone on it writes comments, removes their own, and the others are told", async () => {
+    const order = await createOrder();
+    const url = `${BASE}/${order.id}/comments`;
+    assert.equal((await senior.post(url, { text: "   " })).status, 400, "an empty comment is refused");
+    const written = await senior.post(url, { text: "Filtren i förrådet är slut, jag beställer fler." });
+    assert.equal(written.status, 201);
+    const comment = written.data.workOrder.comments[0];
+    assert.equal(comment.text, "Filtren i förrådet är slut, jag beställer fler.");
+    assert.equal(comment.authorName, "Sara Senior");
+    assert.equal(comment.canDelete, true);
+    assert.ok(Date.now() - new Date(comment.createdAt).getTime() < 60000);
+
+    const seen = await orderOf(rightHand, order.id);
+    assert.equal(seen.comments.length, 1, "everyone on it sees the comment");
+    assert.equal(seen.comments[0].canDelete, false);
+    for (const client of [leader, rightHand]) {
+      const notice = (await notificationsOf(client)).find(item => item.workOrderId === order.id && item.kind === "workOrderComment");
+      assert.equal(notice.title, "Byt filter på linje 3");
+      assert.equal(notice.detail, "Filtren i förrådet är slut, jag beställer fler.");
+    }
+    assert.ok(!(await notificationsOf(senior)).some(item => item.workOrderId === order.id && item.kind === "workOrderComment"), "not the writer");
+    assert.equal((await admin.post(url, { text: "Hej" })).status, 404, "nobody outside it");
+
+    assert.equal((await leader.delete(`${url}/${comment.id}`)).status, 403, "only the writer removes it, the creator too");
+    assert.equal((await senior.delete(`${url}/${comment.id}`)).data.workOrder.comments.length, 0);
+
+    // A completed work order can still be commented on.
+    const small = await createOrder({ tasks: [] });
+    await leader.put(`${BASE}/${small.id}/status`, { status: "completed" });
+    assert.equal((await rightHand.post(`${BASE}/${small.id}/comments`, { text: "Snyggt jobbat!" })).status, 201);
+  });
+
   test("a work order without tasks can be completed at once", async () => {
     const order = await createOrder({ tasks: [] });
     assert.equal(order.canComplete, true);

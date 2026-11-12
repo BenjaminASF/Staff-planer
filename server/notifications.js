@@ -44,7 +44,7 @@ const NOT_A_CHANGE = new Set(["backup:Backup exporterad"]);
 // Each note is also sent as a push notification to the user's devices (see push.js).
 const PUSH_KINDS = Object.freeze({
   noteShared: "note", noteAdded: "note", noteComment: "noteComment", adminChange: "update",
-  workOrderAdded: "workOrder", workOrderTask: "workOrder", workOrderReady: "workOrderUpdate", workOrderCompleted: "workOrderCompleted"
+  workOrderAdded: "workOrder", workOrderTask: "workOrder", workOrderReady: "workOrderUpdate", workOrderCompleted: "workOrderCompleted", workOrderComment: "workOrderComment"
 });
 
 async function addNotifications(db, userIds, { kind, actorName = "", title = "", detail = "", noteId = null, workOrderId = null }) {

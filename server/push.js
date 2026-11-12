@@ -34,6 +34,7 @@ const KINDS = Object.freeze({
   workOrder: { url: ref => workOrderUrl(ref), text: () => "Du har fått en arbetsorder eller en uppgift." },
   workOrderUpdate: { interval: 120, url: ref => workOrderUrl(ref), text: () => "En arbetsorder du är med i har uppdaterats." },
   workOrderCompleted: { url: ref => workOrderUrl(ref), text: () => "En arbetsorder som du är med i är slutförd." },
+  workOrderComment: { interval: 120, url: ref => workOrderUrl(ref), text: () => "Det finns en ny kommentar på en arbetsorder." },
   update: { interval: 300, url: "index.html?notifications=1", text: () => "Det finns nya uppdateringar som berör dig." }
 });
 
@@ -318,7 +319,8 @@ async function stillRelevant(db, user, row) {
     }
     case "workOrder":
     case "workOrderUpdate":
-    case "workOrderCompleted": {
+    case "workOrderCompleted":
+    case "workOrderComment": {
       if (!canUseNotes(user)) return false;
       const { rows } = await db.query(
         `SELECT 1 FROM notifications x JOIN work_orders w ON w.id = x.work_order_id

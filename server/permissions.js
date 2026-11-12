@@ -48,6 +48,7 @@
 // description, people and tasks, and deletes it. The person responsible marks their own
 // task as done (the creator can too; a task without a person can be marked by anyone on
 // it). Anyone on it marks it Slutförd once every task is done; only the creator opens it again.
+// Everyone on it writes comments, also once it is Slutförd, and removes their own.
 //
 // Produktion: who last changed each field and wrote each comment is saved with it. Only
 // admins and shift leaders see who that was (see production.js).
@@ -436,6 +437,10 @@ function canReopenWorkOrder(user, order) {
   return canEditWorkOrder(user, order);
 }
 
+function canDeleteWorkOrderComment(user, comment) {
+  return Boolean(user?.id) && comment?.author_id === user.id;
+}
+
 function canManagePush(user) {
   return isAdmin(user);
 }
@@ -545,5 +550,6 @@ module.exports = {
   canPrioritizeNote,
   canEditWorkOrder,
   canMarkWorkOrderTask,
-  canReopenWorkOrder
+  canReopenWorkOrder,
+  canDeleteWorkOrderComment
 };

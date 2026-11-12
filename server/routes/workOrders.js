@@ -1,7 +1,7 @@
 const express = require("express");
 const { HttpError, requireUser } = require("../auth");
 const { withTransaction } = require("../db");
-const { canUseNotes, canShareNotes, canEditWorkOrder, canMarkWorkOrderTask, canReopenWorkOrder } = require("../permissions");
+const { canUseNotes, canShareNotes, canEditWorkOrder, canMarkWorkOrderTask, canReopenWorkOrder, canDeleteWorkOrderComment } = require("../permissions");
 const { addNotifications } = require("../notifications");
 const { newId, WORK_ORDER_VISIBLE_SQL } = require("../store");
 const { cleanText } = require("../validation");
@@ -15,6 +15,7 @@ const MAX_TITLE_LENGTH = 120;
 const MAX_DESCRIPTION_LENGTH = 2000;
 const MAX_TASK_LENGTH = 200;
 const MAX_TASKS = 50;
+const MAX_COMMENT_LENGTH = 1000;
 
 const STATUS = Object.freeze({ NOT_STARTED: "not_started", IN_PROGRESS: "in_progress", COMPLETED: "completed" });
 
@@ -41,6 +42,14 @@ const TASKS = `
    WHERE t.work_order_id = ANY($1::text[])
    ORDER BY t.position, t.created_at, t.id`;
 
+// The comments on the given work orders, oldest first.
+const COMMENTS = `
+  SELECT c.*, ${NAME("u", "p")} AS author_name, u.role AS author_role
+    FROM work_order_comments c
+    JOIN users u ON u.id = c.author_id LEFT JOIN people p ON p.id = u.person_id
+   WHERE c.work_order_id = ANY($1::text[])
+   ORDER BY c.created_at, c.id`;
+
 function statusOf(row) {
   if (row.completed_at) return STATUS.COMPLETED;
   return row.started_at ? STATUS.IN_PROGRESS : STATUS.NOT_STARTED;
@@ -59,10 +68,11 @@ async function loadWorkOrders(db, user, id = null) {
   );
   if (!rows.length) return [];
   const ids = rows.map(row => row.id);
-  const [members, tasks] = await Promise.all([db.query(MEMBERS, [ids]), db.query(TASKS, [ids])]);
+  const [members, tasks, comments] = await Promise.all([db.query(MEMBERS, [ids]), db.query(TASKS, [ids]), db.query(COMMENTS, [ids])]);
   const byOrder = list => list.reduce((map, row) => map.set(row.work_order_id, [...(map.get(row.work_order_id) || []), row]), new Map());
   const membersOf = byOrder(members.rows);
   const tasksOf = byOrder(tasks.rows);
+  const commentsOf = byOrder(comments.rows);
   return rows.map(row => {
     const status = statusOf(row);
     const open = status !== STATUS.COMPLETED;
@@ -92,6 +102,10 @@ async function loadWorkOrders(db, user, id = null) {
       completedByName: row.completed_at ? (row.completed_by ? row.completed_by_name : "Borttagen användare") : null,
       members: (membersOf.get(row.id) || []).map(person => ({ id: person.id, name: person.name, role: person.role })),
       tasks: list,
+      comments: (commentsOf.get(row.id) || []).map(comment => ({
+        id: comment.id, authorId: comment.author_id, authorName: comment.author_name, authorRole: comment.author_role,
+        text: comment.body, createdAt: comment.created_at, canDelete: canDeleteWorkOrderComment(user, comment)
+      })),
       canEdit: open && canEditWorkOrder(user, row),
       canDelete: canEditWorkOrder(user, row),
       canStart: status === STATUS.NOT_STARTED,
@@ -162,6 +176,15 @@ async function insertTask(db, orderId, title, assigneeId) {
     [newId(), orderId, title, assigneeId]
   );
 }
+
+function cleanCommentText(value) {
+  const text = cleanText(value, MAX_COMMENT_LENGTH + 1);
+  if (!text) throw new HttpError(400, "Skriv en kommentar.");
+  if (text.length > MAX_COMMENT_LENGTH) throw new HttpError(400, `En kommentar får vara högst ${MAX_COMMENT_LENGTH} tecken.`);
+  return text;
+}
+
+const snippet = text => text.length > 120 ? `${text.slice(0, 119)}…` : text;
 
 const taskCountText = count => `${count} ${count === 1 ? "uppgift" : "uppgifter"} till dig`;
 
@@ -351,6 +374,29 @@ function workOrderRoutes({ pool }) {
       return loadOne(db, req.user, current.id);
     });
     res.json({ workOrder: order });
+  });
+
+  // Comments: everyone on the work order writes them, also once it is Slutförd, and
+  // removes their own. The others on it hear about a new one.
+  router.post("/:id/comments", async (req, res) => {
+    const text = cleanCommentText(req.body?.text);
+    const order = await withTransaction(pool, async db => {
+      const current = await findWorkOrder(db, req.user, req.params.id, { lock: true });
+      await db.query("INSERT INTO work_order_comments (id, work_order_id, author_id, body) VALUES ($1, $2, $3, $4)", [newId(), current.id, req.user.id, text]);
+      const others = (await everyoneOn(db, current)).filter(id => id !== req.user.id);
+      await addNotifications(db, others, { kind: "workOrderComment", actorName: req.user.name, title: current.title, detail: snippet(text), workOrderId: current.id });
+      return loadOne(db, req.user, current.id);
+    });
+    res.status(201).json({ workOrder: order });
+  });
+
+  router.delete("/:id/comments/:commentId", async (req, res) => {
+    const current = await findWorkOrder(pool, req.user, req.params.id);
+    const { rows } = await pool.query("SELECT * FROM work_order_comments WHERE id = $1 AND work_order_id = $2", [String(req.params.commentId), current.id]);
+    if (!rows[0]) throw new HttpError(404, "Kommentaren finns inte.");
+    if (!canDeleteWorkOrderComment(req.user, rows[0])) throw new HttpError(403, "Bara den som skrev kommentaren kan ta bort den.");
+    await pool.query("DELETE FROM work_order_comments WHERE id = $1", [rows[0].id]);
+    res.json({ workOrder: await loadOne(pool, req.user, current.id) });
   });
 
   return router;
