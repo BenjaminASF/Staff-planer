@@ -271,7 +271,9 @@ async function stillRelevant(db, user, row) {
     case "chat": {
       if (!canUseChat(user) || !row.message_id) return false;
       const { rows } = await db.query(
-        `SELECT 1 FROM chat_messages m WHERE m.id = $2 AND m.recipient_id = $1 AND m.id > ${LAST_READ_CHAT}`,
+        `SELECT 1 FROM chat_messages m WHERE m.id = $2 AND m.recipient_id = $1
+            AND m.id > COALESCE((SELECT r.last_read_id FROM chat_private_reads r WHERE r.user_id = $1 AND r.partner_id = m.user_id),
+              (SELECT COALESCE(max(c.id), 0) FROM chat_messages c, users u WHERE u.id = $1 AND c.created_at < u.created_at))`,
         [user.id, row.message_id]
       );
       return rows.length > 0;

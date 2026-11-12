@@ -43,6 +43,22 @@ const handoverVisible = m => `(${m}handover IS NULL OR ${m}user_id = $1
 // the user may see. $1 is the user's id.
 const VISIBLE = `((recipient_id IS NULL OR recipient_id = $1 OR user_id = $1) AND ${handoverVisible("")})`;
 
+// Messages sent before the user's account existed count as read. $1 is the user's id.
+const ACCOUNT_BASELINE = "(SELECT COALESCE(max(c.id), 0) FROM chat_messages c, users uu WHERE uu.id = $1 AND c.created_at < uu.created_at)";
+// The newest message read to everyone (the Alla tab).
+const SEEN_EVERYONE = `COALESCE((SELECT last_read_id FROM chat_reads WHERE user_id = $1), ${ACCOUNT_BASELINE})`;
+// The newest message read in the private conversation with `partner` (an SQL expression).
+const seenPrivate = partner => `COALESCE((SELECT r.last_read_id FROM chat_private_reads r WHERE r.user_id = $1 AND r.partner_id = ${partner}), ${ACCOUNT_BASELINE})`;
+
+async function markPrivateRead(db, userId, partnerId, lastId) {
+  await db.query(
+    `INSERT INTO chat_private_reads (user_id, partner_id, last_read_id)
+     VALUES ($1, $2, LEAST($3::bigint, (SELECT COALESCE(max(id), 0) FROM chat_messages)))
+     ON CONFLICT (user_id, partner_id) DO UPDATE SET last_read_id = GREATEST(chat_private_reads.last_read_id, EXCLUDED.last_read_id)`,
+    [userId, partnerId, lastId]
+  );
+}
+
 function serializeMessage(row) {
   const id = String(row.id);
   return {
@@ -75,22 +91,68 @@ function chatRoutes({ pool }) {
   });
 
   // Newest page by default; ?before=<id> for older messages, ?after=<id> for new ones.
+  // ?scope=everyone gives only messages to everyone (the Alla tab), ?with=<user id> only
+  // the private conversation with that person. Without either, everything the user sees.
   router.get("/messages", async (req, res) => {
     const after = parseMessageId(req.query.after);
     const before = parseMessageId(req.query.before);
+    const partner = req.query.with ? String(req.query.with).slice(0, 100) : null;
+    const scope = partner
+      ? "AND recipient_id IS NOT NULL AND ((user_id = $1 AND recipient_id = $4) OR (user_id = $4 AND recipient_id = $1))"
+      : req.query.scope === "everyone" ? "AND recipient_id IS NULL" : "";
+    const extra = partner ? [partner] : [];
     let rows;
     if (after) {
-      ({ rows } = await pool.query(`SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE ${VISIBLE} AND id > $2 ORDER BY id LIMIT 200`, [req.user.id, after]));
+      ({ rows } = await pool.query(
+        `SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE ${VISIBLE} ${scope} AND id > $2 ORDER BY id LIMIT $3`,
+        [req.user.id, after, 200, ...extra]
+      ));
     } else {
       ({ rows } = await pool.query(
-        `SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE ${VISIBLE} AND ($2::bigint IS NULL OR id < $2) ORDER BY id DESC LIMIT $3`,
-        [req.user.id, before, PAGE_SIZE + 1]
+        `SELECT ${MESSAGE_COLUMNS} FROM chat_messages WHERE ${VISIBLE} ${scope} AND ($2::bigint IS NULL OR id < $2) ORDER BY id DESC LIMIT $3`,
+        [req.user.id, before, PAGE_SIZE + 1, ...extra]
       ));
       rows = rows.reverse();
     }
     const hasOlder = !after && rows.length > PAGE_SIZE;
     if (hasOlder) rows = rows.slice(1);
     res.json({ messages: rows.map(serializeMessage), hasOlder });
+  });
+
+  // The private conversations, newest first: the other person, the last message and how
+  // many of theirs are unread.
+  router.get("/conversations", async (req, res) => {
+    const { rows } = await pool.query(
+      `WITH mine AS (
+         SELECT m.id, m.user_id, m.recipient_id, m.author_name, m.recipient_name, m.body, m.image IS NOT NULL AS has_image, m.created_at,
+                CASE WHEN m.user_id = $1 THEN m.recipient_id ELSE m.user_id END AS partner
+           FROM chat_messages m WHERE m.recipient_id IS NOT NULL AND (m.user_id = $1 OR m.recipient_id = $1)
+       ), last AS (
+         SELECT DISTINCT ON (partner) * FROM mine WHERE partner IS NOT NULL ORDER BY partner, id DESC
+       )
+       SELECT l.partner, l.id, l.user_id, l.body, l.has_image, l.created_at,
+              COALESCE(p.name, CASE WHEN l.user_id = $1 THEN l.recipient_name ELSE l.author_name END) AS name,
+              u.role, p.shift_id,
+              (SELECT count(*)::int FROM mine x WHERE x.partner = l.partner AND x.user_id = l.partner AND x.id > ${seenPrivate("l.partner")}) AS unread
+         FROM last l LEFT JOIN users u ON u.id = l.partner LEFT JOIN people p ON p.id = u.person_id
+        ORDER BY l.id DESC`,
+      [req.user.id]
+    );
+    res.json({ conversations: rows.map(row => ({
+      partnerId: row.partner,
+      name: row.name,
+      role: row.role ?? null,
+      shiftId: row.shift_id ?? null,
+      unread: row.unread,
+      last: { id: String(row.id), text: row.body, hasImage: row.has_image, mine: row.user_id === req.user.id, createdAt: row.created_at }
+    })) });
+  });
+
+  router.post("/conversations/:partnerId/read", async (req, res) => {
+    const lastId = parseMessageId(req.body?.lastId);
+    if (!lastId) throw new HttpError(400, "Ogiltigt meddelande.");
+    await markPrivateRead(pool, req.user.id, String(req.params.partnerId).slice(0, 100), lastId);
+    res.json({ ok: true });
   });
 
   // The people a message can be sent to privately. Role and shift tell which of them
@@ -155,6 +217,7 @@ function chatRoutes({ pool }) {
       [req.user.id, req.user.name, recipient?.id ?? null, recipient?.name ?? null, text, image?.buffer ?? null, image?.type ?? null, priority]
     );
     // Your own message is never unread.
+    if (recipient) await markPrivateRead(pool, req.user.id, recipient.id, rows[0].id);
     await pool.query(
       `INSERT INTO chat_reads (user_id, last_read_id) VALUES ($1, $2)
        ON CONFLICT (user_id) DO UPDATE SET last_read_id = GREATEST(chat_reads.last_read_id, EXCLUDED.last_read_id)`,
@@ -211,18 +274,15 @@ function chatRoutes({ pool }) {
     res.json({ ok: true });
   });
 
-  // Unread messages from others. Before someone has opened the chat, only messages
-  // sent after their account was created count.
+  // Unread messages from others: to everyone after what was read under Alla, and private
+  // ones after what was read in each conversation. Messages from before the account count as read.
   router.get("/unread", async (req, res) => {
     const { rows } = await pool.query(
-      `WITH seen AS (
-         SELECT COALESCE((SELECT last_read_id FROM chat_reads WHERE user_id = $1),
-                         (SELECT COALESCE(max(m.id), 0) FROM chat_messages m, users u WHERE u.id = $1 AND m.created_at < u.created_at)) AS id
-       )
-       SELECT count(*)::int AS count, max(m.id) AS latest_id
-         FROM chat_messages m, seen
-        WHERE m.id > seen.id AND m.user_id IS DISTINCT FROM $1 AND (m.recipient_id IS NULL OR m.recipient_id = $1)
-          AND ${handoverVisible("m.")}`,
+      `SELECT count(*)::int AS count, max(m.id) AS latest_id
+         FROM chat_messages m
+        WHERE m.user_id IS DISTINCT FROM $1 AND ${handoverVisible("m.")}
+          AND ((m.recipient_id IS NULL AND m.id > ${SEEN_EVERYONE})
+            OR (m.recipient_id = $1 AND m.id > ${seenPrivate("m.user_id")}))`,
       [req.user.id]
     );
     let latest = null;
