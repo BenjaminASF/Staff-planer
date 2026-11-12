@@ -44,7 +44,7 @@ const NOT_A_CHANGE = new Set(["backup:Backup exporterad"]);
 // Each note is also sent as a push notification to the user's devices (see push.js).
 const PUSH_KINDS = Object.freeze({
   noteShared: "note", noteAdded: "note", noteComment: "noteComment", adminChange: "update",
-  workOrderAdded: "workOrder", workOrderTask: "workOrder", workOrderReady: "workOrderUpdate", workOrderCompleted: "workOrderUpdate"
+  workOrderAdded: "workOrder", workOrderTask: "workOrder", workOrderReady: "workOrderUpdate", workOrderCompleted: "workOrderCompleted"
 });
 
 async function addNotifications(db, userIds, { kind, actorName = "", title = "", detail = "", noteId = null, workOrderId = null }) {
@@ -61,7 +61,9 @@ async function addNotifications(db, userIds, { kind, actorName = "", title = "",
   }
   const pushKind = PUSH_KINDS[kind];
   const about = noteId || workOrderId;
-  if (pushKind) await queuePush(db, added, { kind: pushKind, key: about ? `${pushKind}:${about}` : pushKind });
+  // A notice about a work order opens that work order.
+  const ref = workOrderId ? { workOrderId } : {};
+  if (pushKind) await queuePush(db, added, { kind: pushKind, key: about ? `${pushKind}:${about}` : pushKind, ref });
   return recipients.length;
 }
 

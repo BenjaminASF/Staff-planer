@@ -252,12 +252,22 @@ function workOrderRoutes({ pool }) {
         requireOpen(current);
         const { rows } = await db.query("SELECT count(*)::int AS open FROM work_order_tasks WHERE work_order_id = $1 AND done_at IS NULL", [current.id]);
         if (rows[0].open) throw new HttpError(409, "Alla uppgifter måste vara klara innan arbetsordern kan markeras som slutförd.");
-        await db.query(
-          "UPDATE work_orders SET completed_at = now(), completed_by = $2, started_at = COALESCE(started_at, now()) WHERE id = $1",
+        const { rows: [done] } = await db.query(
+          `UPDATE work_orders SET completed_at = now(), completed_by = $2, started_at = COALESCE(started_at, now()),
+                  completion_notified_at = COALESCE(completion_notified_at, now())
+            WHERE id = $1 RETURNING completion_notified_at = completed_at AS first_time`,
           [current.id, req.user.id]
         );
-        const others = (await everyoneOn(db, current)).filter(id => id !== req.user.id);
-        await addNotifications(db, others, { kind: "workOrderCompleted", actorName: req.user.name, title: current.title, workOrderId: current.id });
+        // Everyone on it hears once that it is done, apart from the one who marked it: the
+        // first time only, not again after it was opened again and completed anew.
+        if (done.first_time) {
+          const { rows: [count] } = await db.query("SELECT count(*)::int AS tasks FROM work_order_tasks WHERE work_order_id = $1", [current.id]);
+          const others = (await everyoneOn(db, current)).filter(id => id !== req.user.id);
+          await addNotifications(db, others, {
+            kind: "workOrderCompleted", actorName: req.user.name, title: current.title, workOrderId: current.id,
+            detail: count.tasks === 1 ? "Uppgiften är klar" : count.tasks ? `Alla ${count.tasks} uppgifter är klara` : ""
+          });
+        }
       } else if (current.completed_at) {
         if (!canReopenWorkOrder(req.user, current)) throw new HttpError(403, "Bara den som skapade arbetsordern kan öppna den igen.");
         await db.query("UPDATE work_orders SET completed_at = NULL, completed_by = NULL WHERE id = $1", [current.id]);

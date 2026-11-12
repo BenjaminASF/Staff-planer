@@ -13,6 +13,11 @@ const { newId, readDocuments, currentWeekKey, isoWeekNumber, NOTE_VISIBLE_SQL, W
 // not turned push off for them. The text shown on the lock screen never contains
 // names or message contents; the app shows the details after sign-in.
 
+// A tap on a notice about a work order opens it. Only its id goes in the link.
+function workOrderUrl(ref) {
+  return typeof ref?.workOrderId === "string" ? `anteckningar.html?workorder=${encodeURIComponent(ref.workOrderId)}` : "anteckningar.html";
+}
+
 // What each kind of notice says and how often it may come.
 //   delay:    seconds to wait, so a burst of changes becomes one notice
 //   interval: at least this many seconds between two notices with the same key
@@ -26,8 +31,9 @@ const KINDS = Object.freeze({
   chatAll: { interval: 300, url: "index.html?chat=1", text: () => "Det finns nya meddelanden i chatten." },
   note: { url: "anteckningar.html", text: () => "En anteckning har delats med dig." },
   noteComment: { interval: 120, url: "anteckningar.html", text: () => "Det finns en ny kommentar på en anteckning." },
-  workOrder: { url: "anteckningar.html", text: () => "Du har fått en arbetsorder eller en uppgift." },
-  workOrderUpdate: { interval: 120, url: "anteckningar.html", text: () => "En arbetsorder du är med i har uppdaterats." },
+  workOrder: { url: ref => workOrderUrl(ref), text: () => "Du har fått en arbetsorder eller en uppgift." },
+  workOrderUpdate: { interval: 120, url: ref => workOrderUrl(ref), text: () => "En arbetsorder du är med i har uppdaterats." },
+  workOrderCompleted: { url: ref => workOrderUrl(ref), text: () => "En arbetsorder som du är med i är slutförd." },
   update: { interval: 300, url: "index.html?notifications=1", text: () => "Det finns nya uppdateringar som berör dig." }
 });
 
@@ -311,7 +317,8 @@ async function stillRelevant(db, user, row) {
       return rows.length > 0;
     }
     case "workOrder":
-    case "workOrderUpdate": {
+    case "workOrderUpdate":
+    case "workOrderCompleted": {
       if (!canUseNotes(user)) return false;
       const { rows } = await db.query(
         `SELECT 1 FROM notifications x JOIN work_orders w ON w.id = x.work_order_id
@@ -335,7 +342,8 @@ async function stillRelevant(db, user, row) {
 
 function payloadFor(row) {
   const config = KINDS[row.kind];
-  return JSON.stringify({ title: "Staff Planner", body: config.text(row.ref), url: config.url, tag: row.kind });
+  const url = typeof config.url === "function" ? config.url(row.ref) : config.url;
+  return JSON.stringify({ title: "Staff Planner", body: config.text(row.ref), url, tag: row.kind });
 }
 
 // Sends what is due in the background: soon after something is queued, and once a

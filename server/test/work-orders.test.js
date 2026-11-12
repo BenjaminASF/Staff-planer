@@ -157,6 +157,34 @@ describe("arbetsorder", () => {
     assert.equal((await leader.put(`${BASE}/${order.id}/status`, { status: "not_started" })).status, 400);
   });
 
+  test("Slutförd is announced once to everyone on it, and the notice leads to the work order", async () => {
+    const order = await createOrder();
+    for (const [client, task] of [[rightHand, 0], [senior, 1], [leader, 2]]) {
+      assert.equal((await client.patch(`${BASE}/${order.id}/tasks/${order.tasks[task].id}`, { done: true })).status, 200);
+    }
+    assert.equal((await senior.put(`${BASE}/${order.id}/status`, { status: "completed" })).status, 200);
+    const completedFor = async client => (await notificationsOf(client)).filter(item => item.workOrderId === order.id && item.kind === "workOrderCompleted");
+    for (const client of [leader, rightHand]) {
+      const notices = await completedFor(client);
+      assert.equal(notices.length, 1, "the creator and the people on it get one notice");
+      assert.equal(notices[0].title, "Byt filter på linje 3", "it names the work order");
+      assert.equal(notices[0].actorName, "Sara Senior");
+      assert.equal(notices[0].detail, "Alla 3 uppgifter är klara");
+      assert.equal(notices[0].workOrderId, order.id, "it links to the work order");
+    }
+    assert.equal((await completedFor(senior)).length, 0, "not the one who marked it");
+    assert.equal((await completedFor(admin)).length, 0, "nobody outside it");
+
+    // Opened again and completed anew: no second notice.
+    assert.equal((await leader.put(`${BASE}/${order.id}/status`, { status: "in_progress" })).status, 200);
+    assert.equal((await leader.put(`${BASE}/${order.id}/status`, { status: "completed" })).status, 200);
+    assert.equal((await completedFor(rightHand)).length, 1);
+    assert.equal((await completedFor(senior)).length, 0);
+    assert.equal((await completedFor(leader)).length, 1);
+    // Pressing it twice at once is refused the second time.
+    assert.equal((await leader.put(`${BASE}/${order.id}/status`, { status: "completed" })).status, 409);
+  });
+
   test("a work order without tasks can be completed at once", async () => {
     const order = await createOrder({ tasks: [] });
     assert.equal(order.canComplete, true);
