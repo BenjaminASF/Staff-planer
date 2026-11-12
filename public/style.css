@@ -7868,3 +7868,46 @@ html.sn-locked, html.sn-locked body { overflow: hidden; overscroll-behavior: non
 @media (max-width: 600px) {
   .chat-widget.is-open .chat-panel { border-radius: 20px; }
 }
+
+/* ---------- Chat: bold header and composer ----------
+   The header and tabs sit on one band in the accent color; the composer is a single
+   rounded bar with a round arrow button, as in today's messaging apps. */
+.chat-widget .chat-header { padding: 16px 14px 10px 18px; background: var(--chat-accent); color: var(--chat-accent-fg); }
+.chat-widget .chat-header strong { color: inherit; font-size: 21px; }
+.chat-widget .chat-people { display: flex; align-items: center; gap: 8px; margin-top: 4px; color: inherit; opacity: .9; font-size: 12px; font-weight: 600; }
+.chat-widget .chat-people-faces { display: flex; }
+.chat-widget .chat-people-faces:empty { display: none; }
+.chat-widget .chat-people-faces .chat-avatar { width: 22px; height: 22px; margin-left: -6px; font-size: 9px; box-shadow: 0 0 0 2px var(--chat-accent); }
+.chat-widget .chat-people-faces .chat-avatar:first-child { margin-left: 0; }
+.chat-widget .chat-header .chat-handover-open { background: color-mix(in srgb, var(--chat-accent-fg) 18%, transparent); color: var(--chat-accent-fg); }
+.chat-widget .chat-header .chat-handover-open:hover, .chat-widget .chat-header .chat-handover-open[aria-expanded="true"] { background: var(--chat-accent-fg); color: var(--chat-accent); }
+.chat-widget .chat-header .chat-close { color: var(--chat-accent-fg); }
+.chat-widget .chat-header .chat-close:hover { background: color-mix(in srgb, var(--chat-accent-fg) 18%, transparent); color: var(--chat-accent-fg); }
+.chat-widget .chat-tabs { margin: 0; padding: 0 14px 14px; border-radius: 0; background: var(--chat-accent); box-shadow: none; }
+.chat-widget .chat-tabs button { min-height: 34px; border-radius: 999px; background: color-mix(in srgb, var(--chat-accent-fg) 14%, transparent); color: var(--chat-accent-fg); }
+.chat-widget .chat-tabs button:hover { background: color-mix(in srgb, var(--chat-accent-fg) 24%, transparent); }
+.chat-widget .chat-tabs button[aria-selected="true"], .chat-widget .chat-tabs button[data-chat-tab="private"][aria-selected="true"] { background: var(--chat-accent-fg); color: var(--chat-accent); box-shadow: none; }
+.chat-widget .chat-tab-count { box-shadow: 0 0 0 2px var(--chat-accent); }
+.chat-widget .chat-priority-bar { margin: 10px 12px 0; }
+.chat-widget .chat-messages { border-top: 0; }
+.chat-widget .chat-panel.is-handover .chat-header { padding-bottom: 14px; }
+
+/* Your own messages: no "Du", only the time. */
+.chat-widget .chat-message.is-mine:not(.is-private) .chat-meta strong { display: none; }
+.chat-widget .chat-message.is-mine:not(.is-private) .chat-meta { justify-content: flex-end; }
+
+/* One rounded bar: picture, text, priority and a round arrow. */
+.chat-widget .chat-form { padding: 10px 12px 14px; }
+.chat-widget .chat-input-row { align-items: center; gap: 2px; padding: 4px; border-radius: 26px; background: var(--chat-canvas); box-shadow: inset 0 0 0 1px var(--chat-border); transition: box-shadow .15s ease, background .15s ease; }
+.chat-widget .chat-input-row:focus-within { background: var(--chat-surface); box-shadow: inset 0 0 0 1.5px var(--chat-accent), 0 0 0 4px color-mix(in srgb, var(--chat-accent) 16%, transparent); }
+.chat-widget .chat-input-row textarea, .chat-widget .chat-input-row textarea:focus { min-height: 40px; padding: 10px 8px; border: 0; background: transparent; box-shadow: none; outline: none; }
+.chat-widget .chat-attach, .chat-widget .chat-priority-toggle { min-height: 40px; height: 40px; background: transparent; box-shadow: none; }
+.chat-widget .chat-attach { width: 40px; }
+.chat-widget .chat-attach:hover, .chat-widget .chat-priority-toggle:hover { background: color-mix(in srgb, var(--chat-text) 6%, transparent); }
+.chat-widget .chat-priority-toggle { padding: 0 10px; }
+.chat-widget .chat-form .chat-send.btn.primary { display: grid; width: 42px; min-width: 42px; height: 42px; min-height: 42px; padding: 0; place-items: center; border-radius: 50%; }
+.chat-widget .chat-form .chat-send.btn.primary svg { display: block; }
+.chat-widget .chat-to select { background-color: var(--chat-surface); }
+.chat-widget .chat-header small.chat-people { color: var(--chat-accent-fg); opacity: .92; }
+.chat-widget .chat-people-faces .chat-avatar { width: 24px; height: 24px; margin-left: -4px; font-size: 9.5px; }
+.chat-widget .chat-row > .chat-message:has(> .chat-delete) { padding-right: 32px; }

@@ -8542,6 +8542,7 @@ const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="n
 const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "", tab: "all", priorityMessages: [], priorityDraft: false };
 
 const chatMessageId = message => BigInt(message?.id || 0);
+const CHAT_SEND_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>';
 
 function getChatElements() {
   const widget = document.getElementById("chatWidget");
@@ -8575,7 +8576,7 @@ function setupChat() {
   widget.innerHTML = `
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
-      <header class="chat-header"><div><strong>Chatt</strong><small>Välj i listan Till vem du skriver till</small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
+      <header class="chat-header"><div class="chat-title"><strong>Chatt</strong><small class="chat-people"><span class="chat-people-faces" aria-hidden="true"></span><span class="chat-people-count">Välj i listan Till vem du skriver till</span></small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
       <div class="chat-tabs" role="tablist" aria-label="Visa"><button type="button" role="tab" data-chat-tab="all" aria-selected="true">Alla</button><button type="button" role="tab" data-chat-tab="private" aria-selected="false" tabindex="-1">Privat<span class="chat-tab-count hidden"></span></button></div>
       <section class="chat-priority-bar hidden" aria-label="Prio"></section>
       <form class="chat-handover hidden" aria-label="Överlämning" novalidate></form>
@@ -8590,7 +8591,7 @@ function setupChat() {
           <label class="chat-attach" title="Bifoga bild">${CHAT_IMAGE_ICON}<span class="visually-hidden">Bifoga bild</span><input type="file" accept="image/*" hidden /></label>
           <textarea rows="1" maxlength="2000" placeholder="Skriv till alla…" aria-label="Meddelande"></textarea>
           ${canSetChatPriority() ? '<button type="button" class="chat-priority-toggle" aria-pressed="false" title="Skicka som prio: fästs överst i chatten för alla">⚠ Prio</button>' : ""}
-          <button class="btn primary chat-send" type="submit">Skicka</button>
+          <button class="btn primary chat-send" type="submit" aria-label="Skicka till alla" title="Skicka till alla">${CHAT_SEND_ICON}</button>
         </div>
       </form>
     </section>
@@ -10291,7 +10292,10 @@ function updateChatRecipientHint() {
     toggle.title = member ? "Prio gäller meddelanden till alla" : "Skicka som prio: fästs överst i chatten för alla";
   }
   form.classList.toggle("is-priority", chatState.priorityDraft);
-  send.textContent = member ? "Skicka privat" : chatState.priorityDraft ? "Skicka prio" : "Skicka";
+  // The send button is a round arrow; its name says what kind of message goes out.
+  const sendLabel = member ? `Skicka privat till ${member.name}` : chatState.priorityDraft ? "Skicka som prio till alla" : "Skicka till alla";
+  send.setAttribute("aria-label", sendLabel);
+  send.title = sendLabel;
   if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : chatState.tab === "private" ? "Välj först en person i listan Till…" : "Skriv till alla…";
   renderChatRecipientOptions();
 }
@@ -10312,6 +10316,19 @@ function renderChatRecipientOptions() {
     `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}${ROLE_LABELS[member.role] ? ` · ${escapeHtml(ROLE_LABELS[member.role])}` : ""}</option>`).join("")}</optgroup>`).join("");
   to.value = chatState.recipient?.id || "";
   to.closest(".chat-to").classList.toggle("is-private", Boolean(chatState.recipient));
+  renderChatPeople();
+}
+
+// The header: a few faces and how many are in the chat, yourself included.
+function renderChatPeople() {
+  const { widget } = getChatElements();
+  if (!chatState.members.length) return;
+  const faces = chatState.members.slice(0, 4).map(member => {
+    const color = getShiftColor(member.shiftId);
+    return `<span class="chat-avatar${color ? ` shift-color-${color}` : ""}">${escapeHtml(chatInitials(member.name))}</span>`;
+  }).join("");
+  widget.querySelector(".chat-people-faces").innerHTML = faces;
+  widget.querySelector(".chat-people-count").textContent = `${chatState.members.length + 1} personer i chatten`;
 }
 
 // The @word just before the cursor, if any: "@" at the start or after a space.
