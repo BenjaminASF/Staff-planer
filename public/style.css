@@ -7572,8 +7572,12 @@ span.sn-prio { cursor: default; }
 .sn-stack .sn-av:first-child { margin-left: 0; }
 .sn-stack .sn-more { background: rgba(0, 0, 0, .18); color: var(--sn-ink); }
 
-.sn-scrim, .sn-sheet-scrim { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center;
+/* The fixed rows and columns give the opened note and the share sheet a definite size to
+   shrink to, so max-height: 100% applies and long notes scroll inside instead of running
+   off the bottom of the screen with Ta bort and Stäng out of reach. */
+.sn-scrim, .sn-sheet-scrim { position: fixed; inset: 0; z-index: 1200; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center; overscroll-behavior: contain;
   padding: max(20px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(20px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+html.sn-locked, html.sn-locked body { overflow: hidden; overscroll-behavior: none; }
 .sn-scrim { background: rgba(15, 23, 42, .38); backdrop-filter: blur(3px); -webkit-backdrop-filter: blur(3px); }
 .sn-scrim.fade-in { animation: sn-fade .22s ease-out; }
 .sn-scrim.fade-out { animation: sn-fade .22s ease-in reverse both; }
@@ -7581,14 +7585,16 @@ span.sn-prio { cursor: default; }
 .sn-big { position: relative; display: flex; flex-direction: column; gap: 14px; width: min(560px, 100%); max-height: 100%; padding: 34px 26px 20px; color: var(--sn-ink); font-family: var(--sn-font);
   background-color: var(--sn-paper); background-image: linear-gradient(170deg, rgba(255, 255, 255, .5), rgba(255, 255, 255, 0) 40%);
   border-radius: 4px 4px 22px 4px / 4px 4px 16px 4px; box-shadow: 0 2px 2px rgba(0, 0, 0, .08), 0 40px 70px -20px rgba(0, 0, 0, .45); transform-origin: top left; transition: background-color .25s; }
-.sn-big-scroll { display: grid; gap: 14px; min-height: 0; margin: 0 -8px; padding: 0 8px 2px; overflow-y: auto; }
+.sn-big-scroll { display: grid; flex: 0 1 auto; gap: 14px; min-height: 0; margin: 0 -8px; padding: 0 8px 2px; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .sn-big-head { display: flex; align-items: center; gap: 10px; }
 .sn-who { display: grid; min-width: 0; color: var(--sn-ink-soft); font-size: 13px; }
 .sn-who b { color: var(--sn-ink); font-size: 14px; }
 .sn-close { flex: none; width: 34px; height: 34px; margin-left: auto; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .07); color: var(--sn-ink); font-size: 20px; line-height: 1; cursor: pointer; }
 .sn-close:hover { background: rgba(0, 0, 0, .13); }
-.sn-big textarea { width: 100%; min-height: 190px; padding: 0; border: 0; outline: none; resize: vertical; color: var(--sn-ink); font: 400 19px/1.5 var(--sn-font);
+/* The text box grows with its text (sizeNoteText in app.js), so the note has one scroll area, not a box inside a box. */
+.sn-big textarea { width: 100%; min-height: 190px; padding: 0; border: 0; outline: none; resize: none; color: var(--sn-ink); font: 400 19px/1.5 var(--sn-font);
   background: transparent; background-image: repeating-linear-gradient(to bottom, transparent 0 27.5px, rgba(0, 0, 0, .07) 27.5px 28.5px); background-attachment: local; }
+#notesText { overflow: hidden; }
 .sn-big textarea::placeholder { color: var(--sn-ink-soft); }
 .sn-readonly { min-height: 100px; margin: 0; font-size: 19px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .sn-big.done .sn-readonly, .sn-big.done textarea { opacity: .6; }
@@ -7638,7 +7644,7 @@ span.sn-prio { cursor: default; }
 .sn-chips { display: flex; align-items: center; gap: 6px; min-height: 46px; padding: 8px 16px; overflow-x: auto; border-bottom: 1px solid var(--border); }
 .sn-chips .sn-hint { color: var(--muted); white-space: nowrap; }
 .sn-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px 2px 2px; border: 0; border-radius: 999px; background: var(--primary-soft); color: var(--primary); font: inherit; font-size: 13px; font-weight: 700; white-space: nowrap; cursor: pointer; }
-.sn-sheet-body { padding: 4px 8px 8px; overflow-y: auto; }
+.sn-sheet-body { padding: 4px 8px 8px; overflow-y: auto; overscroll-behavior: contain; }
 .sn-grp-head { position: sticky; top: 0; z-index: 1; padding: 10px 8px 6px; background: var(--card-bg); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
 .sn-prow { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 12px; cursor: pointer; }
 .sn-prow:hover { background: var(--bg); }
