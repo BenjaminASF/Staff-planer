@@ -2,6 +2,7 @@ const { describe, test, before, after } = require("node:test");
 const assert = require("node:assert/strict");
 const { startTestServer, SETUP_CODE } = require("./helpers");
 const { productionRetentionStart, purgeExpiredProductionRecords } = require("../store");
+const { applyProductionChanges } = require("../production");
 
 const PASSWORD = "losenord123";
 const day = date => ({ date, target: 160, total: 100, machines: {} });
@@ -38,5 +39,25 @@ describe("monthly production reset", () => {
 
     await purgeExpiredProductionRecords(server.pool, new Date("2026-11-10T06:00:00Z"));
     assert.deepEqual(Object.keys(await read()), ["2026-11-03"]);
+  });
+});
+
+describe("comments chosen for the handover", () => {
+  const base = { date: "2026-11-12", userId: "u1", editableDates: ["2026-11-12"], personNames: new Map() };
+
+  test("a machine's comment is marked for the handover, and the mark is taken away again", () => {
+    const marked = applyProductionChanges({}, { ...base, changes: { machines: { GD1: { comment: "Utbildning: Kim", handover: true } } } });
+    assert.equal(marked["2026-11-12"].machines.GD1.handover, true);
+    const unmarked = applyProductionChanges(marked, { ...base, changes: { machines: { GD1: { handover: false } } } });
+    assert.equal(unmarked["2026-11-12"].machines.GD1.handover, false);
+    assert.equal(unmarked["2026-11-12"].machines.GD1.comment, "Utbildning: Kim", "the comment stays");
+    assert.equal(applyProductionChanges(unmarked, { ...base, changes: { machines: { GD1: { handover: false } } } }), null, "nothing changed");
+  });
+
+  test("senior operators mark their comments too; anything but true is no mark", () => {
+    const records = applyProductionChanges({}, { ...base, seniorOnly: true, changes: { machines: { GD2: { comment: "Stopp 20 min", handover: "ja" } } } });
+    assert.equal(records["2026-11-12"].machines.GD2.handover, false);
+    const marked = applyProductionChanges(records, { ...base, seniorOnly: true, changes: { machines: { GD2: { handover: true } } } });
+    assert.equal(marked["2026-11-12"].machines.GD2.handover, true);
   });
 });

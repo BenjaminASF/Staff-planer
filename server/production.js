@@ -1,6 +1,7 @@
 // The production page keeps each shift's days in the "productionRecords" document:
 // { "<date>": { date, target, total, updatedAt, machines: { "<machine>": { personId,
-// personName, cans, result, waste, plusMinus, comment, commentBy, commentAt, edits } } } }.
+// personName, cans, result, waste, plusMinus, comment, handover, commentBy, commentAt, edits } } } }.
+// `handover` is true when the machine's comment should go with the shift's handover in the chat.
 //
 // The page saves only the fields someone changed (applyProductionChanges), so two people
 // working on the same day never overwrite each other's fields with what their page showed
@@ -14,8 +15,8 @@ const { HttpError } = require("./auth");
 const { canSeeCommentAuthors } = require("./permissions");
 
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-const FIELDS = ["personId", "cans", "result", "waste", "plusMinus", "comment"];
-const SENIOR_FIELDS = ["waste", "plusMinus", "comment"];
+const FIELDS = ["personId", "cans", "result", "waste", "plusMinus", "comment", "handover"];
+const SENIOR_FIELDS = ["waste", "plusMinus", "comment", "handover"];
 const MAX_COMMENT_LENGTH = 1000;
 const MAX_MACHINES = 50;
 const AUTHOR_FIELDS = ["commentBy", "commentAt", "commentByName"];
@@ -50,6 +51,7 @@ function cleanField(field, value) {
     }
     case "result": return nonNegative(value, "Ange resultatet som ett tal som är 0 eller mer.");
     case "comment": return String(value ?? "").trim().slice(0, MAX_COMMENT_LENGTH);
+    case "handover": return value === true;
     default: return nonNegative(value, "Ange svinn som ett tal som är 0 eller mer.");
   }
 }
@@ -57,6 +59,7 @@ function cleanField(field, value) {
 // Stored values compared the way the page shows them: a missing number is 0, missing dosor none.
 function sameField(field, first, second) {
   if (field === "personId" || field === "comment") return String(first ?? "") === String(second ?? "");
+  if (field === "handover") return Boolean(first) === Boolean(second);
   if (field === "cans") return (first ?? null) === (second ?? null) || (first === "" && second === null) || (first === null && second === "");
   return (Number(first) || 0) === (Number(second) || 0);
 }
