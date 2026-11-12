@@ -8007,3 +8007,10 @@ html.sn-locked, html.sn-locked body { overflow: hidden; overscroll-behavior: non
 .chat-widget .chat-header small.chat-people { color: var(--chat-accent-fg); opacity: .92; }
 .chat-widget .chat-people-faces .chat-avatar { width: 24px; height: 24px; margin-left: -4px; font-size: 9.5px; }
 .chat-widget .chat-row > .chat-message:has(> .chat-delete) { padding-right: 32px; }
+/* The chat's lists have no arrow: the browser's own (a double arrow on Mac and iPhone) is removed. */
+/* Also under Privat and with a person chosen, and in Safari on Mac and iPhone. */
+.chat-widget .chat-to select, .chat-widget .chat-to.is-private select, .chat-widget .chat-handover select {
+  appearance: none !important; -webkit-appearance: none !important; -moz-appearance: none !important;
+  padding-right: 12px; background-image: none !important;
+}
+.chat-widget .chat-to select::-ms-expand, .chat-widget .chat-handover select::-ms-expand { display: none; }
