@@ -30,6 +30,8 @@ Rollerna har fyra nivåer: **Admin** (högst), **Skiftledare**, **Höger hand** 
 | Egna anteckningar på anslagstavlan (**Anteckningar → Mina anteckningar**) | ✓ | ✓ | ✓ | ✓ | |
 | Dela anteckningar med utvalda personer (**Gruppens anteckningar**) | Alla skift | Eget skift | Eget skift | Alla skift | |
 | Kommentera delade anteckningar som man är med på | ✓ | ✓ | ✓ | ✓ | |
+| Skapa arbetsorder (**Anteckningar → Arbetsorder**) med utvalda personer | Alla skift | Eget skift | Eget skift | Alla skift | |
+| Markera sin egen uppgift i en arbetsorder som klar | ✓ | ✓ | ✓ | ✓ | |
 | Ta bort personal och användare, ändra roller | ✓ | | | | |
 | Skapa och ta bort skift, backup och import | ✓ | | | | |
 | Exportera backup av sitt eget skift (**Översikt → Backup av skiftet**) | | ✓ | | | |
@@ -80,6 +82,18 @@ Operatörer ser en veckas schema och rastplan först när admin eller skiftledar
 - **Ändra**: bara den som skrev lappen ändrar text, färg och mottagare och tar bort den. De andra på lappen kommenterar. Var och en markerar själv en lapp som **klar**.
 - **Prioritet**: flaggan uppe till vänster markerar lappen som prioriterad. Markeringen syns för alla som ser lappen och kan ändras av den som skrev den, och av admin på delade lappar som admin ser. Med **Sortera: Prioritet först** (standard) ligger prioriterade lappar överst. Där finns också **Nyaste först** och **Äldsta först**.
 - Lapparna dras dit man vill och storleken ändras i hörnet. Placeringen sparas för varje användare och sortering, och **Ordna lapparna** lägger dem i kolumner igen. På mobilen visas lapparna i en enkel lista.
+
+#### Arbetsorder
+
+**Arbetsorder** är en egen flik under Anteckningar och en egen typ, helt skild från lapparna: arbetsorder syns aldrig bland anteckningarna och tvärtom. Siffran på fliken visar hur många uppgifter som väntar på en själv.
+
+- **Skapa**: med **Ny arbetsorder** skriver man en rubrik och en beskrivning av vad som ska göras, väljer med **Lägg till personer** vilka som ska arbeta med den (samma personer som man kan dela anteckningar med, alltså inte operatörer) och delar upp arbetet i **uppgifter**. Varje uppgift får en ansvarig person bland dem som är med, eller ingen.
+- **Vem ser vad**: alla som är med ser hela arbetsordern, alla uppgifter och vem som ansvarar för varje. Den som inte är med ser den inte, inte heller admin. Det syns vem som skapade arbetsordern.
+- **Klar**: den som ansvarar för en uppgift bockar själv av den. Skaparen kan också bocka av, och en uppgift utan ansvarig kan bockas av av alla som är med. Det sparas och syns vem som markerade uppgiften som klar och när. Klara uppgifter är överstrukna, och en mätare visar hur många som är klara.
+- **Status**: **Ej påbörjad** tills någon trycker **Påbörja** eller bockar av den första uppgiften, sedan **Pågår**. När alla uppgifter är klara kan alla som är med trycka **Markera som slutförd**, och arbetsordern blir **Slutförd**. Det syns vem som slutförde den och när. En slutförd arbetsorder är låst; bara skaparen kan **Öppna igen**.
+- **Ändra**: bara skaparen ändrar rubrik, beskrivning, personer och uppgifter och tar bort arbetsordern. Den som tas bort från en arbetsorder förlorar den och dess notiser, och hens uppgifter blir utan ansvarig.
+- **Notiser** (även push): när man läggs till på en arbetsorder eller får en uppgift, till skaparen när den sista uppgiften blir klar, och till alla som är med när arbetsordern slutförs. Ett klick på notisen öppnar arbetsordern.
+- Samma rollregler som för anteckningar gäller varje gång arbetsorder visas: den som blir operatör förlorar dem, och arbetsorder som en operatör har skapat syns inte för någon.
 
 **Anteckningar** ersätter den tidigare listan **Att göra**. Uppgifter som inte var klara flyttades till ägarens **Mina anteckningar**, och gamla länkar till Att göra leder hit.
 
@@ -209,6 +223,7 @@ Klockan uppe till höger visar korta notiser, med en röd siffra för olästa:
 - **Skiftledare** får en notis när en admin ändrar något i deras skift (till exempel schemat, personal eller någons status) eller i gemensamma inställningar och maskiner. Notisen säger vem som ändrade och vad.
 - **Den vars eget schema ändras** får en notis, oavsett vem som gjorde ändringen: när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), och när man flyttas till ett annat skift. Andra får ingen notis om det. Flera ändringar i samma vecka blir en enda notis så länge den inte är läst. Höger hand och operatörer får inga notiser om andra ändringar.
 - **Alla som får en anteckning delad** får en notis med lappens text och vem som delade den. Alla på en delad lapp får en notis när någon annan kommenterar den. Ett klick på notisen öppnar lappen under **Anteckningar**. En notis om en lapp man inte längre får se visas inte.
+- **Arbetsorder**: den som läggs till på en arbetsorder eller får en uppgift får en notis. Skaparen får en notis när den sista uppgiften är klar, och alla som är med när arbetsordern slutförs. Ett klick öppnar arbetsordern.
 
 Nya notiser syns direkt med en kort ruta och ett ljud. När man öppnar listan räknas notiserna som lästa, och **Rensa alla** tar bort dem. Notiser äldre än 30 dagar tas bort automatiskt.
 
@@ -219,6 +234,7 @@ Pushnotiser når telefonen eller datorn även när Staff Planner är stängd. De
 - **Schema och placering:** när ens egen plats, utbildning, extra plats eller rast i en vecka ändras (för operatörer bara i veckor som delats med dem), när ens skift delar en ny vecka (operatörer), och när man flyttas till ett annat skift. Flera ändringar i samma vecka inom två minuter blir en enda notis.
 - **Chatt** (admin, skiftledare, höger hand och senior operatörer): privata meddelanden, överlämningar till en själv och prio-meddelanden direkt; meddelanden till alla samlas i högst en notis var femte minut.
 - **Anteckningar:** när en lapp delas med en, och när någon kommenterar en lapp man är med på (högst en notis per lapp varannan minut).
+- **Arbetsorder:** när man läggs till på en arbetsorder eller får en uppgift, och när en arbetsorder man är med i blir klar eller slutförd (högst en per arbetsorder varannan minut).
 - **Viktiga uppdateringar** (skiftledare): samma som notiserna i appen om admins ändringar, högst en var femte minut.
 
 Notisen visar bara en kort text som "Ditt schema för vecka 45 har ändrats", aldrig namn eller meddelandetext, och ett tryck på den öppnar rätt sida. Precis innan varje notis skickas kontrollerar servern att personen fortfarande får se det notisen gäller. Chattmeddelanden och notiser som redan har lästs i appen ger ingen pushnotis. Notiser som inte hunnit skickas inom en timme slängs, så ingen får gamla händelser i efterhand.

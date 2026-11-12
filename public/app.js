@@ -2493,7 +2493,7 @@ function renderHelpPage() {
     ? [
       ["Se ditt schema", "Under Schema ser du ditt skifts veckoschema. Dina egna placeringar är markerade."],
       ["Rast", "Under Rast ser du dagens rastgrupper och tider."],
-      ...(isSeniorOperator() && canOpenPage("anteckningar.html") ? [["Anteckningar", "Under Anteckningar har du egna lappar och kan dela lappar med admin, skiftledare, höger hand och andra senior operatörer i alla skift, en och en eller hela gruppen. Alla på en delad lapp kan kommentera den."]] : []),
+      ...(isSeniorOperator() && canOpenPage("anteckningar.html") ? [["Anteckningar", "Under Anteckningar har du egna lappar och kan dela lappar med admin, skiftledare, höger hand och andra senior operatörer i alla skift, en och en eller hela gruppen. Alla på en delad lapp kan kommentera den. Under fliken Arbetsorder ser du arbetsorder du är med i och bockar av dina egna uppgifter."]] : []),
       ["Ledig eller borta?", "Öppna Min profil och ändra din status till Ledig. Skiftledaren ser ändringen direkt."],
       currentUser.viaMicrosoft
         ? ["Inloggning", "Du loggar in med ditt Microsoft-konto och behöver inget eget lösenord i Staff Planner."]
@@ -2508,6 +2508,7 @@ function renderHelpPage() {
       ["Anteckningar", isAdmin()
         ? "Under Anteckningar delar du lappar med admin, skiftledare, höger hand och senior operatörer i alla skift, en och en eller hela gruppen. Operatörer har inte Anteckningar. Alla på en delad lapp kan kommentera den."
         : "Under Anteckningar delar du lappar med personer i ditt skift: admin, skiftledare, höger hand och senior operatörer, en och en eller hela gruppen. Operatörer har inte Anteckningar. Alla på en delad lapp kan kommentera den."],
+      ["Arbetsorder", "Under Anteckningar → Arbetsorder delar du upp ett jobb i uppgifter: skriv rubrik och beskrivning, välj vilka som ska arbeta med den och vem som ansvarar för varje uppgift. Alla som är med ser hela arbetsordern. Var och en bockar av sin egen uppgift, och när alla är klara kan arbetsordern markeras som slutförd."],
       ["Roller", "Rollerna har nivåer: Admin, Skiftledare, Höger hand och Operatör. Admin kan allt. Skiftledare sköter sitt eget skift, testar och bedömer operatörerna och kan göra en operatör till Höger hand eller ta bort rollen igen. Höger hand hjälper skiftledaren i det egna skiftet men ändrar inte det dagliga målet. Ingen kan ändra uppgifter eller roll för någon på samma eller högre nivå. Allas egna anteckningar är privata."],
       ["Installera", "I webbläsarens meny kan appen installeras på datorn eller mobilen. På iPhone: Dela → Lägg till på hemskärmen i Safari."],
       ["Pushnotiser", "Slå på pushnotiser under Min profil för notiser i telefonen om schemaändringar, chatt, anteckningar och viktiga uppdateringar. Admin kan stänga av dem för en användare under Hantera."]
@@ -8780,7 +8781,7 @@ const notesState = {
 
 const notesBoard = () => document.getElementById("notesBoard");
 const notesSortMode = () => getPreference("notesSort", "priority");
-const notesTab = () => sessionStorage.getItem(NOTES_TAB_KEY) === "mine" ? "mine" : "group";
+const notesTab = () => ({ mine: "mine", work: "work" })[sessionStorage.getItem(NOTES_TAB_KEY)] || "group";
 const noteHash = id => [...String(id)].reduce((sum, char) => (sum * 31 + char.charCodeAt(0)) >>> 0, 7);
 const noteTilt = note => NOTE_TILTS[noteHash(note.id) % NOTE_TILTS.length];
 const noteDecoration = note => noteHash(note.id) % 3 === 1 ? "pin" : "tape";
@@ -8861,6 +8862,7 @@ function setupNotesPage() {
   // The opened note and "Dela med" cover the whole window, outside the page's own layers.
   ["notesLayer", "notesSheetLayer"].forEach(id => { const layer = document.getElementById(id); if (layer) document.body.appendChild(layer); });
   bindNotesBoard(board);
+  bindWorkOrderBoard(board);
   document.getElementById("notesSort").value = notesSortMode();
   document.addEventListener("click", handleNotesClick);
   document.getElementById("notesSort").addEventListener("change", event => {
@@ -8871,6 +8873,7 @@ function setupNotesPage() {
     if (event.key !== "Escape") return;
     const sheet = document.getElementById("notesSheetLayer");
     if (sheet?.innerHTML) { sheet.innerHTML = ""; return; }
+    if (woState.open) { void tryCloseWorkOrder(); return; }
     if (notesState.open) void tryCloseNote();
   });
   let resizeTimer;
@@ -8879,8 +8882,10 @@ function setupNotesPage() {
     resizeTimer = setTimeout(() => { if (!notesState.gesture && !notesState.open) renderNotesBoard(); }, 150);
   });
   void (async () => {
+    const workOrders = loadWorkOrders().catch(error => { woState.failed = error.message || "Försök igen."; });
     try {
       await loadNotes();
+      await workOrders;
     } catch (error) {
       board.innerHTML = `<div class="sn-empty"><div><strong>Anteckningarna kunde inte hämtas</strong>${escapeHtml(error.message || "Försök igen.")}</div></div>`;
       return;
@@ -8888,8 +8893,18 @@ function setupNotesPage() {
       board.removeAttribute("aria-busy");
     }
     renderNotesPage();
-    // A notification links here with ?note=<id>, which opens that note.
+    // A notification links here with ?note=<id> or ?workorder=<id>, which opens it.
     const params = new URLSearchParams(location.search);
+    const linkedOrder = params.get("workorder");
+    if (linkedOrder) {
+      params.delete("workorder");
+      history.replaceState(history.state, "", `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`);
+      sessionStorage.setItem(NOTES_TAB_KEY, "work");
+      notesState.filter = "all";
+      renderNotesPage();
+      openWorkOrder(linkedOrder);
+      return;
+    }
     const linked = params.get("note");
     if (linked) {
       params.delete("note");
@@ -8906,6 +8921,7 @@ function setupNotesPage() {
 // Called for live changes: fetches again, but leaves an open note or a drag alone until it ends.
 async function reloadNotesPage() {
   if (!notesBoard() || !notesState.loaded) return;
+  void reloadWorkOrders();
   if (notesState.open && !notesState.open.isNew) void refreshOpenNoteComments();
   if (notesState.open || notesState.gesture) { notesState.pendingReload = true; return; }
   notesState.pendingReload = false;
@@ -9015,6 +9031,7 @@ function noteCardHtml(note, position) {
 function renderNotesBoard() {
   const board = notesBoard();
   if (!board || !notesState.loaded) return;
+  if (notesTab() === "work") { renderWorkOrdersBoard(); return; }
   const list = visibleBoardNotes();
   const flow = isNotesFlow();
   board.classList.toggle("flow", flow);
@@ -9048,8 +9065,17 @@ function renderNotesPage() {
   const unread = notesState.notes.filter(note => note.unread).length;
   document.getElementById("notesTabMine").setAttribute("aria-selected", String(tab === "mine"));
   document.getElementById("notesTabGroup").setAttribute("aria-selected", String(tab === "group"));
+  document.getElementById("notesTabWork")?.setAttribute("aria-selected", String(tab === "work"));
   document.getElementById("notesMineCount").textContent = String(notesState.notes.filter(note => note.kind === "personal").length);
   setNotesBadge(unread);
+  // Arbetsorder are a type of their own: cards in a list, not lappar on the board.
+  const work = tab === "work";
+  notesBoard().classList.toggle("wo-mode", work);
+  document.querySelector(".sn-sort")?.classList.toggle("hidden", work);
+  const newLabel = document.getElementById("notesNewLabel");
+  if (newLabel) newLabel.textContent = work ? "Ny arbetsorder" : "Ny anteckning";
+  if (work) { renderWorkOrdersPage(); return; }
+  updateWorkOrderTab();
   document.getElementById("notesNewBtn").classList.toggle("hidden", tab === "group" && !canShare);
   document.getElementById("notesHint").textContent = tab === "group" && !canShare
     ? "Här ser du anteckningar som delas med dig."
@@ -9188,7 +9214,11 @@ function handleNotesClick(event) {
   }
   const filter = event.target.closest("[data-notes-filter]");
   if (filter) { notesState.filter = filter.dataset.notesFilter; renderNotesPage(); return; }
-  if (event.target.closest("#notesNewBtn")) { startNewNote(event.target.closest("#notesNewBtn")); return; }
+  if (event.target.closest("#notesNewBtn")) {
+    if (notesTab() === "work") startNewWorkOrder();
+    else startNewNote(event.target.closest("#notesNewBtn"));
+    return;
+  }
   if (event.target.closest("#notesTidyBtn")) void tidyNotes();
 }
 
@@ -9762,6 +9792,570 @@ async function applyNoteSharing(next) {
   }
 }
 
+/* ---------- Arbetsorder ---------- */
+
+// Arbetsorder: a type of its own under Anteckningar, on a tab of its own and kept apart from
+// the sticky notes. A work order has a title, a description, the people working on it and
+// tasks with one person responsible each; everyone on it sees all of it. The server decides
+// who sees and may change what (server/routes/workOrders.js).
+const WORK_STATUS = { not_started: "Ej påbörjad", in_progress: "Pågår", completed: "Slutförd" };
+const WORK_FILTERS = [["all", "Alla"], ["mine", "Mina uppgifter"], ["not_started", "Ej påbörjade"], ["in_progress", "Pågår"], ["completed", "Slutförda"]];
+const woState = { orders: [], loaded: false, failed: "", canCreate: false, open: null, draftSeq: 0 };
+
+const woTime = value => new Date(value).toLocaleString("sv-SE", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
+const woPill = status => `<span class="wo-pill ${status}">${WORK_STATUS[status]}</span>`;
+const woMyOpenTasks = order => order.status === "completed" ? [] : order.tasks.filter(task => task.assigneeId === currentUser.id && !task.done);
+const woMyOpenCount = () => woState.orders.reduce((sum, order) => sum + woMyOpenTasks(order).length, 0);
+const woTaskCount = count => `${count} ${count === 1 ? "uppgift" : "uppgifter"}`;
+// Everyone on the work order: its creator first, then its people.
+const woEveryone = order => [{ id: order.authorId, name: order.authorName, role: order.authorRole, creator: true }, ...order.members];
+
+async function loadWorkOrders() {
+  const data = await apiRequest("GET", "/notes/work-orders");
+  woState.orders = data.workOrders;
+  woState.canCreate = data.canCreate;
+  woState.loaded = true;
+  woState.failed = "";
+}
+
+// The tab shows how many tasks are waiting for the user.
+function updateWorkOrderTab() {
+  const badge = document.getElementById("notesWorkBadge");
+  if (!badge) return;
+  const count = woMyOpenCount();
+  badge.textContent = String(count);
+  badge.classList.toggle("hidden", !count);
+  badge.setAttribute("aria-label", `${woTaskCount(count)} till dig`);
+}
+
+function visibleWorkOrders() {
+  const filter = notesState.filter;
+  let list = woState.orders;
+  if (filter === "mine") list = list.filter(order => order.tasks.some(task => task.assigneeId === currentUser.id));
+  else if (WORK_STATUS[filter]) list = list.filter(order => order.status === filter);
+  // Open work orders first, newest first within each part.
+  const rank = order => order.status === "completed" ? 1 : 0;
+  return [...list].sort((a, b) => (rank(a) - rank(b)) || (new Date(b.createdAt) - new Date(a.createdAt)));
+}
+
+function workOrderCardHtml(order) {
+  const done = order.tasks.filter(task => task.done).length;
+  const total = order.tasks.length;
+  const mine = woMyOpenTasks(order).length;
+  const everyone = woEveryone(order);
+  const shown = everyone.slice(0, 5);
+  const label = `Arbetsorder: ${order.title}. ${WORK_STATUS[order.status]}. ${total ? `${done} av ${total} uppgifter klara` : "Inga uppgifter"}${mine ? `. ${woTaskCount(mine)} till dig` : ""}`;
+  return `<article class="wo-card ${order.status}" data-wo-id="${escapeHtml(order.id)}" tabindex="0" role="button" aria-label="${escapeHtml(label)}">
+    <div class="wo-card-top">${woPill(order.status)}${mine ? `<span class="wo-mine">${woTaskCount(mine)} till dig</span>` : ""}</div>
+    <h3 class="wo-card-title">${escapeHtml(order.title)}</h3>
+    ${order.description ? `<p class="wo-card-desc">${escapeHtml(order.description)}</p>` : ""}
+    ${total ? `<div class="wo-progress" aria-hidden="true"><span style="width:${Math.round(done / total * 100)}%"></span></div>` : ""}
+    <div class="wo-card-foot"><span>${total ? `${done} av ${total} klara` : "Inga uppgifter"}</span><span class="sn-stack">${shown.map(person => noteAvatar(person.name, "sm")).join("")}${everyone.length > 5 ? `<span class="sn-av sm sn-more">+${everyone.length - 5}</span>` : ""}</span></div>
+    <div class="wo-card-by">Skapad av ${escapeHtml(order.authorId === currentUser.id ? "dig" : order.authorName)} · ${noteAge(order.createdAt)}</div>
+  </article>`;
+}
+
+function renderWorkOrdersBoard() {
+  const board = notesBoard();
+  if (!board) return;
+  board.classList.remove("flow");
+  const empty = (title, text) => `<div class="sn-empty"><div><strong>${title}</strong>${text}</div></div>`;
+  if (woState.failed) { board.innerHTML = empty("Arbetsordrarna kunde inte hämtas", escapeHtml(woState.failed)); return; }
+  if (!woState.loaded) { board.innerHTML = ""; return; }
+  const list = visibleWorkOrders();
+  if (!list.length) {
+    board.innerHTML = woState.orders.length
+      ? empty("Inga arbetsorder här", "Inga arbetsorder matchar filtret.")
+      : empty("Inga arbetsorder än", woState.canCreate ? "Klicka på Ny arbetsorder för att dela upp ett jobb i uppgifter." : "Här visas arbetsorder som du är med i.");
+    return;
+  }
+  board.innerHTML = `<div class="wo-grid">${list.map(workOrderCardHtml).join("")}</div>`;
+}
+
+// The Arbetsorder tab of renderNotesPage.
+function renderWorkOrdersPage() {
+  document.getElementById("notesNewBtn").classList.toggle("hidden", !woState.canCreate);
+  document.getElementById("notesHint").textContent = "Dela upp ett jobb i uppgifter och se vem som gör vad. Klicka på en arbetsorder för att öppna den.";
+  if (!WORK_FILTERS.some(([key]) => key === notesState.filter)) notesState.filter = "all";
+  const mine = woMyOpenCount();
+  document.getElementById("notesFilters").innerHTML = WORK_FILTERS.map(([key, label]) => `<button type="button" class="sn-filter" data-notes-filter="${key}" aria-pressed="${notesState.filter === key}">${label}${key === "mine" && mine ? ` (${mine})` : ""}</button>`).join("");
+  document.getElementById("notesToolRight").classList.add("hidden");
+  updateWorkOrderTab();
+  renderWorkOrdersBoard();
+}
+
+function bindWorkOrderBoard(board) {
+  board.addEventListener("click", event => {
+    const card = event.target.closest(".wo-card");
+    if (card) openWorkOrder(card.dataset.woId);
+  });
+  board.addEventListener("keydown", event => {
+    const card = event.target.closest(".wo-card");
+    if (!card || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    openWorkOrder(card.dataset.woId);
+  });
+}
+
+// Called for live changes. An opened work order is updated in place, keeping what the user is typing.
+async function reloadWorkOrders() {
+  try {
+    await loadWorkOrders();
+  } catch (error) {
+    console.warn("Work orders could not be reloaded:", error);
+    return;
+  }
+  const open = woState.open;
+  if (open && !open.isNew) {
+    const fresh = woState.orders.find(order => order.id === open.order.id);
+    if (!fresh) {
+      showAppToast("Arbetsordern har tagits bort eller så är du inte längre med i den.", "error");
+      await closeWorkOrder({ save: false });
+      return;
+    }
+    const typing = document.activeElement?.id;
+    if (typing === "woTitle") fresh.title = open.order.title;
+    if (typing === "woDesc") fresh.description = open.order.description;
+    open.order = fresh;
+    drawWorkOrder();
+  }
+  if (notesTab() === "work") renderNotesPage();
+  else updateWorkOrderTab();
+}
+
+/* The opened work order */
+
+function startNewWorkOrder() {
+  if (!woState.canCreate) return;
+  woState.open = {
+    isNew: true, confirm: null, taskDraft: { title: "", assigneeId: "" },
+    order: {
+      id: "", title: "", description: "", status: "not_started", authorId: currentUser.id,
+      authorName: currentPerson?.name || currentUser.username, authorRole: currentUser.role, members: [], tasks: [], canEdit: true
+    }
+  };
+  showWorkOrder();
+}
+
+function openWorkOrder(id) {
+  const order = woState.orders.find(item => item.id === id);
+  if (!order) { showAppToast("Du är inte längre med i den här arbetsordern.", "error"); return; }
+  woState.open = { isNew: false, confirm: null, taskDraft: { title: "", assigneeId: "" }, order };
+  showWorkOrder();
+}
+
+function woAssigneeOptions(order, selected) {
+  return `<option value="">Ingen ansvarig</option>${woEveryone(order).map(person => `<option value="${escapeHtml(person.id)}"${person.id === selected ? " selected" : ""}>${escapeHtml(person.id === currentUser.id ? `${person.name} (du)` : person.name)}</option>`).join("")}`;
+}
+
+function workOrderTaskHtml(order, task, { isNew, editable }) {
+  const title = escapeHtml(task.title);
+  const mine = task.assigneeId === currentUser.id;
+  const check = isNew
+    ? '<span class="wo-bullet" aria-hidden="true"></span>'
+    : `<button type="button" class="wo-check${task.done ? " on" : ""}" data-wo-toggle="${escapeHtml(task.id)}" aria-pressed="${task.done}" aria-label="${task.done ? "Klar" : "Markera som klar"}: ${title}"${task.canMark ? "" : ` disabled title="${task.done ? "Klar" : "Bara den som ansvarar för uppgiften kan markera den"}"`}>${NOTE_CHECK_ICON}</button>`;
+  const who = editable
+    ? `<select class="wo-assign" data-wo-assign="${escapeHtml(task.id)}" aria-label="Ansvarig för ${title}">${woAssigneeOptions(order, task.assigneeId || "")}</select>`
+    : `<span class="wo-assignee${mine ? " mine" : ""}">${task.assigneeName ? `${noteAvatar(task.assigneeName, "sm")}${escapeHtml(mine ? "Du" : task.assigneeName)}` : "Ingen ansvarig"}</span>`;
+  const doneInfo = task.done
+    ? `<span class="wo-done-info">Klar · ${escapeHtml(task.doneById === currentUser.id ? "du" : task.doneByName)} · <time datetime="${escapeHtml(task.doneAt)}">${escapeHtml(woTime(task.doneAt))}</time></span>`
+    : mine && !isNew ? '<span class="wo-your-task">Din uppgift</span>' : "";
+  const remove = editable ? `<button type="button" class="wo-remove" data-wo-remove="${escapeHtml(task.id)}" aria-label="Ta bort uppgiften ${title}" title="Ta bort uppgiften">×</button>` : "";
+  return `<li class="wo-task${task.done ? " done" : ""}${mine && !task.done && !isNew ? " mine" : ""}">${check}<div class="wo-task-main"><span class="wo-task-title">${title}</span>${doneInfo}</div><div class="wo-task-side">${who}${remove}</div></li>`;
+}
+
+function workOrderHtml() {
+  const { order, isNew, confirm, taskDraft } = woState.open;
+  const editable = isNew || order.canEdit;
+  const own = order.authorId === currentUser.id;
+  const done = order.tasks.filter(task => task.done).length;
+  const total = order.tasks.length;
+  const head = `<div class="wo-head"><span class="wo-kicker">${isNew ? "Ny arbetsorder" : "Arbetsorder"}</span>${isNew ? "" : woPill(order.status)}<button type="button" class="sn-close" data-wo-act="close" aria-label="Stäng">×</button></div>`;
+  const title = editable
+    ? `<input id="woTitle" class="wo-title-input" maxlength="120" placeholder="Rubrik, t.ex. Byt filter på linje 3" aria-label="Rubrik" value="${escapeHtml(order.title)}" autocomplete="off" />`
+    : `<h2 class="wo-title" id="woDialogTitle">${escapeHtml(order.title)}</h2>`;
+  const meta = isNew ? "" : `<div class="wo-meta">${noteAvatar(order.authorName, "sm")}<span>Skapad av <b>${escapeHtml(order.authorName)}</b>${own ? " (du)" : ""} · ${escapeHtml(woTime(order.createdAt))}</span></div>
+    ${order.status === "completed" ? `<div class="wo-meta wo-meta-done">${NOTE_CHECK_ICON}<span>Slutförd av <b>${escapeHtml(order.completedByName)}</b> · ${escapeHtml(woTime(order.completedAt))}</span></div>` : ""}`;
+  const description = editable
+    ? `<label class="wo-field"><span class="sn-label">Beskrivning</span><textarea id="woDesc" class="wo-desc-input" maxlength="2000" rows="3" placeholder="Beskriv vad som behöver göras…">${escapeHtml(order.description)}</textarea></label>`
+    : order.description ? `<p class="wo-desc">${escapeHtml(order.description)}</p>` : "";
+  const everyone = woEveryone(order);
+  const people = `<section class="wo-section" aria-label="Personer">
+      <div class="wo-section-head"><span class="sn-label">Personer · ${everyone.length}</span>${editable ? `<button type="button" class="sn-share-btn" data-wo-act="people">${NOTE_SHARE_ICON}${order.members.length ? "Ändra personer" : "Lägg till personer"}</button>` : ""}</div>
+      <div class="wo-people">${everyone.map(person => `<span class="wo-person">${noteAvatar(person.name, "sm")}${escapeHtml(person.name)}${person.creator ? " <em>skapare</em>" : ""}${person.id === currentUser.id ? " <em>du</em>" : ""}</span>`).join("")}</div>
+      ${isNew && !order.members.length ? '<span class="sn-hint">Lägg till minst en person som ska arbeta med arbetsordern.</span>' : ""}
+    </section>`;
+  const addTask = editable ? `<form class="wo-add" id="woAddTask">
+      <input id="woTaskTitle" maxlength="200" placeholder="Ny uppgift…" aria-label="Ny uppgift" value="${escapeHtml(taskDraft.title)}" autocomplete="off" />
+      <select id="woTaskAssignee" aria-label="Ansvarig för den nya uppgiften">${woAssigneeOptions(order, taskDraft.assigneeId)}</select>
+      <button type="submit" class="sn-btn" id="woAddTaskBtn"${taskDraft.title.trim() ? "" : " disabled"}>Lägg till</button>
+    </form>` : "";
+  const tasks = `<section class="wo-section" aria-label="Uppgifter">
+      <div class="wo-section-head"><span class="sn-label">Uppgifter${total ? ` · ${done} av ${total} klara` : ""}</span></div>
+      ${total && !isNew ? `<div class="wo-progress" aria-hidden="true"><span style="width:${Math.round(done / total * 100)}%"></span></div>` : ""}
+      ${total ? `<ul class="wo-tasks">${order.tasks.map(task => workOrderTaskHtml(order, task, { isNew, editable })).join("")}</ul>` : `<span class="sn-hint">${editable ? "Dela upp arbetet i uppgifter och välj vem som ansvarar för varje." : "Arbetsordern har inga uppgifter."}</span>`}
+      ${addTask}
+    </section>`;
+  let foot;
+  if (confirm === "delete") {
+    foot = `<div class="sn-confirm"><span>Ta bort arbetsordern för alla ${everyone.length}? Det går inte att ångra.</span><button type="button" class="sn-btn del" data-wo-act="yes-delete">Ta bort</button><button type="button" class="sn-btn" data-wo-act="no">Avbryt</button></div>`;
+  } else if (confirm === "discard") {
+    foot = '<div class="sn-confirm"><span>Arbetsordern är inte skapad än. Vill du kasta den?</span><button type="button" class="sn-btn del" data-wo-act="yes-discard">Kasta</button><button type="button" class="sn-btn" data-wo-act="no">Fortsätt skriva</button></div>';
+  } else if (isNew) {
+    const ready = order.title.trim() && order.members.length;
+    foot = `<span class="sn-spacer"></span><button type="button" class="sn-btn" data-wo-act="cancel">Avbryt</button>
+      <button type="button" class="sn-primary blue" data-wo-act="create"${ready ? "" : " disabled"}>Skapa arbetsorder</button>`;
+  } else {
+    const left = total - done;
+    foot = `${order.canStart ? '<button type="button" class="sn-btn" data-wo-act="start">Påbörja</button>' : ""}
+      ${order.canDelete ? '<button type="button" class="sn-btn del" data-wo-act="delete">Ta bort</button>' : ""}
+      <span class="sn-spacer"></span>
+      ${order.status !== "completed" ? `${left ? `<span class="wo-left">${woTaskCount(left)} kvar</span>` : ""}<button type="button" class="sn-primary wo-complete" data-wo-act="complete"${order.canComplete ? "" : " disabled"}>${NOTE_CHECK_ICON}Markera som slutförd</button>` : ""}
+      ${order.canReopen ? '<button type="button" class="sn-btn" data-wo-act="reopen">Öppna igen</button>' : ""}
+      <button type="button" class="sn-btn" data-wo-act="close">Stäng</button>`;
+  }
+  return `${head}<div class="wo-scroll">${title}${meta}${description}${people}${tasks}</div><div class="wo-foot">${foot}</div>`;
+}
+
+function drawWorkOrder() {
+  const dialog = document.getElementById("woDialog");
+  if (!dialog || !woState.open) return;
+  dialog.className = `wo-dialog ${woState.open.isNew ? "new" : woState.open.order.status}`;
+  const focused = document.activeElement;
+  const typing = ["woTitle", "woDesc", "woTaskTitle"].includes(focused?.id) ? [focused.id, focused.selectionStart, focused.selectionEnd] : null;
+  const scrollTop = dialog.querySelector(".wo-scroll")?.scrollTop || 0;
+  dialog.innerHTML = workOrderHtml();
+  const scroller = dialog.querySelector(".wo-scroll");
+  if (scroller) scroller.scrollTop = scrollTop;
+  const restored = typing && document.getElementById(typing[0]);
+  if (restored) { restored.focus({ preventScroll: true }); restored.setSelectionRange(typing[1], typing[2]); }
+}
+
+function showWorkOrder() {
+  const layer = document.getElementById("notesLayer");
+  document.documentElement.classList.add("sn-locked");
+  layer.innerHTML = '<div class="sn-scrim fade-in" id="woScrim"><div class="wo-dialog" id="woDialog" role="dialog" aria-modal="true" aria-label="Arbetsorder"></div></div>';
+  drawWorkOrder();
+  const dialog = document.getElementById("woDialog");
+  if (woState.open.isNew) document.getElementById("woTitle")?.focus();
+  else dialog.querySelector(".sn-close").focus();
+  if (!layer.dataset.woBound) {
+    layer.dataset.woBound = "true";
+    layer.addEventListener("click", event => { if (woState.open) void handleWorkOrderClick(event); });
+    layer.addEventListener("input", event => { if (woState.open) handleWorkOrderInput(event); });
+    layer.addEventListener("change", event => { if (woState.open) void handleWorkOrderChange(event); });
+    layer.addEventListener("submit", event => {
+      if (event.target.id !== "woAddTask") return;
+      event.preventDefault();
+      void addWorkOrderTask();
+    });
+  }
+}
+
+// What is typed in the title or description of a saved work order and not yet saved.
+function unsavedWorkOrderText() {
+  const open = woState.open;
+  if (!open || open.isNew) return null;
+  const saved = woState.orders.find(order => order.id === open.order.id);
+  if (!saved) return null;
+  const changes = {};
+  if (open.order.title.trim() !== saved.title) changes.title = open.order.title;
+  if (open.order.description.trim() !== saved.description) changes.description = open.order.description;
+  return Object.keys(changes).length ? changes : null;
+}
+
+// save: false leaves what is typed unsaved, as when the work order was deleted.
+async function closeWorkOrder({ save = true } = {}) {
+  const changes = save ? unsavedWorkOrderText() : null;
+  if (changes) await saveWorkOrderText(changes);
+  woState.open = null;
+  document.getElementById("woScrim")?.classList.add("fade-out");
+  if (!notesReducedMotion()) await new Promise(resolve => setTimeout(resolve, 200));
+  if (woState.open) return;
+  document.getElementById("notesLayer").innerHTML = "";
+  document.documentElement.classList.remove("sn-locked");
+  renderNotesPage();
+}
+
+async function tryCloseWorkOrder() {
+  const open = woState.open;
+  if (!open) return;
+  const { order, isNew } = open;
+  if (isNew && !open.confirm && (order.title.trim() || order.description.trim() || order.tasks.length)) {
+    open.confirm = "discard";
+    drawWorkOrder();
+    return;
+  }
+  await closeWorkOrder();
+}
+
+// Every change to a saved work order goes through here; the answer is the whole work order.
+async function workOrderRequest(method, path, body, failure) {
+  try {
+    const { workOrder } = await apiRequest(method, `/notes/work-orders${path}`, body);
+    const index = woState.orders.findIndex(order => order.id === workOrder.id);
+    if (index >= 0) woState.orders[index] = workOrder;
+    else woState.orders.unshift(workOrder);
+    if (woState.open?.order.id === workOrder.id) {
+      // Keep what is still being typed in the title or description.
+      const typing = document.activeElement?.id;
+      const local = woState.open.order;
+      woState.open.order = { ...workOrder, ...(typing === "woTitle" ? { title: local.title } : {}), ...(typing === "woDesc" ? { description: local.description } : {}) };
+      drawWorkOrder();
+    }
+    renderNotesPage();
+    return workOrder;
+  } catch (error) {
+    showAppToast(error.message || failure, "error");
+    if (woState.open) drawWorkOrder();
+    return null;
+  }
+}
+
+async function saveWorkOrderText(changes) {
+  const open = woState.open;
+  if (!open || open.isNew) return;
+  if (changes.title !== undefined && !changes.title.trim()) {
+    showAppToast("Arbetsordern måste ha en rubrik.", "error");
+    open.order.title = woState.orders.find(order => order.id === open.order.id)?.title || open.order.title;
+    drawWorkOrder();
+    return;
+  }
+  const saved = await workOrderRequest("PATCH", `/${encodeURIComponent(open.order.id)}`, changes, "Ändringen kunde inte sparas.");
+  if (saved) showAppToast("Sparat.");
+}
+
+function handleWorkOrderInput(event) {
+  const open = woState.open;
+  const { order, isNew } = open;
+  if (event.target.id === "woTitle") {
+    order.title = event.target.value;
+    if (isNew) { const button = document.querySelector('[data-wo-act="create"]'); if (button) button.disabled = !(order.title.trim() && order.members.length); }
+  } else if (event.target.id === "woDesc") {
+    order.description = event.target.value;
+  } else if (event.target.id === "woTaskTitle") {
+    open.taskDraft.title = event.target.value;
+    const button = document.getElementById("woAddTaskBtn");
+    if (button) button.disabled = !event.target.value.trim();
+  }
+}
+
+async function handleWorkOrderChange(event) {
+  const open = woState.open;
+  const { order, isNew } = open;
+  const target = event.target;
+  if (target.id === "woTaskAssignee") { open.taskDraft.assigneeId = target.value; return; }
+  if (target.dataset.woAssign) {
+    const task = order.tasks.find(item => item.id === target.dataset.woAssign);
+    if (!task) return;
+    if (isNew) { task.assigneeId = target.value || null; return; }
+    await workOrderRequest("PATCH", `/${encodeURIComponent(order.id)}/tasks/${encodeURIComponent(task.id)}`, { assigneeId: target.value || null }, "Uppgiften kunde inte ändras.");
+    return;
+  }
+  if (isNew) return;
+  // The title and the description are saved when the field is left.
+  if (target.id === "woTitle" || target.id === "woDesc") {
+    const changes = unsavedWorkOrderText();
+    if (changes) await saveWorkOrderText(changes);
+  }
+}
+
+async function addWorkOrderTask() {
+  const open = woState.open;
+  if (!open) return;
+  const { order, isNew, taskDraft } = open;
+  const title = taskDraft.title.trim();
+  if (!title) return;
+  if (isNew) {
+    order.tasks.push({ id: `draft-${++woState.draftSeq}`, title, assigneeId: taskDraft.assigneeId || null, done: false });
+    open.taskDraft = { title: "", assigneeId: taskDraft.assigneeId };
+    drawWorkOrder();
+    document.getElementById("woTaskTitle")?.focus();
+    return;
+  }
+  const button = document.getElementById("woAddTaskBtn");
+  if (button) button.disabled = true;
+  const saved = await workOrderRequest("POST", `/${encodeURIComponent(order.id)}/tasks`, { title, assigneeId: taskDraft.assigneeId || null }, "Uppgiften kunde inte läggas till.");
+  if (saved && woState.open) {
+    woState.open.taskDraft = { title: "", assigneeId: taskDraft.assigneeId };
+    drawWorkOrder();
+    document.getElementById("woTaskTitle")?.focus();
+  }
+}
+
+async function handleWorkOrderClick(event) {
+  const open = woState.open;
+  if (event.target.id === "woScrim") { void tryCloseWorkOrder(); return; }
+  const { order, isNew } = open;
+  const toggle = event.target.closest("[data-wo-toggle]");
+  if (toggle) {
+    const task = order.tasks.find(item => item.id === toggle.dataset.woToggle);
+    if (!task?.canMark) return;
+    const done = !task.done;
+    toggle.disabled = true;
+    const saved = await workOrderRequest("PATCH", `/${encodeURIComponent(order.id)}/tasks/${encodeURIComponent(task.id)}`, { done }, "Uppgiften kunde inte sparas.");
+    if (saved && done) showAppToast(saved.canComplete ? "Alla uppgifter är klara. Arbetsordern kan markeras som slutförd." : "Uppgiften är markerad som klar.");
+    return;
+  }
+  const remove = event.target.closest("[data-wo-remove]");
+  if (remove) {
+    if (isNew) { order.tasks = order.tasks.filter(task => task.id !== remove.dataset.woRemove); drawWorkOrder(); return; }
+    const task = order.tasks.find(item => item.id === remove.dataset.woRemove);
+    if (!task || !confirm(`Ta bort uppgiften "${task.title}"?`)) return;
+    await workOrderRequest("DELETE", `/${encodeURIComponent(order.id)}/tasks/${encodeURIComponent(task.id)}`, undefined, "Uppgiften kunde inte tas bort.");
+    return;
+  }
+  const action = event.target.closest("[data-wo-act]")?.dataset.woAct;
+  if (!action) return;
+  const path = `/${encodeURIComponent(order.id)}`;
+  if (action === "close" || action === "cancel") void tryCloseWorkOrder();
+  else if (action === "no") { open.confirm = null; drawWorkOrder(); }
+  else if (action === "yes-discard") void closeWorkOrder({ save: false });
+  else if (action === "people") void openWorkOrderPeopleSheet();
+  else if (action === "create") void createWorkOrderFromDraft();
+  else if (action === "delete") { open.confirm = "delete"; drawWorkOrder(); }
+  else if (action === "yes-delete") {
+    try {
+      await apiRequest("DELETE", `/notes/work-orders${path}`);
+      woState.orders = woState.orders.filter(item => item.id !== order.id);
+      await closeWorkOrder({ save: false });
+      showAppToast("Arbetsordern är borttagen.");
+    } catch (error) {
+      showAppToast(error.message || "Arbetsordern kunde inte tas bort.", "error");
+    }
+  } else if (action === "start") {
+    const saved = await workOrderRequest("PUT", `${path}/status`, { status: "in_progress" }, "Statusen kunde inte sparas.");
+    if (saved) showAppToast("Arbetsordern är påbörjad.");
+  } else if (action === "complete") {
+    const saved = await workOrderRequest("PUT", `${path}/status`, { status: "completed" }, "Arbetsordern kunde inte slutföras.");
+    if (saved) showAppToast("Arbetsordern är slutförd. Alla på den fick en notis.");
+  } else if (action === "reopen") {
+    const saved = await workOrderRequest("PUT", `${path}/status`, { status: "in_progress" }, "Arbetsordern kunde inte öppnas igen.");
+    if (saved) showAppToast("Arbetsordern är öppen igen.");
+  }
+}
+
+async function createWorkOrderFromDraft() {
+  const { order } = woState.open;
+  if (!order.title.trim() || !order.members.length) return;
+  const button = document.querySelector('[data-wo-act="create"]');
+  if (button) button.disabled = true;
+  try {
+    const { workOrder } = await apiRequest("POST", "/notes/work-orders", {
+      title: order.title.trim(),
+      description: order.description.trim(),
+      people: order.members.map(person => person.id),
+      tasks: order.tasks.map(task => ({ title: task.title, assigneeId: task.assigneeId || null }))
+    });
+    woState.orders.unshift(workOrder);
+    woState.open = null;
+    notesState.filter = "all";
+    document.getElementById("notesLayer").innerHTML = "";
+    document.documentElement.classList.remove("sn-locked");
+    renderNotesPage();
+    const count = workOrder.members.length;
+    showAppToast(`Arbetsordern skapades. ${count} ${count === 1 ? "person" : "personer"} fick en notis.`);
+  } catch (error) {
+    if (button) button.disabled = false;
+    showAppToast(error.message || "Arbetsordern kunde inte skapas.", "error");
+  }
+}
+
+// "Personer": the people working on it, picked among those the user may share notes with.
+async function openWorkOrderPeopleSheet() {
+  const open = woState.open;
+  if (!open) return;
+  let groups;
+  try {
+    groups = await loadNoteRecipients();
+  } catch (error) {
+    showAppToast(error.message || "Personerna kunde inte hämtas.", "error");
+    return;
+  }
+  const picked = new Set(open.order.members.map(person => person.id));
+  // Someone who left the user's shifts can still be on an older work order; keep them unless removed.
+  const known = new Map(groups.flatMap(group => group.people.map(person => [person.id, person])));
+  open.order.members.forEach(person => { if (!known.has(person.id)) known.set(person.id, person); });
+  let query = "";
+  const layer = document.getElementById("notesSheetLayer");
+  layer.innerHTML = `<div class="sn-sheet-scrim" id="woSheetScrim"><div class="sn-sheet" role="dialog" aria-modal="true" aria-labelledby="woSheetTitle">
+    <div class="sn-sheet-head">
+      <div class="sn-sheet-title"><h3 id="woSheetTitle">Personer i arbetsordern</h3><button type="button" class="sn-close" id="woSheetClose" aria-label="Stäng">×</button></div>
+      <input class="sn-search" id="woSheetSearch" type="search" placeholder="Sök på namn" aria-label="Sök på namn" autocomplete="off" />
+    </div>
+    <div class="sn-chips" id="woSheetChips"></div>
+    <div class="sn-sheet-body" id="woSheetBody"></div>
+    <div class="sn-sheet-foot"><span id="woSheetInfo"></span><button type="button" class="sn-primary blue" id="woSheetDone">Klar</button></div>
+  </div></div>`;
+  const draw = () => {
+    const ids = [...picked].filter(id => known.has(id));
+    document.getElementById("woSheetChips").innerHTML = ids.length
+      ? ids.map(id => `<button type="button" class="sn-chip" data-wo-unpick="${escapeHtml(id)}" aria-label="Ta bort ${escapeHtml(known.get(id).name)}">${noteAvatar(known.get(id).name, "sm")} ${escapeHtml(firstName(known.get(id).name))} <span aria-hidden="true">×</span></button>`).join("")
+      : '<span class="sn-hint">Markera en eller flera personer nedan.</span>';
+    const q = query.trim().toLowerCase();
+    const html = groups.map(group => {
+      const list = group.people.filter(person => !q || person.name.toLowerCase().includes(q));
+      if (!list.length) return "";
+      return `<div><div class="sn-grp-head">${escapeHtml(group.name)}</div>
+        ${list.map(person => `<label class="sn-prow"><input type="checkbox" data-wo-pick="${escapeHtml(person.id)}"${picked.has(person.id) ? " checked" : ""} />${noteAvatar(person.name, "lg")}<span class="sn-pwho"><span>${escapeHtml(person.name)}</span><span>${escapeHtml(ROLE_LABELS[person.role] || "")}</span></span></label>`).join("")}
+      </div>`;
+    }).join("");
+    document.getElementById("woSheetBody").innerHTML = html || `<div class="sn-noresult">${groups.length ? `Ingen heter "${escapeHtml(query)}".` : "Det finns ingen att välja ännu."}</div>`;
+    document.getElementById("woSheetInfo").textContent = ids.length ? `${ids.length} ${ids.length === 1 ? "person vald" : "personer valda"}` : "Ingen vald";
+    document.getElementById("woSheetDone").textContent = ids.length ? `Klar (${ids.length})` : "Klar";
+  };
+  const close = () => { layer.innerHTML = ""; document.querySelector('[data-wo-act="people"]')?.focus(); };
+  draw();
+  const search = document.getElementById("woSheetSearch");
+  search.focus();
+  search.addEventListener("input", event => { query = event.target.value; draw(); });
+  const sheet = layer.querySelector(".sn-sheet");
+  sheet.addEventListener("change", event => {
+    const id = event.target.dataset.woPick;
+    if (!id) return;
+    if (event.target.checked) picked.add(id); else picked.delete(id);
+    draw();
+  });
+  sheet.addEventListener("click", event => {
+    const unpick = event.target.closest("[data-wo-unpick]");
+    if (unpick) { picked.delete(unpick.dataset.woUnpick); draw(); }
+  });
+  document.getElementById("woSheetClose").addEventListener("click", close);
+  document.getElementById("woSheetScrim").addEventListener("click", event => { if (event.target.id === "woSheetScrim") close(); });
+  document.getElementById("woSheetDone").addEventListener("click", () => {
+    const members = [...picked].filter(id => known.has(id)).map(id => known.get(id));
+    close();
+    void applyWorkOrderPeople(members);
+  });
+}
+
+async function applyWorkOrderPeople(members) {
+  const open = woState.open;
+  if (!open) return;
+  const { order } = open;
+  if (open.isNew) {
+    order.members = members.map(person => ({ id: person.id, name: person.name, role: person.role }));
+    // A task whose person is no longer on it gets no person.
+    const ids = new Set([currentUser.id, ...members.map(person => person.id)]);
+    order.tasks.forEach(task => { if (task.assigneeId && !ids.has(task.assigneeId)) task.assigneeId = null; });
+    if (open.taskDraft.assigneeId && !ids.has(open.taskDraft.assigneeId)) open.taskDraft.assigneeId = "";
+    drawWorkOrder();
+    return;
+  }
+  if (!members.length) { showAppToast("Minst en person måste vara med i arbetsordern.", "error"); return; }
+  const before = order.members.map(person => person.id);
+  const saved = await workOrderRequest("PATCH", `/${encodeURIComponent(order.id)}`, { people: members.map(person => person.id) }, "Personerna kunde inte sparas.");
+  if (!saved) return;
+  const after = saved.members.map(person => person.id);
+  const added = after.filter(id => !before.includes(id)).length;
+  const removed = before.filter(id => !after.includes(id)).length;
+  const message = [
+    added && `${added} ${added === 1 ? "person lades" : "personer lades"} till och fick en notis`,
+    removed && `${removed} ${removed === 1 ? "person togs" : "personer togs"} bort`
+  ].filter(Boolean).join(". ");
+  showAppToast(message ? `${message}.` : "Personerna är oförändrade.");
+}
+
 // Notes ("Notiser"): a bell in the page header. Shift leaders and right hands get a
 // short note when an admin changes something in their shift or in shared settings;
 // everyone gets one when someone shares an anteckning with them.
@@ -9838,7 +10432,11 @@ async function loadNotifications({ announce = false } = {}) {
 const NOTIFICATION_HEADINGS = {
   noteShared: "har delat en anteckning med dig",
   noteAdded: "lade till dig på en anteckning",
-  noteComment: "kommenterade en anteckning"
+  noteComment: "kommenterade en anteckning",
+  workOrderAdded: "lade till dig på en arbetsorder",
+  workOrderTask: "gav dig en uppgift i arbetsordern",
+  workOrderReady: "klarade den sista uppgiften i",
+  workOrderCompleted: "markerade arbetsordern som slutförd"
 };
 // Notes about the user's own schedule; the title says what changed.
 const PERSONAL_NOTIFICATION_KINDS = new Set(["scheduleChange", "placementChange"]);
@@ -9874,7 +10472,8 @@ function renderNotifications() {
       ${note.detail ? `<span class="notification-detail">${escapeHtml(note.detail)}</span>` : ""}
       <time datetime="${escapeHtml(note.createdAt)}">${escapeHtml(formatChatTime(note.createdAt))}</time>`;
     const className = `notification-item${note.read ? "" : " unread"}`;
-    return shared ? `<a class="${className}" href="anteckningar.html?note=${encodeURIComponent(note.noteId)}">${body}</a>` : `<div class="${className}">${body}</div>`;
+    const link = note.workOrderId ? `anteckningar.html?workorder=${encodeURIComponent(note.workOrderId)}` : `anteckningar.html?note=${encodeURIComponent(note.noteId)}`;
+    return shared ? `<a class="${className}" href="${link}">${body}</a>` : `<div class="${className}">${body}</div>`;
   }).join("");
 }
 

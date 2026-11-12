@@ -22,6 +22,17 @@ function noteAccessSql({ id, role, shift }) {
 // Notes the user may see, for a query on notes n. $1 is the user's id, $2 their shift id (or null).
 const NOTE_VISIBLE_SQL = noteAccessSql({ id: "$1", role: "(SELECT vu.role FROM users vu WHERE vu.id = $1)", shift: "$2" });
 
+// Whether a viewer may see the work order w: the same people as for notes (no operators,
+// nothing written by an operator), who created it or are on it.
+function workOrderAccessSql({ id, role }) {
+  const author = "(SELECT au.role FROM users au WHERE au.id = w.author_id)";
+  return `(${role} IS DISTINCT FROM 'operator' AND ${author} <> 'operator' AND (w.author_id = ${id}
+  OR EXISTS (SELECT 1 FROM work_order_people wp WHERE wp.work_order_id = w.id AND wp.user_id = ${id})))`;
+}
+
+// Work orders the user may see, for a query on work_orders w. $1 is the user's id.
+const WORK_ORDER_VISIBLE_SQL = workOrderAccessSql({ id: "$1", role: "(SELECT vu.role FROM users vu WHERE vu.id = $1)" });
+
 const serializeShift = row => ({ id: row.id, name: row.name, color: row.color || "", sortOrder: row.sort_order });
 
 function serializePerson(row) {
@@ -386,6 +397,8 @@ module.exports = {
   isoWeekNumber,
   NOTE_VISIBLE_SQL,
   noteAccessSql,
+  WORK_ORDER_VISIBLE_SQL,
+  workOrderAccessSql,
   productionRetentionStart,
   purgeExpiredProductionRecords,
   renameWorkItemReferences,
