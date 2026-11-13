@@ -42,22 +42,28 @@ const NOTIFICATION_PAGE_SIZE = 50;
 const NOT_A_CHANGE = new Set(["backup:Backup exporterad"]);
 
 // Each note is also sent as a push notification to the user's devices (see push.js).
-const PUSH_KINDS = Object.freeze({ noteShared: "note", noteAdded: "note", noteComment: "noteComment", adminChange: "update" });
+const PUSH_KINDS = Object.freeze({
+  noteShared: "note", noteAdded: "note", noteComment: "noteComment", adminChange: "update",
+  workOrderAdded: "workOrder", workOrderTask: "workOrder", workOrderReady: "workOrderUpdate", workOrderCompleted: "workOrderCompleted", workOrderComment: "workOrderComment"
+});
 
-async function addNotifications(db, userIds, { kind, actorName = "", title = "", detail = "", noteId = null }) {
+async function addNotifications(db, userIds, { kind, actorName = "", title = "", detail = "", noteId = null, workOrderId = null }) {
   const recipients = [...new Set(userIds)].filter(Boolean);
   if (!recipients.length) return 0;
   const added = [];
   for (const userId of recipients) {
     const id = newId();
     await db.query(
-      "INSERT INTO notifications (id, user_id, kind, actor_name, title, detail, note_id) VALUES ($1, $2, $3, $4, $5, $6, $7)",
-      [id, userId, kind, String(actorName).slice(0, 120), String(title).slice(0, 300), String(detail).slice(0, 500), noteId]
+      "INSERT INTO notifications (id, user_id, kind, actor_name, title, detail, note_id, work_order_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
+      [id, userId, kind, String(actorName).slice(0, 120), String(title).slice(0, 300), String(detail).slice(0, 500), noteId, workOrderId]
     );
     added.push({ userId, notificationId: id });
   }
   const pushKind = PUSH_KINDS[kind];
-  if (pushKind) await queuePush(db, added, { kind: pushKind, key: noteId ? `${pushKind}:${noteId}` : pushKind });
+  const about = noteId || workOrderId;
+  // A notice about a work order opens that work order.
+  const ref = workOrderId ? { workOrderId } : {};
+  if (pushKind) await queuePush(db, added, { kind: pushKind, key: about ? `${pushKind}:${about}` : pushKind, ref });
   return recipients.length;
 }
 
@@ -124,6 +130,7 @@ const serializeNotification = row => ({
   title: row.title,
   detail: row.detail,
   noteId: row.note_id ?? null,
+  workOrderId: row.work_order_id ?? null,
   read: Boolean(row.read_at),
   createdAt: row.created_at
 });

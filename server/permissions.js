@@ -41,6 +41,15 @@
 // comments. The priority mark is set by the author and, on a group note they can see, by
 // an admin.
 //
+// Arbetsorder (work orders) are a type of their own under Anteckningar, for the same
+// people. Whoever creates one picks the people working on it, among those they may share
+// notes with, and splits it into tasks with one person responsible each. Everyone on it
+// sees all of it, admins only when they are on it. Only the creator changes the title,
+// description, people and tasks, and deletes it. The person responsible marks their own
+// task as done (the creator can too; a task without a person can be marked by anyone on
+// it). Anyone on it marks it Slutförd once every task is done; only the creator opens it again.
+// Everyone on it writes comments, also once it is Slutförd, and removes their own.
+//
 // Produktion: who last changed each field and wrote each comment is saved with it. Only
 // admins and shift leaders see who that was (see production.js).
 //
@@ -414,6 +423,24 @@ function canDeleteNoteComment(user, comment) {
   return Boolean(user?.id) && comment?.author_id === user.id;
 }
 
+// `order` must be a work order the user can see.
+function canEditWorkOrder(user, order) {
+  return Boolean(user?.id) && order?.author_id === user.id;
+}
+
+// `task` must belong to a work order the user can see.
+function canMarkWorkOrderTask(user, order, task) {
+  return canEditWorkOrder(user, order) || !task?.assignee_id || task.assignee_id === user?.id;
+}
+
+function canReopenWorkOrder(user, order) {
+  return canEditWorkOrder(user, order);
+}
+
+function canDeleteWorkOrderComment(user, comment) {
+  return Boolean(user?.id) && comment?.author_id === user.id;
+}
+
 function canManagePush(user) {
   return isAdmin(user);
 }
@@ -520,5 +547,9 @@ module.exports = {
   canCommentNote,
   canDeleteNoteComment,
   canEditNote,
-  canPrioritizeNote
+  canPrioritizeNote,
+  canEditWorkOrder,
+  canMarkWorkOrderTask,
+  canReopenWorkOrder,
+  canDeleteWorkOrderComment
 };

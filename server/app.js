@@ -9,6 +9,7 @@ const { adminRoutes, shiftBackupRoutes } = require("./routes/admin");
 const { chatRoutes } = require("./routes/chat");
 const { notificationRoutes } = require("./routes/notifications");
 const { noteRoutes } = require("./routes/notes");
+const { workOrderRoutes } = require("./routes/workOrders");
 const { pushRoutes } = require("./routes/push");
 const { createMailer } = require("./mailer");
 const { createRealtimeHub } = require("./realtime");
@@ -53,6 +54,8 @@ function createApp({
   api.use("/backup", shiftBackupRoutes({ pool }));
   api.use("/chat", chatRoutes({ pool }));
   api.use("/notifications", notificationRoutes({ pool }));
+  // Arbetsorder live under Anteckningar, so the same function and routes cover them.
+  api.use("/notes/work-orders", workOrderRoutes({ pool }));
   api.use("/notes", noteRoutes({ pool }));
   api.use("/push", pushRoutes({ pool, sender: pushSender }));
   api.use(documentRoutes({ pool, mailer, appUrl }));

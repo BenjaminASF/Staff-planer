@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Anteckningar</title>
-  <script src="theme.js?v=20261113-chatt-pil2"></script><link rel="manifest" href="manifest.webmanifest" /><link rel="apple-touch-icon" href="app-icon-180.png" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700&family=Figtree:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" /><link rel="stylesheet" href="style.css?v=20261113-chatt-pil2" />
+  <script src="theme.js?v=20261113-arbetsorder-kommentar"></script><link rel="manifest" href="manifest.webmanifest" /><link rel="apple-touch-icon" href="app-icon-180.png" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin /><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@700&family=Figtree:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" /><link rel="stylesheet" href="style.css?v=20261113-arbetsorder-kommentar" />
 </head>
 <body class="app-booting">
   <div id="authScreen" class="auth-screen">
@@ -48,8 +48,9 @@
           <div class="sn-tabs" role="tablist" aria-label="Anteckningar">
             <button class="sn-tab" role="tab" id="notesTabMine" data-notes-tab="mine" type="button"><span>Mina<span class="sn-long"> anteckningar</span></span><span class="sn-count" id="notesMineCount"></span></button>
             <button class="sn-tab" role="tab" id="notesTabGroup" data-notes-tab="group" type="button"><span>Gruppens<span class="sn-long"> anteckningar</span></span><span class="sn-badge hidden" id="notesGroupBadge"></span></button>
+            <button class="sn-tab" role="tab" id="notesTabWork" data-notes-tab="work" type="button"><span>Arbetsorder</span><span class="sn-badge wo hidden" id="notesWorkBadge"></span></button>
           </div>
-          <button class="sn-new" id="notesNewBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>Ny anteckning</button>
+          <button class="sn-new" id="notesNewBtn" type="button"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg><span id="notesNewLabel">Ny anteckning</span></button>
         </div>
         <div class="sn-toolbar">
           <div class="sn-filters" id="notesFilters"></div>
@@ -69,6 +70,6 @@
     </div>
     <footer style="margin-top:30px; text-align:center; color:#94a3b8;">© 2026 Mizzar — Staff Planner</footer>
   </div>
-<script src="app.js?v=20261113-chatt-pil2"></script>
+<script src="app.js?v=20261113-arbetsorder-kommentar"></script>
 </body>
 </html>

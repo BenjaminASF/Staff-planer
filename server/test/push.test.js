@@ -198,6 +198,32 @@ describe("pushnotiser", () => {
     await admin.patch(`/api/people/${operatorPerson.id}`, { shiftId: dayShift.id });
   });
 
+  test("a completed work order pushes once to the others on it and opens that work order", async () => {
+    const created = await admin.post("/api/notes/work-orders", {
+      title: "Byt filter", people: [rightHandUser.id, leaderUser.id], tasks: [{ title: "Byt", assigneeId: rightHandUser.id }]
+    });
+    assert.equal(created.status, 201);
+    const id = created.data.workOrder.id;
+    await rightHand.patch(`/api/notes/work-orders/${id}/tasks/${created.data.workOrder.tasks[0].id}`, { done: true });
+    await flush();
+    sent.length = 0;
+    assert.equal((await rightHand.put(`/api/notes/work-orders/${id}/status`, { status: "completed" })).status, 200);
+    await flush();
+    const done = sent.filter(item => item.payload.tag === "workOrderCompleted");
+    assert.deepEqual(done.map(item => item.endpoint).sort(), [endpointFor("admin"), endpointFor("leader")].sort(), "everyone on it but the one who marked it");
+    for (const item of done) {
+      assert.equal(item.payload.body, "En arbetsorder som du är med i är slutförd.");
+      assert.equal(item.payload.url, `anteckningar.html?workorder=${encodeURIComponent(id)}`);
+      assert.ok(!JSON.stringify(item.payload).includes("Byt filter"), "no title on the lock screen");
+    }
+    sent.length = 0;
+    assert.equal((await admin.put(`/api/notes/work-orders/${id}/status`, { status: "in_progress" })).status, 200);
+    assert.equal((await rightHand.put(`/api/notes/work-orders/${id}/status`, { status: "completed" })).status, 200);
+    await flush();
+    assert.ok(!sent.some(item => item.payload.tag === "workOrderCompleted"), "only the first time");
+    await admin.delete(`/api/notes/work-orders/${id}`);
+  });
+
   test("shared notes push to their recipients, and nothing is sent once the note is gone", async () => {
     const note = await leader.post("/api/notes", { kind: "group", text: "Ny rulle", people: [rightHandUser.id] });
     assert.equal(note.status, 201);
