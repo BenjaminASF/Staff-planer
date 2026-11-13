@@ -310,3 +310,68 @@ describe("priority messages in the chat", () => {
     assert.ok((await senior.get("/api/chat/messages")).data.messages.some(item => item.id === fire.id));
   });
 });
+
+describe("private conversations", () => {
+  let server;
+  let admin, lisa, bo, hanna;
+  let ids;
+
+  before(async () => {
+    server = await startTestServer();
+    [admin, lisa, bo, hanna] = Array.from({ length: 4 }, () => server.client());
+    await admin.post("/api/setup", { setupCode: SETUP_CODE, name: "Ada Admin", username: "ada", password: PASSWORD });
+    const [red, blue] = (await admin.get("/api/shifts")).data.shifts;
+    const account = (username, role) => ({ username, password: PASSWORD, role, mustChangePassword: false });
+    await admin.post("/api/people", { name: "Lisa Ledare", shiftId: red.id, account: account("lisa", "shift_leader") });
+    await admin.post("/api/people", { name: "Bo Blå", shiftId: blue.id, account: account("bosse", "shift_leader") });
+    await admin.post("/api/people", { name: "Hanna Hand", shiftId: red.id, account: account("hanna", "right_hand") });
+    ids = {
+      lisa: (await lisa.login("lisa", PASSWORD)).user.id,
+      bo: (await bo.login("bosse", PASSWORD)).user.id,
+      hanna: (await hanna.login("hanna", PASSWORD)).user.id
+    };
+  });
+
+  after(async () => {
+    await server?.close();
+  });
+
+  test("each person is one conversation, newest first, with its own unread count", async () => {
+    await lisa.post("/api/chat/messages", { text: "Hej Bo", recipientId: ids.bo });
+    await bo.post("/api/chat/messages", { text: "Hej Lisa", recipientId: ids.lisa });
+    await bo.post("/api/chat/messages", { text: "Kan du byta tisdag?", recipientId: ids.lisa });
+    await hanna.post("/api/chat/messages", { text: "Jag är sjuk imorgon", recipientId: ids.lisa });
+    await lisa.post("/api/chat/messages", { text: "Möte kl 14" });
+    const { conversations } = (await lisa.get("/api/chat/conversations")).data;
+    assert.deepEqual(conversations.map(item => [item.name, item.unread, item.last.text]), [
+      ["Hanna Hand", 1, "Jag är sjuk imorgon"],
+      ["Bo Blå", 2, "Kan du byta tisdag?"]
+    ]);
+    assert.equal(conversations[0].role, "right_hand");
+    assert.equal(conversations[1].last.mine, false);
+    assert.equal((await lisa.get("/api/chat/unread")).data.count, 3, "three private, her own message to everyone is not unread");
+  });
+
+  test("a conversation is read on its own; Alla does not read private messages", async () => {
+    const everyone = (await lisa.get("/api/chat/messages?scope=everyone")).data.messages;
+    assert.deepEqual(everyone.map(item => item.text), ["Möte kl 14"], "Alla has no private messages");
+    await lisa.post("/api/chat/read", { lastId: everyone.at(-1).id });
+    assert.equal((await lisa.get("/api/chat/unread")).data.count, 3, "reading Alla leaves the private ones unread");
+    const withBo = (await lisa.get(`/api/chat/messages?with=${ids.bo}`)).data.messages;
+    assert.deepEqual(withBo.map(item => item.text), ["Hej Bo", "Hej Lisa", "Kan du byta tisdag?"]);
+    assert.equal((await lisa.post(`/api/chat/conversations/${ids.bo}/read`, { lastId: withBo.at(-1).id })).status, 200);
+    const { conversations } = (await lisa.get("/api/chat/conversations")).data;
+    assert.deepEqual(conversations.map(item => item.unread), [1, 0]);
+    assert.equal((await lisa.get("/api/chat/unread")).data.count, 1);
+  });
+
+  test("a conversation only ever holds the two people's messages", async () => {
+    const hannaWithBo = (await hanna.get(`/api/chat/messages?with=${ids.bo}`)).data.messages;
+    assert.equal(hannaWithBo.length, 0, "Hanna sees nothing of Lisa and Bo");
+    const boConversations = (await bo.get("/api/chat/conversations")).data.conversations;
+    assert.deepEqual(boConversations.map(item => item.name), ["Lisa Ledare"]);
+    assert.equal(boConversations[0].unread, 0, "his own last message is not unread for him");
+    const newer = (await lisa.get(`/api/chat/messages?with=${ids.hanna}&after=0`)).status;
+    assert.equal(newer, 200);
+  });
+});

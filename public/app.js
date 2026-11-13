@@ -8540,7 +8540,7 @@ const CHAT_MAX_IMAGE_BYTES = 3 * 1024 * 1024;
 const CHAT_NOTIFIED_KEY = "staff_chat_notified_id";
 const CHAT_ICON = '<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>';
 const CHAT_IMAGE_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>';
-const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "", tab: "all", priorityMessages: [], priorityDraft: false };
+const chatState = { open: false, loaded: false, messages: [], hasOlder: false, timer: null, image: null, previewTimer: null, members: [], recipient: null, mention: null, handoverOpen: false, handoverProduction: "", tab: "all", priorityMessages: [], priorityDraft: false, conversation: null, conversations: [], picking: false, pickQuery: "", previewTarget: null };
 
 const chatMessageId = message => BigInt(message?.id || 0);
 const CHAT_SEND_ICON = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h13M12 5l7 7-7 7"/></svg>';
@@ -8560,7 +8560,7 @@ function getChatElements() {
     file: widget.querySelector(".chat-form input[type=file]"),
     attachment: widget.querySelector(".chat-attachment"),
     recipient: widget.querySelector(".chat-recipient"),
-    to: widget.querySelector(".chat-to-select"),
+    conversationBar: widget.querySelector(".chat-conversation-bar"),
     priorityBar: widget.querySelector(".chat-priority-bar"),
     priorityToggle: widget.querySelector(".chat-priority-toggle"),
     mentions: widget.querySelector(".chat-mentions"),
@@ -8577,15 +8577,15 @@ function setupChat() {
   widget.innerHTML = `
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
-      <header class="chat-header"><div class="chat-title"><strong>Chatt</strong><small class="chat-people"><span class="chat-people-faces" aria-hidden="true"></span><span class="chat-people-count">Välj i listan Till vem du skriver till</span></small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
+      <header class="chat-header"><div class="chat-title"><strong>Chatt</strong><small class="chat-people"><span class="chat-people-faces" aria-hidden="true"></span><span class="chat-people-count">Alla meddelanden och privata chattar</span></small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
       <div class="chat-tabs" role="tablist" aria-label="Visa"><button type="button" role="tab" data-chat-tab="all" aria-selected="true">Alla</button><button type="button" role="tab" data-chat-tab="private" aria-selected="false" tabindex="-1">Privat<span class="chat-tab-count hidden"></span></button></div>
       <section class="chat-priority-bar hidden" aria-label="Prio"></section>
+      <div class="chat-conversation-bar hidden"></div>
       <form class="chat-handover hidden" aria-label="Överlämning" novalidate></form>
       <div class="chat-messages" role="log" aria-live="polite" tabindex="0"></div>
       <form class="chat-form">
         <div class="chat-attachment hidden"><img alt="Vald bild" /><button type="button" class="chat-attachment-remove" aria-label="Ta bort bilden">×</button></div>
         <p class="chat-status inline-message" role="status"></p>
-        <label class="chat-to"><span>Till</span><select class="chat-to-select" aria-label="Skicka till"><option value="">Alla i chatten</option></select></label>
         <div class="chat-recipient hidden"><span class="chat-recipient-text"></span><button type="button" class="chat-recipient-remove" aria-label="Skicka till alla i stället">×</button></div>
         <ul class="chat-mentions hidden" role="listbox" aria-label="Välj mottagare"></ul>
         <div class="chat-input-row">
@@ -8603,7 +8603,11 @@ function setupChat() {
 
   elements.toggle.addEventListener("click", () => void setChatOpen(!chatState.open));
   elements.widget.querySelector(".chat-close").addEventListener("click", () => void setChatOpen(false));
-  elements.preview.addEventListener("click", () => void setChatOpen(true));
+  elements.preview.addEventListener("click", async () => {
+    const target = chatState.previewTarget;
+    await setChatOpen(true);
+    if (target) void openChatConversation(target);
+  });
   // A click outside the chat closes it. Where the press started decides, so a click
   // on something inside that is redrawn meanwhile (a picked name, a deleted message)
   // or a text selection dragged out of the chat never closes it. Scrolling the page
@@ -8679,13 +8683,24 @@ function setupChat() {
     updateChatRecipientHint();
     elements.input.focus();
   });
+  elements.list.addEventListener("input", event => {
+    if (!event.target.matches(".chat-pick-search")) return;
+    chatState.pickQuery = event.target.value;
+    const position = event.target.selectionStart;
+    renderChatMessages();
+    const search = elements.list.querySelector(".chat-pick-search");
+    search.focus();
+    search.setSelectionRange(position, position);
+  });
+  elements.conversationBar.addEventListener("click", event => {
+    if (event.target.closest("[data-conversation-back]")) void setChatTab("private");
+  });
   elements.priorityBar.addEventListener("click", event => {
     const remove = event.target.closest("[data-priority-remove]");
     if (remove) { void setChatMessagePriority(remove.dataset.priorityRemove, false); return; }
     const jump = event.target.closest("[data-priority-jump]");
     if (jump) showChatMessage(jump.dataset.priorityJump);
   });
-  elements.to.addEventListener("change", () => { setChatRecipient(elements.to.value || null); showChatStatus(""); elements.input.focus(); });
   elements.input.addEventListener("paste", event => {
     const file = [...(event.clipboardData?.files || [])].find(item => item.type.startsWith("image/"));
     if (file) { event.preventDefault(); void attachChatImage(file); }
@@ -8698,6 +8713,10 @@ function setupChat() {
   elements.widget.querySelector(".chat-attachment-remove").addEventListener("click", () => setChatImage(null));
   elements.form.addEventListener("submit", event => { event.preventDefault(); void sendChatMessage(); });
   elements.list.addEventListener("click", event => {
+    const conversation = event.target.closest("[data-open-conversation]");
+    if (conversation) { void openChatConversation(conversation.dataset.openConversation); return; }
+    if (event.target.closest("[data-new-conversation]")) { chatState.picking = true; chatState.pickQuery = ""; renderChatMessages(); elements.list.querySelector(".chat-pick-search")?.focus(); return; }
+    if (event.target.closest("[data-pick-cancel]")) { chatState.picking = false; renderChatMessages(); return; }
     const older = event.target.closest(".chat-older");
     if (older) { void loadOlderChatMessages(older); return; }
     const reply = event.target.closest("[data-reply-to]");
@@ -10612,6 +10631,7 @@ async function checkChatUnread() {
   const notified = BigInt(sessionStorage.getItem(CHAT_NOTIFIED_KEY) || 0);
   if (!count || !latest || chatMessageId(latest) <= notified) return;
   sessionStorage.setItem(CHAT_NOTIFIED_KEY, latest.id);
+  chatState.previewTarget = latest.recipientId ? latest.userId : null;
   playChatMessageSound(latest);
   const { preview } = getChatElements();
   const handoverToMe = latest.handover?.to.some(item => item.id === currentUser?.id);
@@ -10632,41 +10652,167 @@ async function setChatOpen(open) {
   if (!open) { if (chatState.handoverOpen) setChatHandoverOpen(false); scheduleChatPoll(); return; }
   elements.input.focus();
   void loadChatMembers();
+  void loadChatConversations();
   if (!chatState.loaded) {
-    elements.list.innerHTML = '<p class="chat-empty">Laddar…</p>';
-    try {
-      const data = await apiRequest("GET", "/chat/messages");
-      chatState.messages = data.messages;
-      chatState.hasOlder = data.hasOlder;
-      chatState.loaded = true;
-    } catch (error) {
-      elements.list.innerHTML = `<p class="chat-empty">${escapeHtml(error.message || "Chatten kunde inte laddas.")}</p>`;
-      return;
-    }
-    renderChatMessages({ scrollToEnd: true });
+    await loadChatView();
     void loadChatPriority();
   } else {
     renderChatMessages({ scrollToEnd: true });
     await loadNewChatMessages();
   }
-  await markChatRead();
   scheduleChatPoll();
+}
+
+// What the list shows: Alla (messages to everyone), the list of private conversations,
+// or one private conversation.
+const chatViewQuery = () => chatState.conversation ? `with=${encodeURIComponent(chatState.conversation)}` : "scope=everyone";
+const isChatConversationList = () => chatState.tab === "private" && !chatState.conversation;
+
+async function loadChatView() {
+  const { list } = getChatElements();
+  updateChatPanelMode();
+  if (isChatConversationList()) {
+    renderChatMessages();
+    await loadChatConversations();
+    return;
+  }
+  list.innerHTML = '<p class="chat-empty">Laddar…</p>';
+  const view = chatViewQuery();
+  try {
+    const data = await apiRequest("GET", `/chat/messages?${view}`);
+    if (view !== chatViewQuery()) return;
+    chatState.messages = data.messages;
+    chatState.hasOlder = data.hasOlder;
+    chatState.loaded = true;
+  } catch (error) {
+    list.innerHTML = `<p class="chat-empty">${escapeHtml(error.message || "Chatten kunde inte laddas.")}</p>`;
+    return;
+  }
+  renderChatMessages({ scrollToEnd: true });
+  await markChatRead();
+}
+
+// The panel hides what does not belong to the view: the composer in the list of
+// conversations, the priority bar and the priority button in a private conversation.
+function updateChatPanelMode() {
+  const { panel, conversationBar } = getChatElements();
+  panel.classList.toggle("is-conversation-list", isChatConversationList());
+  panel.classList.toggle("is-conversation", Boolean(chatState.conversation));
+  const partner = chatState.conversation ? chatConversationPartner(chatState.conversation) : null;
+  conversationBar.classList.toggle("hidden", !partner);
+  if (partner) {
+    const color = getShiftColor(partner.shiftId);
+    const roleText = [ROLE_LABELS[partner.role], getShiftName(partner.shiftId)].filter(Boolean).join(" · ");
+    conversationBar.innerHTML = `<button type="button" class="chat-conversation-back" data-conversation-back aria-label="Tillbaka till privata chattar">‹</button>
+      <span class="chat-avatar${color ? ` shift-color-${color}` : ""}" aria-hidden="true">${escapeHtml(chatInitials(partner.name))}</span>
+      <span class="chat-conversation-name"><strong>${escapeHtml(partner.name)}</strong><small>${escapeHtml(roleText ? `${roleText} · bara ni två` : "Bara ni två")}</small></span>`;
+  }
+}
+
+// Who a private conversation is with: from the chat members, else from the conversation list.
+function chatConversationPartner(userId) {
+  const member = chatState.members.find(item => item.id === userId);
+  if (member) return member;
+  const known = chatState.conversations.find(item => item.partnerId === userId);
+  return known ? { id: userId, name: known.name, role: known.role, shiftId: known.shiftId } : null;
+}
+
+async function loadChatConversations() {
+  try {
+    const { conversations } = await apiRequest("GET", "/chat/conversations");
+    chatState.conversations = conversations;
+  } catch (error) {
+    console.warn("Private conversations could not be loaded:", error);
+    return;
+  }
+  updateChatTabs();
+  if (isChatConversationList() && chatState.open) renderChatMessages();
+}
+
+async function openChatConversation(userId) {
+  chatState.tab = "private";
+  chatState.conversation = userId;
+  chatState.picking = false;
+  chatState.loaded = false;
+  chatState.messages = [];
+  chatState.recipient = chatConversationPartner(userId) || { id: userId, name: "" };
+  chatState.priorityDraft = false;
+  showChatStatus("");
+  updateChatRecipientHint();
+  updateChatTabs();
+  await loadChatView();
+  getChatElements().input.focus();
+}
+
+// The list of private conversations, or the people to start a new one with.
+function renderChatConversations() {
+  const { list } = getChatElements();
+  if (chatState.picking) {
+    const wanted = normalizeChatName(chatState.pickQuery.trim());
+    const matches = chatState.members.filter(member => !wanted || normalizeChatName(member.name).split(/\s+/).some(word => word.startsWith(wanted)) || normalizeChatName(member.name).startsWith(wanted));
+    const groups = [...shifts.map(shift => [shift.name, matches.filter(member => member.shiftId === shift.id)]), ["Utan skift", matches.filter(member => !shifts.some(shift => shift.id === member.shiftId))]].filter(([, people]) => people.length);
+    list.innerHTML = `<div class="chat-pick">
+      <div class="chat-pick-head"><button type="button" class="chat-conversation-back" data-pick-cancel aria-label="Tillbaka till privata chattar">‹</button><strong>Ny chatt</strong></div>
+      <input class="chat-pick-search" type="search" placeholder="Sök namn…" aria-label="Sök namn" value="${escapeHtml(chatState.pickQuery)}" autocomplete="off" />
+      ${groups.map(([name, people]) => `<div class="chat-pick-group">${escapeHtml(name)}</div>${people.map(member => {
+        const color = getShiftColor(member.shiftId);
+        return `<button type="button" class="chat-conversation" data-open-conversation="${escapeHtml(member.id)}"><span class="chat-avatar${color ? ` shift-color-${color}` : ""}" aria-hidden="true">${escapeHtml(chatInitials(member.name))}</span><span class="chat-conversation-text"><strong>${escapeHtml(member.name)}</strong><small>${escapeHtml(ROLE_LABELS[member.role] || "")}</small></span></button>`;
+      }).join("")}`).join("") || '<p class="chat-empty">Ingen i chatten heter så.</p>'}
+    </div>`;
+    return;
+  }
+  const time = value => {
+    const date = new Date(value);
+    return formatDateKey(date) === formatDateKey(new Date()) ? date.toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" }) : date.toLocaleDateString("sv-SE", { day: "numeric", month: "short" });
+  };
+  list.innerHTML = `<div class="chat-conversations">
+    ${chatState.conversations.map(item => {
+      const color = getShiftColor(item.shiftId);
+      const preview = item.last.text || (item.last.hasImage ? "Bild" : "");
+      return `<button type="button" class="chat-conversation${item.unread ? " is-unread" : ""}" data-open-conversation="${escapeHtml(item.partnerId)}">
+        <span class="chat-avatar${color ? ` shift-color-${color}` : ""}" aria-hidden="true">${escapeHtml(chatInitials(item.name))}</span>
+        <span class="chat-conversation-text"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml((item.last.mine ? "Du: " : "") + preview)}</small></span>
+        <span class="chat-conversation-side"><time datetime="${escapeHtml(item.last.createdAt)}">${escapeHtml(time(item.last.createdAt))}</time>${item.unread ? `<span class="chat-conversation-count" aria-label="${item.unread} olästa">${item.unread}</span>` : ""}</span>
+      </button>`;
+    }).join("") || '<p class="chat-empty">Inga privata chattar ännu.</p>'}
+    <button type="button" class="chat-new-conversation" data-new-conversation>+ Ny chatt</button>
+  </div>`;
+}
+
+// Unread across Alla and every private conversation, from the server.
+async function refreshChatBadge() {
+  try {
+    const { count } = await apiRequest("GET", "/chat/unread");
+    setChatBadge(chatState.open ? 0 : count);
+  } catch {
+    // The next poll tries again.
+  }
 }
 
 async function markChatRead() {
   const last = chatState.messages.at(-1);
   setChatBadge(0);
-  if (!last) return;
+  if (!last || isChatConversationList()) return;
   // What has been read needs no preview later.
   if (chatMessageId(last) > BigInt(sessionStorage.getItem(CHAT_NOTIFIED_KEY) || 0)) sessionStorage.setItem(CHAT_NOTIFIED_KEY, last.id);
-  await apiRequest("POST", "/chat/read", { lastId: last.id });
+  if (chatState.conversation) {
+    await apiRequest("POST", `/chat/conversations/${encodeURIComponent(chatState.conversation)}/read`, { lastId: last.id });
+    const known = chatState.conversations.find(item => item.partnerId === chatState.conversation);
+    if (known) known.unread = 0;
+    updateChatTabs();
+  } else {
+    await apiRequest("POST", "/chat/read", { lastId: last.id });
+  }
 }
 
 async function loadNewChatMessages() {
-  if (!chatState.loaded) return;
-  void loadChatPriority();
+  void loadChatConversations();
+  if (isChatConversationList() || !chatState.loaded) return;
+  if (!chatState.conversation) void loadChatPriority();
+  const view = chatViewQuery();
   const last = chatState.messages.at(-1);
-  const data = await apiRequest("GET", `/chat/messages${last ? `?after=${encodeURIComponent(last.id)}` : ""}`);
+  const data = await apiRequest("GET", `/chat/messages?${view}${last ? `&after=${encodeURIComponent(last.id)}` : ""}`);
+  if (view !== chatViewQuery()) return;
   const known = new Set(chatState.messages.map(message => message.id));
   const fresh = data.messages.filter(message => !known.has(message.id));
   if (!fresh.length) return;
@@ -10684,7 +10830,7 @@ async function loadOlderChatMessages(button) {
   button.disabled = true;
   const { list } = getChatElements();
   const previousHeight = list.scrollHeight;
-  const data = await apiRequest("GET", `/chat/messages?before=${encodeURIComponent(first.id)}`);
+  const data = await apiRequest("GET", `/chat/messages?${chatViewQuery()}&before=${encodeURIComponent(first.id)}`);
   chatState.messages = [...data.messages, ...chatState.messages];
   chatState.hasOlder = data.hasOlder;
   renderChatMessages();
@@ -10725,9 +10871,6 @@ function chatAuthorInfo(userId) {
 
 const chatInitials = name => String(name || "?").split(/\s+/).filter(Boolean).slice(0, 2).map(part => part[0]).join("").toLocaleUpperCase("sv-SE");
 
-// The newest private message to you that you have looked at under Privat (this device).
-const chatPrivateSeenKey = () => `staff_chat_private_seen:${currentUser?.id || ""}`;
-
 function updateChatTabs() {
   const { widget } = getChatElements();
   widget.querySelectorAll("[data-chat-tab]").forEach(tab => {
@@ -10735,25 +10878,27 @@ function updateChatTabs() {
     tab.setAttribute("aria-selected", String(active));
     tab.tabIndex = active ? 0 : -1;
   });
-  let seen = 0n;
-  try { seen = BigInt(localStorage.getItem(chatPrivateSeenKey()) || 0); } catch { /* no storage: count all */ }
-  const fresh = chatState.messages.filter(message => message.recipientId === currentUser?.id && chatMessageId(message) > seen).length;
+  // Unread private messages, outside the conversation that is open.
+  const fresh = chatState.conversations.filter(item => item.partnerId !== chatState.conversation).reduce((sum, item) => sum + item.unread, 0);
   const count = widget.querySelector(".chat-tab-count");
   count.textContent = String(fresh);
-  count.classList.toggle("hidden", !fresh || chatState.tab === "private");
+  count.classList.toggle("hidden", !fresh);
 }
 
-function setChatTab(tab) {
+// Alla, or the list of private conversations. A conversation is opened from the list.
+async function setChatTab(tab) {
   chatState.tab = tab;
-  const { input } = getChatElements();
-  if (tab === "private") {
-    const last = chatState.messages.filter(message => message.recipientId === currentUser?.id).at(-1);
-    try { if (last) localStorage.setItem(chatPrivateSeenKey(), last.id); } catch { /* the count simply stays */ }
-  }
+  chatState.conversation = null;
+  chatState.picking = false;
+  chatState.loaded = false;
+  chatState.messages = [];
+  chatState.recipient = null;
+  closeChatMentions();
   showChatStatus("");
   updateChatRecipientHint();
-  renderChatMessages({ scrollToEnd: true });
-  input.focus();
+  updateChatTabs();
+  await loadChatView();
+  if (tab === "all") getChatElements().input.focus();
 }
 
 // Redrawn in place when roles or priority marks arrive: whoever was reading the newest
@@ -10768,11 +10913,14 @@ function rerenderChatMessages() {
 function renderChatMessages({ scrollToEnd = false } = {}) {
   const { list } = getChatElements();
   updateChatTabs();
-  const privateOnly = chatState.tab === "private";
-  const shown = privateOnly ? chatState.messages.filter(message => message.recipientId) : chatState.messages;
+  updateChatPanelMode();
+  if (isChatConversationList()) { renderChatConversations(); return; }
+  // Inside a private conversation every message is private, so none needs marking as such.
+  const inConversation = Boolean(chatState.conversation);
+  const shown = chatState.messages;
   if (!shown.length) {
-    list.innerHTML = privateOnly
-      ? '<p class="chat-empty">Inga privata meddelanden ännu. Välj en person i listan Till för att skriva privat.</p>'
+    list.innerHTML = inConversation
+      ? `<p class="chat-empty">Inga meddelanden ännu. Skriv till ${escapeHtml(chatState.recipient?.name || "personen")}.</p>`
       : '<p class="chat-empty">Inga meddelanden ännu. Skriv det första!</p>';
     return;
   }
@@ -10793,12 +10941,12 @@ function renderChatMessages({ scrollToEnd = false } = {}) {
     const canDelete = mine || isAdmin();
     const partner = mine ? message.recipientId : message.userId;
     const time = new Date(message.createdAt).toLocaleTimeString("sv-SE", { hour: "2-digit", minute: "2-digit" });
-    const privateLine = message.recipientId
+    const privateLine = message.recipientId && !inConversation
       ? `<button type="button" class="chat-private" data-reply-to="${escapeHtml(partner || "")}" title="Svara privat till ${escapeHtml(mine ? message.recipientName : message.authorName)}"><span aria-hidden="true">🔒</span> Privat · ${escapeHtml(mine ? `Du → ${message.recipientName}` : `${message.authorName} → dig`)}</button>`
       : "";
     return `${dayHtml}<div class="chat-row${mine ? " is-mine" : ""}${grouped ? " is-grouped" : ""}">
       ${mine ? "" : `<span class="chat-avatar${color ? ` shift-color-${color}` : ""}" aria-hidden="true">${grouped ? "" : escapeHtml(chatInitials(message.authorName))}</span>`}
-      <article data-message-id="${escapeHtml(message.id)}" class="chat-message${mine ? " is-mine" : ""}${message.recipientId ? " is-private" : ""}${message.handover ? " is-handover" : ""}${message.priority ? " is-priority" : ""}"${grouped ? ` aria-label="${escapeHtml(`${mine ? "Du" : message.authorName} ${time}`)}"` : ""}>
+      <article data-message-id="${escapeHtml(message.id)}" class="chat-message${mine ? " is-mine" : ""}${message.recipientId && !inConversation ? " is-private" : ""}${message.handover ? " is-handover" : ""}${message.priority ? " is-priority" : ""}"${grouped ? ` aria-label="${escapeHtml(`${mine ? "Du" : message.authorName} ${time}`)}"` : ""}>
         ${grouped ? "" : `<div class="chat-meta"><strong>${escapeHtml(mine ? "Du" : message.authorName)}</strong>${roleText && !mine ? `<span class="chat-role">${escapeHtml(roleText)}</span>` : ""}<time datetime="${escapeHtml(message.createdAt)}">${escapeHtml(time)}</time></div>`}
         ${grouped ? "" : privateLine}
         ${message.priority ? `<span class="chat-priority-tag">⚠ Prio · ${escapeHtml(message.priority.by || "")}</span>` : ""}
@@ -10879,13 +11027,13 @@ async function sendChatMessage() {
   const { input, form } = getChatElements();
   const text = input.value.trim();
   if (!text && !chatState.image) return;
-  // Under Privat nothing goes to everyone by mistake.
-  if (chatState.tab === "private" && !chatState.recipient) { showChatStatus("Välj vem du skriver till i listan Till."); return; }
+  // Under Privat something is only sent inside an open conversation.
+  if (chatState.tab === "private" && !chatState.conversation) return;
   const sendButton = form.querySelector(".chat-send");
   sendButton.disabled = true;
   try {
     const image = chatState.image ? { type: chatState.image.type, data: chatState.image.dataUrl } : undefined;
-    const recipientId = chatState.recipient?.id;
+    const recipientId = chatState.conversation || undefined;
     const priority = chatState.priorityDraft && !recipientId ? true : undefined;
     const { message } = await apiRequest("POST", "/chat/messages", { text, image, recipientId, priority });
     if (priority) { chatState.priorityDraft = false; updateChatRecipientHint(); void loadChatPriority(); }
@@ -10912,12 +11060,14 @@ async function loadChatMembers() {
     console.warn("Chat members could not be loaded:", error);
     return;
   }
-  // Roles and shifts next to the names come from the members, and so does the list Till.
-  renderChatRecipientOptions();
-  if (chatState.loaded) rerenderChatMessages();
-  // Someone who left the chat can no longer be written to.
-  if (chatState.recipient && !chatState.members.some(member => member.id === chatState.recipient.id)) setChatRecipient(null);
-  else updateChatMentions();
+  // Roles and shifts next to the names come from the members.
+  renderChatPeople();
+  if (chatState.conversation) {
+    chatState.recipient = chatConversationPartner(chatState.conversation) || chatState.recipient;
+    updateChatRecipientHint();
+  }
+  if (chatState.loaded || isChatConversationList()) rerenderChatMessages();
+  updateChatMentions();
 }
 
 // The private recipient stays until it is removed with ×, so a conversation can go on.
@@ -10933,7 +11083,8 @@ function updateChatRecipientHint() {
   const { recipient, input, form, send } = getChatElements();
   const member = chatState.recipient;
   form.classList.toggle("is-private", Boolean(member));
-  recipient.classList.toggle("hidden", !member);
+  // Who a private message goes to is shown in the conversation's own bar.
+  recipient.classList.add("hidden");
   recipient.querySelector(".chat-recipient-text").innerHTML = member ? `Bara du och <strong>${escapeHtml(member.name)}</strong> ser meddelandet` : "";
   // Priority is for messages to everyone.
   if (member) chatState.priorityDraft = false;
@@ -10948,26 +11099,7 @@ function updateChatRecipientHint() {
   const sendLabel = member ? `Skicka privat till ${member.name}` : chatState.priorityDraft ? "Skicka som prio till alla" : "Skicka till alla";
   send.setAttribute("aria-label", sendLabel);
   send.title = sendLabel;
-  if (!chatState.image) input.placeholder = member ? `Privat meddelande till ${member.name}…` : chatState.tab === "private" ? "Välj först en person i listan Till…" : "Skriv till alla…";
-  renderChatRecipientOptions();
-}
-
-// The list Till: everyone in the chat, or one person, grouped by shift. Under Privat there
-// is no "everyone", so a person has to be picked.
-function renderChatRecipientOptions() {
-  const { to } = getChatElements();
-  const groups = new Map();
-  chatState.members.forEach(member => {
-    const shiftName = getShiftName(member.shiftId) || "Utan skift";
-    if (!groups.has(shiftName)) groups.set(shiftName, []);
-    groups.get(shiftName).push(member);
-  });
-  const ordered = [...shifts.map(shift => shift.name), "Utan skift"].filter(name => groups.has(name));
-  const everyone = chatState.tab === "private" ? '<option value="">Välj person…</option>' : '<option value="">Alla i chatten</option>';
-  to.innerHTML = everyone + ordered.map(name => `<optgroup label="${escapeHtml(name)}">${groups.get(name).map(member =>
-    `<option value="${escapeHtml(member.id)}">${escapeHtml(member.name)}${ROLE_LABELS[member.role] ? ` · ${escapeHtml(ROLE_LABELS[member.role])}` : ""}</option>`).join("")}</optgroup>`).join("");
-  to.value = chatState.recipient?.id || "";
-  to.closest(".chat-to").classList.toggle("is-private", Boolean(chatState.recipient));
+  if (!chatState.image) input.placeholder = member ? `Skriv till ${member.name}…` : "Skriv till alla…";
   renderChatPeople();
 }
 
@@ -11004,6 +11136,8 @@ function matchChatMembers(query) {
 
 function updateChatMentions() {
   const { input, mentions } = getChatElements();
+  // @name opens a private conversation from Alla; inside a conversation it is just text.
+  if (chatState.tab !== "all") { closeChatMentions(); return; }
   const mention = findChatMention(input);
   const found = mention ? matchChatMembers(mention.query) : [];
   // "@Anna S" may still be a name; a second word that matches nobody is just text.
@@ -11064,9 +11198,8 @@ function pickChatMention(userId) {
     input.setSelectionRange(cursor, cursor);
   }
   closeChatMentions();
-  setChatRecipient(member.id);
-  resizeChatInput(input);
-  input.focus();
+  // The text stays in the field and goes privately to the person.
+  void openChatConversation(member.id).then(() => { resizeChatInput(input); input.focus(); });
 }
 
 // Handovers: the shift that ends tells one or more shift leaders what is the priority
@@ -11275,14 +11408,15 @@ async function sendChatHandover() {
     } });
     writeStored(localStorage, handoverRecipientsKey(), draft.to);
     writeStored(sessionStorage, handoverDraftKey(), null);
-    if (!chatState.messages.some(item => item.id === message.id)) chatState.messages.push(message);
+    if (chatState.tab === "all" && !chatState.messages.some(item => item.id === message.id)) chatState.messages.push(message);
     chatState.handoverOpen = false;
     getChatElements().panel.classList.remove("is-handover");
     form.classList.add("hidden");
     form.innerHTML = "";
     getChatElements().widget.querySelector(".chat-handover-open")?.setAttribute("aria-expanded", "false");
     updateChatHandoverButton();
-    renderChatMessages({ scrollToEnd: true });
+    if (chatState.tab === "all") renderChatMessages({ scrollToEnd: true });
+    else await setChatTab("all");
     const names = message.handover.to.map(item => item.name.split(" ")[0]).join(" och ");
     showChatStatus(`Överlämningen är skickad till ${names}.`, "success");
     setTimeout(() => { if (getChatElements().status.textContent.startsWith("Överlämningen är skickad")) showChatStatus(""); }, 5000);
@@ -11338,8 +11472,8 @@ async function setChatMessagePriority(id, on) {
 }
 
 // Scrolls to a message and lights it up briefly, under Alla if needed.
-function showChatMessage(id) {
-  if (chatState.tab !== "all" && !chatState.messages.find(item => item.id === id)?.recipientId) setChatTab("all");
+async function showChatMessage(id) {
+  if (chatState.tab !== "all") await setChatTab("all");
   const article = getChatElements().list.querySelector(`[data-message-id="${CSS.escape(id)}"]`);
   if (!article) { showChatStatus("Meddelandet är äldre än det som visas. Tryck Visa äldre meddelanden.", "error"); return; }
   article.scrollIntoView({ block: "center", behavior: "smooth" });
