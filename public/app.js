@@ -8576,7 +8576,7 @@ function setupChat() {
   widget.innerHTML = `
     <button type="button" class="chat-preview hidden"></button>
     <section class="chat-panel hidden" aria-label="Chatt">
-      <header class="chat-header"><div class="chat-title"><strong>Chatt</strong><small class="chat-people"><span class="chat-people-faces" aria-hidden="true"></span><span class="chat-people-count">Alla meddelanden och privata samtal</span></small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
+      <header class="chat-header"><div class="chat-title"><strong>Chatt</strong><small class="chat-people"><span class="chat-people-faces" aria-hidden="true"></span><span class="chat-people-count">Alla meddelanden och privata chattar</span></small></div><div class="chat-header-actions">${canMakeHandover() ? '<button type="button" class="chat-handover-open" aria-expanded="false">Överlämning</button>' : ""}<button type="button" class="chat-close" aria-label="Stäng chatten">×</button></div></header>
       <div class="chat-tabs" role="tablist" aria-label="Visa"><button type="button" role="tab" data-chat-tab="all" aria-selected="true">Alla</button><button type="button" role="tab" data-chat-tab="private" aria-selected="false" tabindex="-1">Privat<span class="chat-tab-count hidden"></span></button></div>
       <section class="chat-priority-bar hidden" aria-label="Prio"></section>
       <div class="chat-conversation-bar hidden"></div>
@@ -10051,7 +10051,7 @@ function updateChatPanelMode() {
   if (partner) {
     const color = getShiftColor(partner.shiftId);
     const roleText = [ROLE_LABELS[partner.role], getShiftName(partner.shiftId)].filter(Boolean).join(" · ");
-    conversationBar.innerHTML = `<button type="button" class="chat-conversation-back" data-conversation-back aria-label="Tillbaka till privata samtal">‹</button>
+    conversationBar.innerHTML = `<button type="button" class="chat-conversation-back" data-conversation-back aria-label="Tillbaka till privata chattar">‹</button>
       <span class="chat-avatar${color ? ` shift-color-${color}` : ""}" aria-hidden="true">${escapeHtml(chatInitials(partner.name))}</span>
       <span class="chat-conversation-name"><strong>${escapeHtml(partner.name)}</strong><small>${escapeHtml(roleText ? `${roleText} · bara ni två` : "Bara ni två")}</small></span>`;
   }
@@ -10100,7 +10100,7 @@ function renderChatConversations() {
     const matches = chatState.members.filter(member => !wanted || normalizeChatName(member.name).split(/\s+/).some(word => word.startsWith(wanted)) || normalizeChatName(member.name).startsWith(wanted));
     const groups = [...shifts.map(shift => [shift.name, matches.filter(member => member.shiftId === shift.id)]), ["Utan skift", matches.filter(member => !shifts.some(shift => shift.id === member.shiftId))]].filter(([, people]) => people.length);
     list.innerHTML = `<div class="chat-pick">
-      <div class="chat-pick-head"><button type="button" class="chat-conversation-back" data-pick-cancel aria-label="Tillbaka till privata samtal">‹</button><strong>Nytt samtal</strong></div>
+      <div class="chat-pick-head"><button type="button" class="chat-conversation-back" data-pick-cancel aria-label="Tillbaka till privata chattar">‹</button><strong>Ny chatt</strong></div>
       <input class="chat-pick-search" type="search" placeholder="Sök namn…" aria-label="Sök namn" value="${escapeHtml(chatState.pickQuery)}" autocomplete="off" />
       ${groups.map(([name, people]) => `<div class="chat-pick-group">${escapeHtml(name)}</div>${people.map(member => {
         const color = getShiftColor(member.shiftId);
@@ -10122,8 +10122,8 @@ function renderChatConversations() {
         <span class="chat-conversation-text"><strong>${escapeHtml(item.name)}</strong><small>${escapeHtml((item.last.mine ? "Du: " : "") + preview)}</small></span>
         <span class="chat-conversation-side"><time datetime="${escapeHtml(item.last.createdAt)}">${escapeHtml(time(item.last.createdAt))}</time>${item.unread ? `<span class="chat-conversation-count" aria-label="${item.unread} olästa">${item.unread}</span>` : ""}</span>
       </button>`;
-    }).join("") || '<p class="chat-empty">Inga privata samtal ännu.</p>'}
-    <button type="button" class="chat-new-conversation" data-new-conversation>+ Nytt samtal</button>
+    }).join("") || '<p class="chat-empty">Inga privata chattar ännu.</p>'}
+    <button type="button" class="chat-new-conversation" data-new-conversation>+ Ny chatt</button>
   </div>`;
 }
 
