@@ -379,4 +379,4 @@ function noteRoutes({ pool }) {
   return router;
 }
 
-module.exports = { noteRoutes };
+module.exports = { noteRoutes, cleanSharing };
